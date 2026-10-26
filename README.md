@@ -29,6 +29,18 @@ A small x86 operating system written in C and NASM.
 - Compiler
 - Network
 
+## ⚠️ Official Developer Account Update
+
+I lost access to my previous GitHub account due to 2FA recovery issues.
+
+This is my new official account. I am the original developer of **NwOS** and **NwC**. My username has changed slightly, but the projects are still mine.
+
+All future updates and development will continue here.
+
+Thank you for your understanding and support!
+
+**New official profile:** https://github.com/User0140155
+
 ## Compiler
 
 to compile File you need:
