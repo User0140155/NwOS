@@ -28,6 +28,8 @@
 #include "../../include/LogoNwOS.h"
 
 #include "font.h"
+#include "char_symbol.h"
+#include "utf8.h"
 
 #include "fb.h"
 #include "video_config.h"
@@ -3445,11 +3447,65 @@ void fs_cd(const char* name) {
 
     for (int i = 0; i < MAX_FILES; i++) {
         if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == current_dir &&           /* <<< NEW */
             strcmp(directory[i].name, search_name) == 0) {
             current_dir = i;
             return;
         }
     }
+}
+
+int fs_dir_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < MAX_FILES; i++)
+        if (directory[i].used && directory[i].parent == current_dir && i != 0) n++;
+    return n;
+}
+
+int fs_dir_entry(int index, const char** name, int* type, unsigned int* size)
+{
+    int n = 0;
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (directory[i].used && directory[i].parent == current_dir && i != 0)
+        {
+            if (n == index)
+            {
+                if (name) *name = directory[i].name;
+                if (type) *type = directory[i].type;
+                if (size) *size = directory[i].size;
+                return i;
+            }
+            n++;
+        }
+    }
+    return -1;
+}
+
+static char fs_path_buf[256];
+const char* fs_current_path(void)
+{
+    char stack[MAX_FILES][MAX_FILENAME];
+    int depth = 0;
+    int cur   = current_dir;
+    while (cur != 0 && depth < MAX_FILES)
+    {
+        strcpy(stack[depth], directory[cur].name);
+        depth++;
+        cur = directory[cur].parent;
+    }
+    int pos = 0;
+    fs_path_buf[pos++] = '/';
+    for (int i = depth - 1; i >= 0; i--)
+    {
+        int len = 0; while (stack[i][len]) len++;
+        if (pos + len + 2 >= 256) break;
+        for (int j = 0; j < len; j++) fs_path_buf[pos++] = stack[i][j];
+        if (i > 0) fs_path_buf[pos++] = '/';
+    }
+    fs_path_buf[pos] = '\0';
+    return fs_path_buf;
 }
 
 static int resolve_drive_arg(const char* args)
@@ -4617,7 +4673,7 @@ void kernel_main(void) {
     print("        Welcome to " OS_NAME " " OS_VERSION_STR "\n");
     print("================================\n\n");
     set_color(COLOR_LIGHT_GREEN);
-    print("copyright (c) User014015  2026\n\n");
+    print("copyright " STR_COPYRIGHT " User014015  2026\n\n");
     set_color(COLOR_LIGHT_GRAY);
     print("Github: https://github.com/User014015/NwOS"); print("\n");
     print("Scroll Up/Down: ⬆️⬇️\n");

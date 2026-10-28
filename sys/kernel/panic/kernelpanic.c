@@ -5,8 +5,6 @@
 
 void reboot(void);
 
-// Подключаем наш фреймбуфер (поправь путь, если нужно)
-// Предполагается, что fb.h лежит в sys/kernel/fb.h
 #include "../fb.h" 
 
 extern void print_int(int number);

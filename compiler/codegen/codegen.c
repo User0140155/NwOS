@@ -204,6 +204,17 @@ typedef enum
     OP_BREAK        = 0x82,
     OP_CONTINUE     = 0x83,
 
+    OP_LOAD_ARR  = 0x24,
+    OP_STORE_ARR = 0x25,
+
+    OP_FS_COUNT  = 0xA0,
+    OP_FS_NAME   = 0xA1,
+    OP_FS_TYPE   = 0xA2,
+    OP_FS_SIZE   = 0xA3,
+    OP_FS_ENTER  = 0xA4,
+    OP_FS_UP     = 0xA5,
+    OP_FS_PATH   = 0xA6,
+
     OP_HALT         = 0xFF
 
 } OpCode;
@@ -472,6 +483,12 @@ static void cg_expression(Codegen* cg, ASTNode* node)
             }
 
             cg_error(cg, "unsupported special expression");
+            break;
+
+        case AST_INDEX:
+            cg_expression(cg, node->child);
+            cg_emit_byte (cg, OP_LOAD_ARR);
+            cg_emit_string(cg, node->text);
             break;
 
         case AST_CALL:
@@ -893,6 +910,19 @@ static int cg_call(Codegen* cg, ASTNode* node)
         return 0;
     }
 
+    if (strcmp(node->text, "nw::fs_count") == 0) { cg_emit_byte(cg, OP_FS_COUNT); return 1; }
+    if (strcmp(node->text, "nw::fs_path")  == 0) { cg_emit_byte(cg, OP_FS_PATH);  return 1; }
+    if (strcmp(node->text, "nw::fs_name")  == 0)
+    { cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_NAME); return 1; }
+    if (strcmp(node->text, "nw::fs_type")  == 0)
+    { cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_TYPE); return 1; }
+    if (strcmp(node->text, "nw::fs_size")  == 0)
+    { cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_SIZE); return 1; }
+    if (strcmp(node->text, "nw::fs_enter") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_ENTER); return 0; }
+    if (strcmp(node->text, "nw::fs_up") == 0)
+    { cg_emit_byte(cg, OP_FS_UP); return 0; }
+
     if (node->text != NULL && strncmp(node->text, "nw::draw:", 9) == 0)
     {
         const char* shape = node->text + 9;
@@ -1131,9 +1161,19 @@ static void cg_statement(Codegen* cg, ASTNode* node)
             break;
 
         case AST_ASSIGNMENT:
-            cg_expression(cg, node->child);
-            cg_emit_byte(cg, OP_STORE);
-            cg_emit_string(cg, node->text);
+            if (node->left != NULL)
+            {
+                cg_expression(cg, node->left);
+                cg_expression(cg, node->child);
+                cg_emit_byte (cg, OP_STORE_ARR);
+                cg_emit_string(cg, node->text);
+            }
+            else
+            {
+                cg_expression(cg, node->child);
+                cg_emit_byte (cg, OP_STORE);
+                cg_emit_string(cg, node->text);
+            }
             break;
 
         case AST_ASM:

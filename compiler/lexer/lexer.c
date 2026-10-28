@@ -141,6 +141,32 @@ static void skip_whitespace(Lexer* lexer)
             }
         }
 
+        if (c == '/' && peek_char(lexer) == '/')
+        {
+            while (current_char(lexer) != '\0' &&
+                   current_char(lexer) != '\n')
+                advance(lexer);
+            continue;
+        }
+
+        if (c == '/' && peek_char(lexer) == '*')
+        {
+            advance(lexer);
+            advance(lexer);
+
+            while (current_char(lexer) != '\0' &&
+                   !(current_char(lexer) == '*' &&
+                     peek_char(lexer) == '/'))
+                advance(lexer);
+
+            if (current_char(lexer) == '*')
+            {
+                advance(lexer);
+                advance(lexer);
+            }
+            continue;
+        }
+
         break;
     }
 }

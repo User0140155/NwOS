@@ -1,4 +1,5 @@
 #include "fb.h"
+#include "char_symbol.h"
 #include "wallpaper_data.h"
 
 extern uint32_t multiboot_info_ptr;
@@ -106,6 +107,15 @@ static const uint8_t font8x8_basic[128][8] = {
     ['}']={0x07,0x0C,0x0C,0x38,0x0C,0x0C,0x07,0x00},
     ['~']={0x6E,0x3B,0x00,0x00,0x00,0x00,0x00,0x00},
 };
+
+static const uint8_t* fb_glyph_for(unsigned char c) {
+    const uint8_t* symbol = char_symbol_glyph(c);
+
+    if (symbol)
+        return symbol;
+
+    return font8x8_basic[c & 0x7F];
+}
 
 static uint32_t vga_to_rgb(uint8_t color) {
     static const uint32_t pal[16] = {
@@ -225,7 +235,7 @@ void fb_draw_char(int x, int y, char c, uint8_t color) {
     uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
     uint32_t bg_rgb = vga_to_rgb((color >> 4) & 0x0F);
     
-    const uint8_t* glyph = font8x8_basic[(uint8_t)c & 0x7F];
+    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
     
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
@@ -248,7 +258,7 @@ void fb_draw_char_transparent(int x, int y, char c, uint8_t color) {
 
     uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
 
-    const uint8_t* glyph = font8x8_basic[(uint8_t)c & 0x7F];
+    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
 
     for (int row = 0; row < 8; row++) {
         for (int col = 0; col < 8; col++) {
@@ -437,8 +447,8 @@ void fb_draw_text(int x, int y, const char* text, uint32_t color) {
             continue;
         }
 
-        unsigned char ch = (unsigned char)text[i] & 0x7F;
-        const uint8_t* glyph = font8x8_basic[ch];
+        unsigned char ch = (unsigned char)text[i];
+        const uint8_t* glyph = fb_glyph_for(ch);
 
         for (int row = 0; row < 8; row++) {
             for (int col = 0; col < 8; col++) {

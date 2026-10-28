@@ -37,7 +37,7 @@ typedef enum
     AST_IDENTIFIER,
 
     AST_BINARY_OPERATION,
-
+    AST_INDEX,
     AST_CALL
 
 } ASTNodeType;

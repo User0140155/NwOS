@@ -8,26 +8,6 @@
 #define NWC_MOD_CONST    2u
 #define NWC_MOD_NEEDED   4u
 
-/*
-* File.nw --> File.nwo
-* gonna be available in kernel.c
-* and also add .lnw (low level lang)
-* to make second kernel.c (or just drivers)
-* but lnw gonna be trusted only by sustem
-* only expert people gonna uset his
-* btw it gives pc control
-* ----
-* COMPILER:
-* compile exe
-* ./compiler/compilerMain.c
-* compile nw
-* ./compiler/nwc.exe /nw/file.nw
-*
-* Update:
-* Compiles into .nwo and can be launched
-* Run from /bin/ or /sys/
-*/
-
 static void parser_advance(Parser* parser)
 {
     parser->previous = parser->current;
@@ -391,7 +371,15 @@ static ASTNode* parse_primary(Parser* parser)
 
             if (strcmp(name, "mouse_x") == 0 ||
                 strcmp(name, "mouse_y") == 0 ||
-                strcmp(name, "mouse_buttons") == 0)
+                strcmp(name, "mouse_buttons") == 0 ||
+                strcmp(name, "fs_count") == 0 ||
+                strcmp(name, "fs_name") == 0 ||
+                strcmp(name, "fs_type") == 0 ||
+                strcmp(name, "fs_size") == 0 ||
+                strcmp(name, "fs_path") == 0 ||
+                strcmp(name, "poweroff") == 0 ||
+                strcmp(name, "reboot") == 0 ||
+                strcmp(name, "wallpaper") == 0)
             {
                 char builtin[64];
 
@@ -406,8 +394,29 @@ static ASTNode* parse_primary(Parser* parser)
                 node->text = copy_text(builtin);
 
                 parser_advance(parser);
-                parser_expect(parser, TOKEN_LPAREN);
-                parser_expect(parser, TOKEN_RPAREN);
+
+                if (parser_match(parser, TOKEN_LPAREN))
+                {
+                    ASTNode* first = NULL;
+                    ASTNode* last = NULL;
+
+                    while (!parser_is(parser, TOKEN_RPAREN) &&
+                           !parser_is(parser, TOKEN_EOF))
+                    {
+                        ast_append(
+                            &first,
+                            &last,
+                            parse_expression(parser)
+                        );
+
+                        if (!parser_match(parser, TOKEN_COMMA))
+                            break;
+                    }
+
+                    parser_expect(parser, TOKEN_RPAREN);
+
+                    node->child = first;
+                }
 
                 return node;
             }
@@ -423,15 +432,23 @@ static ASTNode* parse_primary(Parser* parser)
 
     if (parser_is(parser, TOKEN_IDENTIFIER))
     {
-        node = ast_new(
-            AST_IDENTIFIER,
-            parser->current.line,
-            parser->current.column
-        );
-
-        node->text = copy_text(parser->current.text);
+        char* name = copy_text(parser->current.text);
+        int line0 = parser->current.line;
+        int col0 = parser->current.column;
 
         parser_advance(parser);
+
+        if (parser_match(parser, TOKEN_LBRACKET))
+        {
+            ASTNode* idx_node = ast_new(AST_INDEX, line0, col0);
+            idx_node->text = name;
+            idx_node->child = parse_expression(parser);
+            parser_expect(parser, TOKEN_RBRACKET);
+            return idx_node;
+        }
+
+        node = ast_new(AST_IDENTIFIER, line0, col0);
+        node->text = name;
 
         if (parser_match(parser, TOKEN_LPAREN))
         {
@@ -1125,25 +1142,57 @@ static ASTNode* parse_nw_statement(Parser* parser)
         if (strcmp(name, "mouse_x") == 0 ||
             strcmp(name, "mouse_y") == 0 ||
             strcmp(name, "mouse_buttons") == 0 ||
+            strcmp(name, "fs_count") == 0 ||
+            strcmp(name, "fs_name")  == 0 ||
+            strcmp(name, "fs_type")  == 0 ||
+            strcmp(name, "fs_size")  == 0 ||
+            strcmp(name, "fs_path")  == 0 ||
             strcmp(name, "poweroff") == 0 ||
             strcmp(name, "reboot") == 0 ||
-            strcmp(name, "wallpaper") == 0)
+            strcmp(name, "wallpaper") == 0 )
         {
-            char builtin[64];
-            ASTNode* node;
+        char builtin[64];
+        snprintf(builtin, sizeof(builtin), "nw::%s", name);
 
-            snprintf(builtin, sizeof(builtin), "nw::%s", name);
+        ASTNode* n = ast_new(AST_CALL,
+                             parser->current.line,
+                             parser->current.column);
+        n->text = copy_text(builtin);
+        parser_advance(parser);
+        parser_expect(parser, TOKEN_LPAREN);
 
-            node = ast_new(AST_CALL, line, column);
-            node->text = copy_text(builtin);
-
-            parser_advance(parser);
-            parser_expect(parser, TOKEN_LPAREN);
-            parser_expect(parser, TOKEN_RPAREN);
-            parser_expect(parser, TOKEN_SEMICOLON);
-
-            return node;
+        ASTNode* first = NULL; ASTNode* last = NULL;
+        while (!parser_is(parser, TOKEN_RPAREN) && !parser_is(parser, TOKEN_EOF))
+        {
+            ast_append(&first, &last, parse_expression(parser));
+            if (!parser_match(parser, TOKEN_COMMA)) break;
         }
+        parser_expect(parser, TOKEN_RPAREN);
+        n->child = first;
+        return n;
+    }
+
+    if (strcmp(name, "fs_enter") == 0)
+    {
+        ASTNode* node = ast_new(AST_CALL, line, column);
+        node->text = copy_text("nw::fs_enter");
+        parser_advance(parser);
+        parser_expect(parser, TOKEN_LPAREN);
+        node->child = parse_expression(parser);
+        parser_expect(parser, TOKEN_RPAREN);
+        parser_expect(parser, TOKEN_SEMICOLON);
+        return node;
+    }
+    if (strcmp(name, "fs_up") == 0)
+    {
+        ASTNode* node = ast_new(AST_CALL, line, column);
+        node->text = copy_text("nw::fs_up");
+        parser_advance(parser);
+        parser_expect(parser, TOKEN_LPAREN);
+        parser_expect(parser, TOKEN_RPAREN);
+        parser_expect(parser, TOKEN_SEMICOLON);
+        return node;
+    }
     }
 
     if (parser_is(parser, TOKEN_OUT))
@@ -1670,18 +1719,27 @@ static ASTNode* parse_while(Parser* parser)
 static ASTNode* parse_assignment_statement(Parser* parser)
 {
     ASTNode* node;
-
-    int line = parser->current.line;
+    int line   = parser->current.line;
     int column = parser->current.column;
 
-    node = ast_new(AST_ASSIGNMENT, line, column);
-    node->text = copy_text(parser->current.text);
-
+    char* name = copy_text(parser->current.text);
     parser_advance(parser);
-    parser_expect(parser, TOKEN_ASSIGN);
-    node->child = parse_expression(parser);
-    parser_expect(parser, TOKEN_SEMICOLON);
 
+    ASTNode* index = NULL;
+    if (parser_match(parser, TOKEN_LBRACKET))
+    {
+        index = parse_expression(parser);
+        parser_expect(parser, TOKEN_RBRACKET);
+    }
+
+    parser_expect(parser, TOKEN_ASSIGN);
+
+    node = ast_new(AST_ASSIGNMENT, line, column);
+    node->text  = name;
+    node->left  = index;
+    node->child = parse_expression(parser);
+
+    parser_expect(parser, TOKEN_SEMICOLON);
     return node;
 }
 

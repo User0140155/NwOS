@@ -25,8 +25,33 @@ void fb_draw_wallpaper(void);
 void graphics_begin(void);
 void sleep(unsigned int ms);
 
+
+#define OP_LOAD_ARR    0x24
+#define OP_STORE_ARR   0x25
+
+#define OP_FS_COUNT    0xA0
+#define OP_FS_NAME     0xA1
+#define OP_FS_TYPE     0xA2
+#define OP_FS_SIZE     0xA3
+#define OP_FS_ENTER    0xA4
+#define OP_FS_UP       0xA5
+#define OP_FS_PATH     0xA6
+
+#define OP_JUMP         0x80
+#define OP_JUMP_FALSE   0x81
+
 #define NWO_STACK_SIZE      128
-#define NWO_VARIABLES       32
+#define NWO_VARIABLES       64
+#define NWO_ARRAY_POOL_SIZE 4096
+
+extern int  fs_dir_count(void);
+extern int  fs_dir_entry(int, const char**, int*, unsigned int*);
+extern const char* fs_current_path(void);
+extern void fs_cd(const char* name);
+int  fs_dir_count(void);
+int  fs_dir_entry(int index, const char** name, int* type, unsigned int* size);
+const char* fs_current_path(void);
+void fs_cd(const char* name);
 #define NWO_NAME_SIZE       32
 #define NWO_INPUT_SIZE      256
 
@@ -138,18 +163,17 @@ typedef struct
 typedef struct
 {
     int used;
-
     char name[NWO_NAME_SIZE];
-
     unsigned char declared_type;
-
     int is_array;
-
     int scope;
-
     VmValue value;
-
+    int array_start;
+    unsigned int array_size;
 } VmVariable;
+
+static VmValue vm_array_pool[NWO_ARRAY_POOL_SIZE];
+static int     vm_array_pool_used = 0;
 
 typedef struct
 {
@@ -374,6 +398,8 @@ static void vm_clear_variables(
         vm->variables[i].declared_type = 0;
         vm->variables[i].is_array = 0;
         vm->variables[i].scope = 0;
+        vm->variables[i].array_start = -1;
+        vm->variables[i].array_size = 0;
 
         vm->variables[i].name[0] = '\0';
 
@@ -1013,9 +1039,23 @@ static int vm_find_function(
                 break;
 
             case OP_PUSH_STRING:
+                if (!vm_skip_name(program, &ip))
+                    return 0;
+                break;
+
+            case OP_FS_COUNT:
+            case OP_FS_NAME:
+            case OP_FS_TYPE:
+            case OP_FS_SIZE:
+            case OP_FS_ENTER:
+            case OP_FS_UP:
+            case OP_FS_PATH:
+                break;
             case OP_LOAD:
             case OP_STORE:
             case OP_IN_STORE:
+            case OP_LOAD_ARR:
+            case OP_STORE_ARR:
                 if (!vm_skip_name(program, &ip))
                     return 0;
                 break;
@@ -1126,6 +1166,8 @@ int nwo_execute(
     vm.result = 0;
 
     vm_clear_variables(&vm);
+
+    vm_array_pool_used = 0;
 
     vm.text_color = 7;
     set_color(vm.text_color);
@@ -1398,28 +1440,28 @@ int nwo_execute(
                 break;
             }
 
-            case OP_DECLARE_ARR:
-            {
-                unsigned int len;
-                const char* name;
-                unsigned char type;
-                unsigned int size;
-                char temp[NWO_NAME_SIZE];
-                unsigned int i;
-                int index;
+        case OP_DECLARE_ARR:            
+    {
+        unsigned int len;
+        const char* name;
+        unsigned char type;
+        unsigned int size;
+        char temp[NWO_NAME_SIZE];
+        unsigned int i;
+        int index;
+        unsigned int k;
 
-                if (!vm_read_u32(&vm, &len))
-                    return -1;
+        if (!vm_read_u32(&vm, &len))
+            return -1;
 
-                if (len >= NWO_NAME_SIZE)
-                {
-                    print(
-                        "[NWO VM] Variable name too long.\n");
-                    return -1;
-                }
+        if (len >= NWO_NAME_SIZE)
+        {
+            print("[NWO VM] Variable name too long.\n");
+                return -1;
+            }
 
-                if (vm.ip + len > program->code_size)
-                    return -1;
+            if (vm.ip + len > program->code_size)
+                return -1;
 
                 name = (const char*)(program->code + vm.ip);
                 vm.ip += len;
@@ -1429,8 +1471,6 @@ int nwo_execute(
 
                 if (!vm_read_u32(&vm, &size))
                     return -1;
-
-                (void)size;
 
                 for (i = 0; i < len; i++)
                     temp[i] = name[i];
@@ -1443,6 +1483,27 @@ int nwo_execute(
                     return -1;
 
                 vm.variables[index].is_array = 1;
+                vm.variables[index].array_size = size;
+                vm.variables[index].array_start = -1;
+
+                if (type != 6 && type != 7 && size > 0)
+                {
+                    if (vm_array_pool_used + (int)size > NWO_ARRAY_POOL_SIZE)
+                    {
+                        print("[NWO VM] Array pool exhausted.\n");
+                        return -1;
+                    }
+
+                  vm.variables[index].array_start = vm_array_pool_used;
+                  vm_array_pool_used += (int)size;
+
+                   for (k = 0; k < size; k++)
+                   {
+                       vm_array_pool[vm.variables[index].array_start + k].type = VM_INT;
+                       vm_array_pool[vm.variables[index].array_start + k].as.integer = 0;
+                       vm_array_pool[vm.variables[index].array_start + k].string_length = 0;
+                   }
+               }
 
                 break;
             }
@@ -1611,6 +1672,143 @@ int nwo_execute(
 
                 break;
             }
+
+            case OP_LOAD_ARR:
+            {
+                unsigned int len;
+                char temp[NWO_NAME_SIZE];
+                const char* name;
+                VmValue idx_val;
+                unsigned int i;
+                int var_idx;
+
+                if (!vm_read_u32(&vm, &len)) return -1;
+                if (len >= NWO_NAME_SIZE) return -1;
+                if (vm.ip + len > program->code_size) return -1;
+                name = (const char*)(program->code + vm.ip);
+                vm.ip += len;
+
+                for (i = 0; i < len; i++) temp[i] = name[i];
+                temp[len] = '\0';
+
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                int idx = vm_to_int(&idx_val);
+
+                var_idx = vm_find_variable(&vm, temp);
+                if (var_idx == -1) { print("[NWO VM] Unknown array.\n"); return -1; }
+
+                VmVariable* v = &vm.variables[var_idx];
+                if (!v->is_array || v->array_start < 0 ||
+                    idx < 0 || idx >= (int)v->array_size)
+                {
+                    print("[NWO VM] Array index out of bounds.\n");
+                    return -1;
+                }
+
+                if (!vm_push(&vm, vm_array_pool[v->array_start + idx])) return -1;
+                break;
+            }
+
+            case OP_STORE_ARR:
+            {
+                unsigned int len;
+                char temp[NWO_NAME_SIZE];
+                const char* name;
+                VmValue val, idx_val;
+                unsigned int i;
+                int var_idx;
+
+                if (!vm_read_u32(&vm, &len)) return -1;
+                if (len >= NWO_NAME_SIZE) return -1;
+                if (vm.ip + len > program->code_size) return -1;
+                name = (const char*)(program->code + vm.ip);
+                vm.ip += len;
+
+                for (i = 0; i < len; i++) temp[i] = name[i];
+                temp[len] = '\0';
+
+                if (!vm_pop(&vm, &val))     return -1;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                int idx = vm_to_int(&idx_val);
+
+                var_idx = vm_find_variable(&vm, temp);
+                if (var_idx == -1) { print("[NWO VM] Unknown array.\n"); return -1; }
+
+                VmVariable* v = &vm.variables[var_idx];
+                if (!v->is_array || v->array_start < 0 ||
+                    idx < 0 || idx >= (int)v->array_size)
+                {
+                    print("[NWO VM] Array index out of bounds.\n");
+                    return -1;
+                }
+
+                vm_array_pool[v->array_start + idx] = val;
+                break;
+            }
+
+            case OP_FS_COUNT:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = fs_dir_count();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_PATH:
+            {
+                const char* p = fs_current_path();
+                VmValue v; v.type = VM_STRING;
+                unsigned int n = 0; while (p[n]) n++;
+                v.string_length = n; v.as.string = p;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_NAME:
+            {
+                VmValue idx_val;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                const char* nm = 0; int t = 0; unsigned int s = 0;
+                fs_dir_entry(vm_to_int(&idx_val), &nm, &t, &s);
+                VmValue v; v.type = VM_STRING;
+                if (nm == 0) { v.string_length = 0; v.as.string = ""; }
+                else { unsigned int n = 0; while (nm[n]) n++;
+                       v.string_length = n; v.as.string = nm; }
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_TYPE:
+            {
+                VmValue idx_val;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                const char* nm = 0; int t = 0; unsigned int s = 0;
+                fs_dir_entry(vm_to_int(&idx_val), &nm, &t, &s);
+                VmValue v; v.type = VM_INT; v.as.integer = t;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_SIZE:
+            {
+                VmValue idx_val;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                const char* nm = 0; int t = 0; unsigned int s = 0;
+                fs_dir_entry(vm_to_int(&idx_val), &nm, &t, &s);
+                VmValue v; v.type = VM_INT; v.as.integer = (int)s;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_ENTER:
+            {
+                VmValue val;
+                if (!vm_pop(&vm, &val)) return -1;
+                char buf[256];
+                unsigned int n = val.type == VM_STRING ? val.string_length : 0;
+                if (n > 255) n = 255;
+                for (unsigned int i = 0; i < n; i++) buf[i] = val.as.string[i];
+                buf[n] = '\0';
+                fs_cd(buf);
+                break;
+            }
+            case OP_FS_UP:
+                fs_cd("..");
+                break;
 
             case OP_ADD:
             case OP_SUB:

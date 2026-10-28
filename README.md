@@ -29,6 +29,18 @@ A small x86 operating system written in C and NASM.
 - Compiler
 - Network
 
+## ⚠️ Official Developer Account Update
+
+I lost access to my previous GitHub account due to 2FA recovery issues.
+
+This is my new official account. I am the original developer of **NwOS** and **NwC**. My username has changed slightly, but the projects are still mine.
+
+All future updates and development will continue here.
+
+Thank you for your understanding and support!
+
+**New official profile:** https://github.com/User0140155
+
 ## Compiler
 
 to compile File you need:
@@ -46,17 +58,37 @@ learn NwC (tutorial file: NWCTutorial)
 - 8.Hangman
 - 9.Tic Tac Toe
 
-## Build from qemu
+## Build and run
 
-Download Qemu
+download iso from releases,
+or use this:
+```bash
+git clone https://github.com/User0140155/NwOS/
+bash disk
+bash build.sh
+bash run.sh
+```
 
-Then type this:
+Then run:
+```bash
+qemu-system-x86_64 \
+    -boot d \
+    -cdrom NwOS.iso
+    -m 128M \
+    -nic user,model=e1000 \
+    -drive file=disk.img,format=raw,if=ide,index=0 \
+    -display sdl,grab-mod=rctrl
+```
 
-cd C:/Path/to/nwos.img
+(Before this, make sure that you has a disk)
 
-and then enter this:
+```bash
+qemu-img create -f raw disk.img 50M
+```
 
-qemu-system-i386 -drive file=NwOS.img,format=raw,index=0,media=disk
+## Compilers to build
+
+clang, nasm, ld, linux (for .sh), nwc (optional)
 
 ## Run
 
