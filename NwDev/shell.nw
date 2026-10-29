@@ -22,7 +22,7 @@
             break;
         }
         else if (strcmp(cmd, "date create") == 0) {
-            date();
+            call date();
         }
     }
 }

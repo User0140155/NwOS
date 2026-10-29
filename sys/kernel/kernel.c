@@ -39,20 +39,22 @@
 void disk_death(void);
 void game_snake(void);
 
+
+
 /*
-* MADE BY: User014015
-* Created: 28 july 2026 (v.0.1)
-* Name: NwOS
-* Github: https://github.com/User014015/NwOS
-* License MIT: (github file: LICENSE)
+* I am original User014015
+* My new nickname is: User0140155
+* I lost my account so now i have this
 */
 
-// guides
+
+
 /*
-
-draw picture:         fb_draw_image(288, 168, LogoNwOS, LOGO_NWOS_WIDTH, LOGO_NWOS_HEIGHT);
-or something like this (make a .h file that contains data)
-
+* MADE BY: User014015 (Lost accout, new is: User0140155)
+* Created: 28 july 2026 (v.0.1)
+* Name: NwOS
+* Github: https://github.com/User0140155/NwOS
+* License MIT: (github file: LICENSE)
 */
 
 void putchar_os(char c);
@@ -68,6 +70,8 @@ static void shell_execute(const char* command);
 void nwo_run(const char* filename);
 void nwf_cpu_name(char* out);
 unsigned int nwf_ram_mb(void);
+unsigned int nwf_disk_used_kb(void);
+unsigned int nwf_disk_files(void);
 void read_line(char* buffer, int max);
 
 unsigned int rand_simple(void);
@@ -154,7 +158,7 @@ typedef unsigned short uint16_t;
 
 #define MAX_FILES 64
 #define MAX_FILENAME 32
-#define MAX_FILE_SIZE 16384
+#define MAX_FILE_SIZE 20480
 
 #define FS_TYPE_FILE 0
 #define FS_TYPE_DIR  1
@@ -174,10 +178,12 @@ typedef struct {
     void (*sleep)(unsigned int ms);
 } gui_api_t;
 
-#define FS_FILE_SECTORS 32
+#define FS_FILE_SECTORS 40
 #define FS_MAGIC_LBA   199
 #define FS_MAGIC_VALUE 0x4E774653  // "NwFS"
 #define FS_SEQ_OFFSET  4           /* install sequence inside the magic sector */
+#define FS_VER_OFFSET  8           /* filesystem layout version */
+#define FS_FORMAT_VER  2
 
 static DirEntry directory[MAX_FILES];
 static uint16_t current_dir = 0;
@@ -190,6 +196,7 @@ static unsigned char prompt_color = COLOR_CYAN;
 
 static int timezone_offset = 0; /* UTC+0 by default */
 static int custom_time_offset = 0;
+static volatile unsigned long long idle_us_accum = 0;
 static int use_custom_time = 0;
 static int custom_day = -1;
 static int custom_month = -1;
@@ -484,6 +491,7 @@ void graphics_begin(void)
 
     fb_graphics_mode = 1;
 
+    fb_backbuffer_begin();
     fb_clear(0x000000);
     line_start = 0;
     line_count = 0;
@@ -500,6 +508,7 @@ void graphics_end(void)
 
     fb_graphics_mode = 0;
 
+    fb_backbuffer_end();
     fb_clear(0x000000);
     line_start = 0;
     line_count = 0;
@@ -2043,7 +2052,8 @@ static int fs_drive_has_fs(int idx)
     if (idx < 0 || idx >= ata_drive_count()) return 0;
     if (ata_read_sector_d(idx, FS_MAGIC_LBA, sector) != 0) return 0;
 
-    return *(unsigned int*)sector == FS_MAGIC_VALUE;
+    return *(unsigned int*)sector == FS_MAGIC_VALUE &&
+           *(unsigned int*)(sector + FS_VER_OFFSET) == FS_FORMAT_VER;
 }
 
 static const char* disk_position_name(ata_drive_t* d)
@@ -2249,6 +2259,165 @@ static unsigned int fs_drive_entry_count(int idx)
     return count;
 }
 
+unsigned int nwf_disk_used_kb(void)
+{
+    return (unsigned int)(fs_drive_used_bytes(0, 0) / 1024ULL);
+}
+
+unsigned int nwf_disk_files(void)
+{
+    unsigned int files = 0;
+    (void)fs_drive_used_bytes(0, &files);
+    return files;
+}
+
+int nwf_tz_get(void)
+{
+    return timezone_offset;
+}
+
+void nwf_tz_set(int hours)
+{
+    if (hours < -12) hours = -12;
+    if (hours > 14)  hours = 14;
+    timezone_offset = hours;
+}
+
+int nwf_cpu_load(void)
+{
+    static unsigned long long prev_total = 0;
+    static unsigned long long prev_idle  = 0;
+    unsigned long long total = timer_us();
+    unsigned long long idle  = idle_us_accum;
+    unsigned long long dt;
+    unsigned long long di;
+    int load;
+
+    if (prev_total == 0)
+    {
+        prev_total = total;
+        prev_idle  = idle;
+        return 0;
+    }
+
+    dt = total - prev_total;
+    di = idle - prev_idle;
+    prev_total = total;
+    prev_idle  = idle;
+
+    if (dt == 0)
+        return 0;
+    if (di > dt)
+        di = dt;
+
+    load = (int)(((dt - di) * 100ULL) / dt);
+    if (load < 0) load = 0;
+    if (load > 100) load = 100;
+    return load;
+}
+
+int nwf_gpu_load(void)
+{
+    static unsigned long long prev_total = 0;
+    static unsigned long long prev_gpu   = 0;
+    unsigned long long total = timer_us();
+    unsigned long long gpu   = fb_get_present_us();
+    unsigned long long dt;
+    unsigned long long dg;
+    int load;
+
+    if (prev_total == 0)
+    {
+        prev_total = total;
+        prev_gpu   = gpu;
+        return 0;
+    }
+
+    dt = total - prev_total;
+    dg = gpu - prev_gpu;
+    prev_total = total;
+    prev_gpu   = gpu;
+
+    if (dt == 0)
+        return 0;
+    if (dg > dt)
+        dg = dt;
+
+    load = (int)((dg * 100ULL) / dt);
+    if (load < 0) load = 0;
+    if (load > 100) load = 100;
+    return load;
+}
+
+int nwf_fs_create(const char* name)
+{
+    if (name == 0 || name[0] == '\0') return 0;
+    if (fs_find(name) != -1) return 0;
+
+    fs_quiet = 1;
+    fs_create(name);
+    fs_quiet = 0;
+
+    return fs_find(name) != -1;
+}
+
+int nwf_fs_mkdir(const char* name)
+{
+    if (name == 0 || name[0] == '\0') return 0;
+    if (fs_find(name) != -1) return 0;
+
+    fs_quiet = 1;
+    fs_mkdir(name);
+    fs_quiet = 0;
+
+    return fs_find(name) != -1;
+}
+
+int nwf_fs_delete(const char* name)
+{
+    if (name == 0 || name[0] == '\0') return 0;
+    if (fs_find(name) == -1) return 0;
+
+    fs_quiet = 1;
+    fs_delete(name);
+    fs_quiet = 0;
+
+    return fs_find(name) == -1;
+}
+
+int nwf_fs_write(const char* name, const char* text)
+{
+    int index;
+
+    if (name == 0 || name[0] == '\0') return 0;
+    if (text == 0) text = "";
+
+    index = fs_find(name);
+    fs_quiet = 1;
+
+    if (index == -1)
+    {
+        fs_create(name);
+        index = fs_find(name);
+    }
+
+    if (index == -1)
+    {
+        fs_quiet = 0;
+        return 0;
+    }
+
+    fs_store_data(index, text, "File written.\n");
+    fs_quiet = 0;
+    return 1;
+}
+
+int nwf_fs_read(const char* name, char* buffer, unsigned int max_size)
+{
+    if (name == 0 || buffer == 0 || max_size == 0) return 0;
+    return fs_read_text(name, buffer, max_size);
+}
+
 static unsigned int fs_drive_seq(int idx)
 {
     unsigned char sector[512];
@@ -2299,7 +2468,8 @@ static int fs_find_drive_with_fs(void)
 static int fs_is_formatted(void) {
     unsigned char sector[512];
     if (ata_read_sector_d(fs_current_drive, FS_MAGIC_LBA, sector) != 0) return 0;
-    return *(unsigned int*)sector == FS_MAGIC_VALUE;
+    return *(unsigned int*)sector == FS_MAGIC_VALUE &&
+           *(unsigned int*)(sector + FS_VER_OFFSET) == FS_FORMAT_VER;
 }
 
 static void fs_mark_formatted(unsigned int seq) {
@@ -2307,6 +2477,7 @@ static void fs_mark_formatted(unsigned int seq) {
     for (int k = 0; k < 512; k++) sector[k] = 0;
     *(unsigned int*)sector = FS_MAGIC_VALUE;
     *(unsigned int*)(sector + FS_SEQ_OFFSET) = seq;
+    *(unsigned int*)(sector + FS_VER_OFFSET) = FS_FORMAT_VER;
     ata_write_sector_d(fs_current_drive, FS_MAGIC_LBA, sector);
 }
 
@@ -2584,6 +2755,7 @@ void sleep(unsigned int ms)
 {
     if (ms == 0) return;
 
+    unsigned long long idle_start = timer_us();
     unsigned long long start = timer_ms();
     unsigned long long target = start + ms;
 
@@ -2591,6 +2763,8 @@ void sleep(unsigned int ms)
     {
         __asm__ volatile ("pause");
     }
+
+    idle_us_accum += timer_us() - idle_start;
 }
 
 #define MENU_INNER 34
@@ -3253,11 +3427,11 @@ void fs_store_data(int index, const char* text, const char* success_message)
 
     if (text[i] != '\0')
     {
-        print_error("Text is too long. Maximum is 16384 characters.\n");
+        print_error("Text is too long. Maximum is 20480 characters.\n");
         return;
     }
 
-    print_success(success_message);
+    if (!fs_quiet) print_success(success_message);
 }
 
 void fs_write(const char* name, const char* text)
@@ -3338,7 +3512,7 @@ void fs_delete(const char* name)
 
     fs_save_directory();
 
-    print_success("File deleted.\n");
+    if (!fs_quiet) print_success("File deleted.\n");
 }
 
 void fs_create(const char* name) {
@@ -3767,11 +3941,11 @@ static const Command commands[] =
     CMD    ("format",       fs_format,       "format  - erase all files"),
     CMD    ("panic safe",   cmd_panic_safe,  "panic safe|fatal - test kernel panic"),
     CMD    ("panic fatal",  cmd_panic_fatal, 0),
-    CMD_ARG("create",       fs_create,       "create <file> - create file"),
-    CMD_ARG("read",         fs_read,         "read <file> - read file"),
+    CMD_ARG("touch",       fs_create,       "touch <file> - create file"),
+    CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
     CMD_ARG("edit",         redactor,        "edit <file> - edit a file"),
-    CMD_ARG("delete",       fs_delete,       "delete <file> - delete file"),
+    //CMD_ARG("delete",       fs_delete,       "delete <file> - delete file"),
     /* the joke commands are exact matches, so they have to stay in front
        of "rm" (which is matched by prefix) */
     CMD    ("rm -rf /",     death_screen,    0),
@@ -4675,7 +4849,7 @@ void kernel_main(void) {
     set_color(COLOR_LIGHT_GREEN);
     print("copyright " STR_COPYRIGHT " User014015  2026\n\n");
     set_color(COLOR_LIGHT_GRAY);
-    print("Github: https://github.com/User014015/NwOS"); print("\n");
+    print("Github: https://github.com/User0140155/NwOS"); print("\n");
     print("Scroll Up/Down: ⬆️⬇️\n");
     print("Type 'help' for commands.\n\n");
     set_color(COLOR_GREEN);

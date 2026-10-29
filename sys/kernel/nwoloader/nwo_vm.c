@@ -16,14 +16,31 @@ int mouse_buttons(void);
 void poweroff(void);
 void reboot(void);
 void get_time(int* hour, int* minute, int* second);
+int nwf_tz_get(void);
+void nwf_tz_set(int hours);
+int nwf_cpu_load(void);
+int nwf_gpu_load(void);
+int nwf_fs_create(const char* name);
+int nwf_fs_mkdir(const char* name);
+int nwf_fs_delete(const char* name);
+int nwf_fs_write(const char* name, const char* text);
+int nwf_fs_read(const char* name, char* buffer, unsigned int max_size);
+void fb_draw_cursor(int x, int y);
 void fb_draw_rect(int x, int y, int w, int h, unsigned int color);
 void fb_draw_frame(int x, int y, int w, int h, unsigned int color);
 void fb_draw_cube_default(unsigned int color);
 void fb_draw_window(int x, int y, int w, int h, unsigned int color, const char* title);
 void fb_draw_text(int x, int y, const char* text, unsigned int color);
+void fb_draw_int(int x, int y, int value, unsigned int color);
 void fb_draw_wallpaper(void);
+void fb_present(void);
+void fb_set_backbuffer_enabled(int enabled);
 void graphics_begin(void);
 void sleep(unsigned int ms);
+unsigned int nwf_ram_mb(void);
+unsigned int nwf_disk_used_kb(void);
+unsigned int nwf_disk_files(void);
+unsigned long long timer_ms(void);
 
 
 #define OP_LOAD_ARR    0x24
@@ -36,12 +53,35 @@ void sleep(unsigned int ms);
 #define OP_FS_ENTER    0xA4
 #define OP_FS_UP       0xA5
 #define OP_FS_PATH     0xA6
+#define OP_RAM_MB      0xA7
+#define OP_UPTIME_SEC  0xA8
+#define OP_DISK_KB     0xA9
+#define OP_DISK_FILES  0xAA
+#define OP_TIME_HOUR   0xAB
+#define OP_TIME_MINUTE 0xAC
+#define OP_TIME_SECOND 0xAD
+#define OP_TZ_GET      0xAE
+#define OP_TZ_SET      0xAF
+#define OP_CPU_LOAD    0xB0
+#define OP_GPU_LOAD    0xB1
+#define OP_CURSOR      0xB2
+#define OP_FS_CREATE   0xB3
+#define OP_FS_DELETE   0xB4
+#define OP_FS_WRITE    0xB5
+#define OP_FS_MKDIR    0xB6
+#define OP_BUF_CLEAR   0xB7
+#define OP_BUF_LEN     0xB8
+#define OP_BUF_PUT     0xB9
+#define OP_BUF_BACK    0xBA
+#define OP_BUF_TEXT    0xBB
+#define OP_BUF_LOAD    0xBC
+#define OP_BUF_SAVE    0xBD
 
 #define OP_JUMP         0x80
 #define OP_JUMP_FALSE   0x81
 
 #define NWO_STACK_SIZE      128
-#define NWO_VARIABLES       64
+#define NWO_VARIABLES       128
 #define NWO_ARRAY_POOL_SIZE 4096
 
 extern int  fs_dir_count(void);
@@ -60,6 +100,14 @@ void fs_cd(const char* name);
 
 static char vm_string_storage[NWO_VARIABLES][NWO_INPUT_SIZE];
 
+#define VM_LITERAL_SLOTS 16
+static char vm_literal_storage[VM_LITERAL_SLOTS][NWO_INPUT_SIZE];
+static int  vm_literal_next = 0;
+
+#define VM_FILE_BUF_SIZE 4096
+static char vm_file_buf[VM_FILE_BUF_SIZE];
+static int  vm_file_len = 0;
+
 #define OP_NOP          0x00
 
 #define OP_PUSH_INT     0x10
@@ -68,6 +116,8 @@ static char vm_string_storage[NWO_VARIABLES][NWO_INPUT_SIZE];
 #define OP_PUSH_CHAR    0x13
 #define OP_PUSH_BOOL    0x14
 #define OP_POP          0x15
+#define OP_PUSH_INT8    0x17
+#define OP_PUSH_INT32   0x18
 
 #define OP_LOAD         0x20
 #define OP_STORE        0x21
@@ -85,6 +135,9 @@ static char vm_string_storage[NWO_VARIABLES][NWO_INPUT_SIZE];
 #define OP_GT           0x43
 #define OP_LTE          0x44
 #define OP_GTE          0x45
+#define OP_AND          0x46
+#define OP_OR           0x47
+#define OP_NOT          0x48
 
 #define OP_STRCMP       0x49
 #define OP_STRNCMP      0x4A
@@ -121,6 +174,8 @@ static char vm_string_storage[NWO_VARIABLES][NWO_INPUT_SIZE];
 #define OP_REBOOT       0x76
 #define OP_MOUSE_BUTTONS 0x77
 #define OP_WALLPAPER    0x78
+#define OP_DRAW_INT     0x79
+#define OP_FLUSH        0x7A
 
 #define OP_JUMP         0x80
 #define OP_JUMP_FALSE   0x81
@@ -252,6 +307,39 @@ static int vm_pop(
 }
 
 
+static int vm_pop_string(
+    NwoVM* vm,
+    char* out,
+    unsigned int max)
+{
+    VmValue value;
+    unsigned int i;
+    unsigned int n;
+
+    if (!vm_pop(vm, &value))
+        return 0;
+
+    n = (value.type == VM_STRING) ? value.string_length : 0;
+    if (max == 0)
+        return 0;
+    if (n > max - 1)
+        n = max - 1;
+
+    if (value.type == VM_STRING && value.as.string != 0)
+    {
+        for (i = 0; i < n; i++)
+            out[i] = value.as.string[i];
+    }
+    else
+    {
+        n = 0;
+    }
+
+    out[n] = '\0';
+    return 1;
+}
+
+
 static int vm_read_u8(
     NwoVM* vm,
     unsigned char* value)
@@ -305,6 +393,26 @@ static int vm_read_u32(
 }
 
 
+static int vm_read_len(
+    NwoVM* vm,
+    unsigned int* value)
+{
+    if (vm->program->version >= 2)
+    {
+        unsigned char b;
+
+        if (!vm_read_u8(vm, &b))
+            return 0;
+
+        if (value != 0)
+            *value = (unsigned int)b;
+
+        return 1;
+    }
+
+    return vm_read_u32(vm, value);
+}
+
 static int vm_read_u64(
     NwoVM* vm,
     unsigned long long* value)
@@ -335,7 +443,7 @@ static int vm_read_string(
     unsigned int len;
     unsigned int start;
 
-    if (!vm_read_u32(vm, &len))
+    if (!vm_read_len(vm, &len))
         return 0;
 
     start = vm->ip;
@@ -858,22 +966,44 @@ static void vm_output(
     }
 }
 
-static int vm_skip_name(
+static int vm_read_len_at(
     NwoProgram* program,
-    unsigned int* ip)
+    unsigned int* ip,
+    unsigned int* value)
 {
-    unsigned int len;
+    if (program->version >= 2)
+    {
+        if (*ip + 1 > program->code_size)
+            return 0;
+
+        *value = (unsigned int)program->code[*ip];
+        *ip += 1;
+
+        return 1;
+    }
 
     if (*ip + 4 > program->code_size)
         return 0;
 
-    len =
+    *value =
         ((unsigned int)program->code[*ip]) |
         ((unsigned int)program->code[*ip + 1] << 8) |
         ((unsigned int)program->code[*ip + 2] << 16) |
         ((unsigned int)program->code[*ip + 3] << 24);
 
     *ip += 4;
+
+    return 1;
+}
+
+static int vm_skip_name(
+    NwoProgram* program,
+    unsigned int* ip)
+{
+    unsigned int len;
+
+    if (!vm_read_len_at(program, ip, &len))
+        return 0;
 
     if (len > program->code_size - *ip)
         return 0;
@@ -926,16 +1056,9 @@ static int vm_find_function(
                 unsigned int i;
                 VmFunctionInfo found;
 
-                if (ip + 4 > program->code_size)
+                if (!vm_read_len_at(program, &ip, &len))
                     return 0;
 
-                len =
-                    ((unsigned int)program->code[ip]) |
-                    ((unsigned int)program->code[ip + 1] << 8) |
-                    ((unsigned int)program->code[ip + 2] << 16) |
-                    ((unsigned int)program->code[ip + 3] << 24);
-
-                ip += 4;
                 name_start = ip;
 
                 if (len > program->code_size - ip)
@@ -966,16 +1089,9 @@ static int vm_find_function(
                     unsigned int pstart;
                     unsigned int j;
 
-                    if (ip + 4 > program->code_size)
+                    if (!vm_read_len_at(program, &ip, &plen))
                         return 0;
 
-                    plen =
-                        ((unsigned int)program->code[ip]) |
-                        ((unsigned int)program->code[ip + 1] << 8) |
-                        ((unsigned int)program->code[ip + 2] << 16) |
-                        ((unsigned int)program->code[ip + 3] << 24);
-
-                    ip += 4;
                     pstart = ip;
 
                     if (plen > program->code_size - ip)
@@ -1026,6 +1142,18 @@ static int vm_find_function(
                 ip += 8;
                 break;
 
+            case OP_PUSH_INT8:
+                if (ip + 1 > program->code_size)
+                    return 0;
+                ip += 1;
+                break;
+
+            case OP_PUSH_INT32:
+                if (ip + 4 > program->code_size)
+                    return 0;
+                ip += 4;
+                break;
+
             case OP_PUSH_CHAR:
                 if (ip + 4 > program->code_size)
                     return 0;
@@ -1050,6 +1178,10 @@ static int vm_find_function(
             case OP_FS_ENTER:
             case OP_FS_UP:
             case OP_FS_PATH:
+            case OP_RAM_MB:
+            case OP_UPTIME_SEC:
+            case OP_DISK_KB:
+            case OP_DISK_FILES:
                 break;
             case OP_LOAD:
             case OP_STORE:
@@ -1141,6 +1273,7 @@ static int vm_find_main(
 int nwo_execute(
     NwoProgram* program)
 {
+    fb_set_backbuffer_enabled(program->version >= 2);
     NwoVM vm;
 
     unsigned int main_ip;
@@ -1168,6 +1301,7 @@ int nwo_execute(
     vm_clear_variables(&vm);
 
     vm_array_pool_used = 0;
+    vm_literal_next = 0;
 
     vm.text_color = 7;
     set_color(vm.text_color);
@@ -1198,6 +1332,40 @@ int nwo_execute(
         {
             case OP_NOP:
                 break;
+
+            case OP_PUSH_INT8:
+            {
+                unsigned char raw;
+                VmValue value;
+
+                if (!vm_read_u8(&vm, &raw))
+                    return -1;
+
+                value.type = VM_INT;
+                value.as.integer = (int)(signed char)raw;
+
+                if (!vm_push(&vm, value))
+                    return -1;
+
+                break;
+            }
+
+            case OP_PUSH_INT32:
+            {
+                unsigned int raw;
+                VmValue value;
+
+                if (!vm_read_u32(&vm, &raw))
+                    return -1;
+
+                value.type = VM_INT;
+                value.as.integer = (int)raw;
+
+                if (!vm_push(&vm, value))
+                    return -1;
+
+                break;
+            }
 
             case OP_PUSH_INT:
             {
@@ -1272,6 +1440,9 @@ int nwo_execute(
             {
                 const char* string;
                 unsigned int length;
+                unsigned int copy_length;
+                unsigned int i;
+                char* literal;
 
                 VmValue value;
 
@@ -1282,16 +1453,26 @@ int nwo_execute(
                 {
                     return -1;
                 }
-                (void)length;
+
+                copy_length = length;
+                if (copy_length >= NWO_INPUT_SIZE)
+                    copy_length = NWO_INPUT_SIZE - 1;
+
+                literal = vm_literal_storage[vm_literal_next];
+                vm_literal_next = (vm_literal_next + 1) % VM_LITERAL_SLOTS;
+
+                for (i = 0; i < copy_length; i++)
+                    literal[i] = string[i];
+                literal[copy_length] = '\0';
 
                 value.type =
                     VM_STRING;
 
                 value.string_length =
-                    length;
+                    copy_length;
 
                 value.as.string =
-                    string;
+                    literal;
 
                 if (!vm_push(
                         &vm,
@@ -1386,9 +1567,7 @@ int nwo_execute(
 
                 unsigned int i;
 
-                if (!vm_read_u32(
-                        &vm,
-                        &len))
+                if (!vm_read_len(&vm, &len))
                 {
                     return -1;
                 }
@@ -1451,7 +1630,7 @@ int nwo_execute(
         int index;
         unsigned int k;
 
-        if (!vm_read_u32(&vm, &len))
+        if (!vm_read_len(&vm, &len))
             return -1;
 
         if (len >= NWO_NAME_SIZE)
@@ -1521,9 +1700,7 @@ int nwo_execute(
 
                 VmValue value;
 
-                if (!vm_read_u32(
-                        &vm,
-                        &len))
+                if (!vm_read_len(&vm, &len))
                 {
                     return -1;
                 }
@@ -1613,9 +1790,7 @@ int nwo_execute(
                     return -1;
                 }
 
-                if (!vm_read_u32(
-                        &vm,
-                        &len))
+                if (!vm_read_len(&vm, &len))
                 {
                     return -1;
                 }
@@ -1682,7 +1857,7 @@ int nwo_execute(
                 unsigned int i;
                 int var_idx;
 
-                if (!vm_read_u32(&vm, &len)) return -1;
+                if (!vm_read_len(&vm, &len)) return -1;
                 if (len >= NWO_NAME_SIZE) return -1;
                 if (vm.ip + len > program->code_size) return -1;
                 name = (const char*)(program->code + vm.ip);
@@ -1718,7 +1893,7 @@ int nwo_execute(
                 unsigned int i;
                 int var_idx;
 
-                if (!vm_read_u32(&vm, &len)) return -1;
+                if (!vm_read_len(&vm, &len)) return -1;
                 if (len >= NWO_NAME_SIZE) return -1;
                 if (vm.ip + len > program->code_size) return -1;
                 name = (const char*)(program->code + vm.ip);
@@ -1809,6 +1984,181 @@ int nwo_execute(
             case OP_FS_UP:
                 fs_cd("..");
                 break;
+            case OP_RAM_MB:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = (int)nwf_ram_mb();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_UPTIME_SEC:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = (int)(timer_ms() / 1000ULL);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_DISK_KB:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = (int)nwf_disk_used_kb();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_DISK_FILES:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = (int)nwf_disk_files();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_TIME_HOUR:
+            case OP_TIME_MINUTE:
+            case OP_TIME_SECOND:
+            {
+                int hour, minute, second;
+                VmValue v; v.type = VM_INT;
+                get_time(&hour, &minute, &second);
+                if (opcode == OP_TIME_HOUR) v.as.integer = hour;
+                else if (opcode == OP_TIME_MINUTE) v.as.integer = minute;
+                else v.as.integer = second;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_TZ_GET:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = nwf_tz_get();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_TZ_SET:
+            {
+                VmValue v;
+                if (!vm_pop(&vm, &v)) return -1;
+                nwf_tz_set(vm_to_int(&v));
+                break;
+            }
+            case OP_CPU_LOAD:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = nwf_cpu_load();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_GPU_LOAD:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = nwf_gpu_load();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_CURSOR:
+            {
+                VmValue y;
+                VmValue x;
+                if (!vm_pop(&vm, &y)) return -1;
+                if (!vm_pop(&vm, &x)) return -1;
+                graphics_begin();
+                fb_draw_cursor(vm_to_int(&x), vm_to_int(&y));
+                break;
+            }
+            case OP_FS_CREATE:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT; v.as.integer = nwf_fs_create(name);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_MKDIR:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT; v.as.integer = nwf_fs_mkdir(name);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_DELETE:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT; v.as.integer = nwf_fs_delete(name);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_WRITE:
+            {
+                char name[256];
+                char text[VM_FILE_BUF_SIZE];
+                VmValue v;
+                if (!vm_pop_string(&vm, text, sizeof(text))) return -1;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT; v.as.integer = nwf_fs_write(name, text);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_BUF_CLEAR:
+                vm_file_len = 0;
+                vm_file_buf[0] = '\0';
+                break;
+            case OP_BUF_LEN:
+            {
+                VmValue v; v.type = VM_INT; v.as.integer = vm_file_len;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_BUF_PUT:
+            {
+                VmValue v;
+                int ch;
+                if (!vm_pop(&vm, &v)) return -1;
+                ch = vm_to_int(&v);
+                if (ch < 0) ch = 0;
+                if (ch > 255) ch = 255;
+                if (vm_file_len < VM_FILE_BUF_SIZE - 1)
+                {
+                    vm_file_buf[vm_file_len++] = (char)ch;
+                    vm_file_buf[vm_file_len] = '\0';
+                }
+                break;
+            }
+            case OP_BUF_BACK:
+                if (vm_file_len > 0)
+                {
+                    vm_file_len--;
+                    vm_file_buf[vm_file_len] = '\0';
+                }
+                break;
+            case OP_BUF_TEXT:
+            {
+                VmValue v;
+                v.type = VM_STRING;
+                v.string_length = (unsigned int)vm_file_len;
+                v.as.string = vm_file_buf;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_BUF_LOAD:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                vm_file_len = 0;
+                vm_file_buf[0] = '\0';
+                nwf_fs_read(name, vm_file_buf, VM_FILE_BUF_SIZE);
+                while (vm_file_len < VM_FILE_BUF_SIZE - 1 &&
+                       vm_file_buf[vm_file_len] != '\0')
+                    vm_file_len++;
+                v.type = VM_INT; v.as.integer = vm_file_len;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_BUF_SAVE:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT; v.as.integer = nwf_fs_write(name, vm_file_buf);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
 
             case OP_ADD:
             case OP_SUB:
@@ -1838,6 +2188,50 @@ int nwo_execute(
                 }
 
                 break;
+
+            case OP_AND:
+            case OP_OR:
+            {
+                VmValue right;
+                VmValue left;
+                VmValue result;
+
+                if (!vm_pop(&vm, &right))
+                    return -1;
+                if (!vm_pop(&vm, &left))
+                    return -1;
+
+                result.type = VM_INT;
+                result.string_length = 0;
+
+                if (opcode == OP_AND)
+                    result.as.integer = vm_to_int(&left) && vm_to_int(&right);
+                else
+                    result.as.integer = vm_to_int(&left) || vm_to_int(&right);
+
+                if (!vm_push(&vm, result))
+                    return -1;
+
+                break;
+            }
+
+            case OP_NOT:
+            {
+                VmValue value;
+                VmValue result;
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+
+                result.type = VM_INT;
+                result.string_length = 0;
+                result.as.integer = !vm_to_int(&value);
+
+                if (!vm_push(&vm, result))
+                    return -1;
+
+                break;
+            }
 
             case OP_STRCMP:
             {
@@ -1969,7 +2363,7 @@ int nwo_execute(
                 int index;
                 VmVariable* variable;
 
-                if (!vm_read_u32(&vm, &len))
+                if (!vm_read_len(&vm, &len))
                     return -1;
 
                 if (len >= NWO_NAME_SIZE)
@@ -2080,9 +2474,7 @@ int nwo_execute(
 
                     int index;
 
-                    if (!vm_read_u32(
-                            &vm,
-                            &len))
+                    if (!vm_read_len(&vm, &len))
                     {
                         return -1;
                     }
@@ -2390,6 +2782,37 @@ int nwo_execute(
                 break;
             }
 
+            case OP_DRAW_INT:
+            {
+                VmValue value;
+                VmValue color;
+                VmValue y;
+                VmValue x;
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+                if (!vm_pop(&vm, &color))
+                    return -1;
+                if (!vm_pop(&vm, &y))
+                    return -1;
+                if (!vm_pop(&vm, &x))
+                    return -1;
+
+                graphics_begin();
+
+                fb_draw_int(
+                    vm_to_int(&x),
+                    vm_to_int(&y),
+                    vm_to_int(&value),
+                    (unsigned int)vm_to_int(&color));
+
+                break;
+            }
+
+            case OP_FLUSH:
+                fb_present();
+                break;
+
             case OP_WALLPAPER:
                 graphics_begin();
                 fb_draw_wallpaper();
@@ -2495,7 +2918,7 @@ int nwo_execute(
                 char name[NWO_NAME_SIZE];
                 VmFunctionInfo info;
 
-                if (!vm_read_u32(&vm, &len))
+                if (!vm_read_len(&vm, &len))
                     return -1;
 
                 if (len >= NWO_NAME_SIZE ||

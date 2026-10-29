@@ -20,5 +20,12 @@ void fb_draw_cube_default(uint32_t color);
 void fb_draw_cube(int x, int y, int size, uint32_t color);
 void fb_draw_window(int x, int y, int w, int h, uint32_t color, const char* title);
 void fb_draw_text(int x, int y, const char* text, uint32_t color);
+void fb_draw_int(int x, int y, int value, uint32_t color);
+void fb_set_backbuffer_enabled(int enabled);
+void fb_backbuffer_begin(void);
+void fb_backbuffer_end(void);
+void fb_present(void);
+void fb_draw_cursor(int x, int y);
+unsigned long long fb_get_present_us(void);
 
 #endif

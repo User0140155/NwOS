@@ -16,7 +16,7 @@
    o====================================o */
 
 #define NWO_MAGIC       "NWOB"
-#define NWO_VERSION     1
+#define NWO_VERSION     2
 #define NWO_FLAG_NORMAL   0x00
 #define NWO_FLAG_LOWLEVEL 0x01
 
@@ -71,6 +71,20 @@ static void cg_emit_u64(Codegen* cg, unsigned long long v)
     cg_emit_u32(cg, (unsigned int)(v & 0xFFFFFFFFu));
     cg_emit_u32(cg, (unsigned int)((v >> 32) & 0xFFFFFFFFu));
 }
+static void cg_emit_int(Codegen* cg, int value)
+{
+    if (value >= -128 && value <= 127)
+    {
+        cg_emit_byte(cg, 0x17);
+        cg_emit_byte(cg, (unsigned char)(signed char)value);
+    }
+    else
+    {
+        cg_emit_byte(cg, 0x18);
+        cg_emit_u32(cg, (unsigned int)value);
+    }
+}
+
 static void cg_emit_double(Codegen* cg, double d)
 {
     unsigned long long bits;
@@ -88,7 +102,13 @@ static void cg_emit_string(Codegen* cg, const char* s)
 
     len = (unsigned int)strlen(s);
 
-    cg_emit_u32(cg, len);
+    if (len > 255)
+    {
+        cg_error(cg, "string too long");
+        len = 255;
+    }
+
+    cg_emit_byte(cg, (unsigned char)len);
 
     for (unsigned int i = 0; i < len; i++)
         cg_emit_byte(cg, (unsigned char)s[i]);
@@ -188,6 +208,8 @@ typedef enum
     OP_REBOOT       = 0x76,
     OP_MOUSE_BUTTONS= 0x77,
     OP_WALLPAPER    = 0x78,
+    OP_DRAW_INT     = 0x79,
+    OP_FLUSH        = 0x7A,
     OP_MOD          = 0x34,
 
     OP_AND          = 0x46,
@@ -214,6 +236,29 @@ typedef enum
     OP_FS_ENTER  = 0xA4,
     OP_FS_UP     = 0xA5,
     OP_FS_PATH   = 0xA6,
+    OP_RAM_MB    = 0xA7,
+    OP_UPTIME_SEC= 0xA8,
+    OP_DISK_KB   = 0xA9,
+    OP_DISK_FILES= 0xAA,
+    OP_TIME_HOUR = 0xAB,
+    OP_TIME_MINUTE = 0xAC,
+    OP_TIME_SECOND = 0xAD,
+    OP_TZ_GET    = 0xAE,
+    OP_TZ_SET    = 0xAF,
+    OP_CPU_LOAD  = 0xB0,
+    OP_GPU_LOAD  = 0xB1,
+    OP_CURSOR    = 0xB2,
+    OP_FS_CREATE = 0xB3,
+    OP_FS_DELETE = 0xB4,
+    OP_FS_WRITE  = 0xB5,
+    OP_FS_MKDIR  = 0xB6,
+    OP_BUF_CLEAR = 0xB7,
+    OP_BUF_LEN   = 0xB8,
+    OP_BUF_PUT   = 0xB9,
+    OP_BUF_BACK  = 0xBA,
+    OP_BUF_TEXT  = 0xBB,
+    OP_BUF_LOAD  = 0xBC,
+    OP_BUF_SAVE  = 0xBD,
 
     OP_HALT         = 0xFF
 
@@ -387,6 +432,27 @@ static void cg_binary(Codegen* cg, ASTNode* node)
         return;
     }
 
+    if (node->left == NULL)
+    {
+        if (strcmp(op, "-") == 0)
+        {
+            cg_emit_int(cg, 0);
+            cg_expression(cg, node->right);
+            cg_emit_byte(cg, OP_SUB);
+            return;
+        }
+
+        if (strcmp(op, "!") == 0)
+        {
+            cg_expression(cg, node->right);
+            cg_emit_byte(cg, OP_NOT);
+            return;
+        }
+
+        cg_error(cg, "unknown unary operator");
+        return;
+    }
+
     cg_expression(cg, node->left);
     cg_expression(cg, node->right);
 
@@ -400,6 +466,8 @@ static void cg_binary(Codegen* cg, ASTNode* node)
     else if (strcmp(op, ">") == 0)  cg_emit_byte(cg, OP_GT);
     else if (strcmp(op, "<=") == 0) cg_emit_byte(cg, OP_LTE);
     else if (strcmp(op, ">=") == 0) cg_emit_byte(cg, OP_GTE);
+    else if (strcmp(op, "&&") == 0) cg_emit_byte(cg, OP_AND);
+    else if (strcmp(op, "||") == 0) cg_emit_byte(cg, OP_OR);
     else
     {
         cg_error(cg, "unknown binary operator");
@@ -418,8 +486,7 @@ static void cg_expression(Codegen* cg, ASTNode* node)
     switch (node->type)
     {
         case AST_NUMBER:
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)node->integer_value);
+            cg_emit_int(cg, (int)node->integer_value);
             break;
 
         case AST_FLOAT:
@@ -451,8 +518,7 @@ static void cg_expression(Codegen* cg, ASTNode* node)
 
             if (cg_key_constant(node->text, &key_value))
             {
-                cg_emit_byte(cg, OP_PUSH_INT);
-                cg_emit_u64(cg, (unsigned long long)key_value);
+                cg_emit_int(cg, (int)key_value);
             }
             else
             {
@@ -580,8 +646,7 @@ static void cg_output(Codegen* cg, ASTNode* node)
             return;
 
         cg_emit_byte(cg, OP_COLOR_PUSH);
-        cg_emit_byte(cg, OP_PUSH_INT);
-        cg_emit_u64(cg, (unsigned long long)color);
+        cg_emit_int(cg, color);
         cg_emit_byte(cg, OP_COLOR);
     }
 
@@ -881,6 +946,41 @@ static int cg_call(Codegen* cg, ASTNode* node)
         return 0;
     }
 
+    if (strcmp(node->text, "nw::flush") == 0)
+    {
+        cg_emit_byte(cg, OP_FLUSH);
+        return 0;
+    }
+
+    if (strcmp(node->text, "nw::number") == 0)
+    {
+        ASTNode* arg = node->child;
+        int count = 0;
+
+        while (arg != NULL)
+        {
+            count++;
+            arg = arg->next;
+        }
+
+        if (count != 4)
+        {
+            cg_error(cg, "nw::number needs x, y, color, value");
+            return 0;
+        }
+
+        arg = node->child;
+
+        while (arg != NULL)
+        {
+            cg_expression(cg, arg);
+            arg = arg->next;
+        }
+
+        cg_emit_byte(cg, OP_DRAW_INT);
+        return 0;
+    }
+
     if (strcmp(node->text, "nw::rect") == 0)
     {
         ASTNode* arg = node->child;
@@ -922,6 +1022,55 @@ static int cg_call(Codegen* cg, ASTNode* node)
     { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_ENTER); return 0; }
     if (strcmp(node->text, "nw::fs_up") == 0)
     { cg_emit_byte(cg, OP_FS_UP); return 0; }
+    if (strcmp(node->text, "nw::ram_mb") == 0) { cg_emit_byte(cg, OP_RAM_MB); return 1; }
+    if (strcmp(node->text, "nw::uptime_sec") == 0) { cg_emit_byte(cg, OP_UPTIME_SEC); return 1; }
+    if (strcmp(node->text, "nw::disk_used_kb") == 0) { cg_emit_byte(cg, OP_DISK_KB); return 1; }
+    if (strcmp(node->text, "nw::disk_files") == 0) { cg_emit_byte(cg, OP_DISK_FILES); return 1; }
+    if (strcmp(node->text, "nw::hour") == 0) { cg_emit_byte(cg, OP_TIME_HOUR); return 1; }
+    if (strcmp(node->text, "nw::minute") == 0) { cg_emit_byte(cg, OP_TIME_MINUTE); return 1; }
+    if (strcmp(node->text, "nw::second") == 0) { cg_emit_byte(cg, OP_TIME_SECOND); return 1; }
+    if (strcmp(node->text, "nw::tz_get") == 0) { cg_emit_byte(cg, OP_TZ_GET); return 1; }
+    if (strcmp(node->text, "nw::tz_set") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_TZ_SET); return 0; }
+    if (strcmp(node->text, "nw::cpu_load") == 0) { cg_emit_byte(cg, OP_CPU_LOAD); return 1; }
+    if (strcmp(node->text, "nw::gpu_load") == 0) { cg_emit_byte(cg, OP_GPU_LOAD); return 1; }
+    if (strcmp(node->text, "nw::cursor") == 0)
+    {
+        ASTNode* arg = node->child;
+        int count = 0;
+        while (arg != NULL) { count++; arg = arg->next; }
+        if (count != 2) { cg_error(cg, "nw::cursor needs x, y"); return 0; }
+        arg = node->child;
+        while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_emit_byte(cg, OP_CURSOR);
+        return 0;
+    }
+    if (strcmp(node->text, "nw::fs_create") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_CREATE); return 1; }
+    if (strcmp(node->text, "nw::fs_delete") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_DELETE); return 1; }
+    if (strcmp(node->text, "nw::fs_mkdir") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_MKDIR); return 1; }
+    if (strcmp(node->text, "nw::fs_write") == 0)
+    {
+        if (node->child && node->child->next)
+        {
+            cg_expression(cg, node->child);
+            cg_expression(cg, node->child->next);
+        }
+        cg_emit_byte(cg, OP_FS_WRITE);
+        return 1;
+    }
+    if (strcmp(node->text, "nw::buf_clear") == 0) { cg_emit_byte(cg, OP_BUF_CLEAR); return 0; }
+    if (strcmp(node->text, "nw::buf_len") == 0) { cg_emit_byte(cg, OP_BUF_LEN); return 1; }
+    if (strcmp(node->text, "nw::buf_put") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_BUF_PUT); return 0; }
+    if (strcmp(node->text, "nw::buf_back") == 0) { cg_emit_byte(cg, OP_BUF_BACK); return 0; }
+    if (strcmp(node->text, "nw::buf_text") == 0) { cg_emit_byte(cg, OP_BUF_TEXT); return 1; }
+    if (strcmp(node->text, "nw::buf_load") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_BUF_LOAD); return 1; }
+    if (strcmp(node->text, "nw::buf_save") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_BUF_SAVE); return 1; }
 
     if (node->text != NULL && strncmp(node->text, "nw::draw:", 9) == 0)
     {
@@ -984,16 +1133,11 @@ static int cg_call(Codegen* cg, ASTNode* node)
 
         if (cg_text_equals_ci(shape, "FRAME") && !no_window)
         {
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)x);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)y);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)w);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)h);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)color);
+            cg_emit_int(cg, x);
+            cg_emit_int(cg, y);
+            cg_emit_int(cg, w);
+            cg_emit_int(cg, h);
+            cg_emit_int(cg, color);
             cg_emit_byte(cg, OP_PUSH_STRING);
             cg_emit_string(cg, node->text_label != NULL ? node->text_label : "");
             cg_emit_byte(cg, OP_DRAW_WINDOW);
@@ -1003,28 +1147,20 @@ static int cg_call(Codegen* cg, ASTNode* node)
         if (cg_text_equals_ci(shape, "FRAME") ||
             cg_text_equals_ci(shape, "RECT"))
         {
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)x);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)y);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)w);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)h);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)color);
+            cg_emit_int(cg, x);
+            cg_emit_int(cg, y);
+            cg_emit_int(cg, w);
+            cg_emit_int(cg, h);
+            cg_emit_int(cg, color);
             cg_emit_byte(cg, OP_DRAW_FRAME);
             return 0;
         }
 
         if (cg_text_equals_ci(shape, "TEXT"))
         {
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)x);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)y);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)color);
+            cg_emit_int(cg, x);
+            cg_emit_int(cg, y);
+            cg_emit_int(cg, color);
             cg_emit_byte(cg, OP_PUSH_STRING);
             cg_emit_string(cg, node->text_label != NULL ? node->text_label : "");
             cg_emit_byte(cg, OP_DRAW_TEXT);
@@ -1033,10 +1169,8 @@ static int cg_call(Codegen* cg, ASTNode* node)
 
         if (cg_text_equals_ci(shape, "CUBE"))
         {
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)h);
-            cg_emit_byte(cg, OP_PUSH_INT);
-            cg_emit_u64(cg, (unsigned long long)color);
+            cg_emit_int(cg, h);
+            cg_emit_int(cg, color);
             cg_emit_byte(cg, OP_DRAW_CUBE);
             return 0;
         }

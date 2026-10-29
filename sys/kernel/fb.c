@@ -10,6 +10,20 @@ static uint32_t fb_height = 0;
 static uint32_t fb_pitch = 0;
 static int fb_bpp = 0;
 
+#define FB_BACKBUFFER_WIDTH  1280
+#define FB_BACKBUFFER_HEIGHT 720
+
+static uint32_t fb_backbuffer_pixels[FB_BACKBUFFER_WIDTH * FB_BACKBUFFER_HEIGHT];
+static uint32_t* fb_physical = 0;
+static uint32_t fb_physical_pitch = 0;
+static int fb_back_active = 0;
+static int fb_back_enabled = 1;
+static unsigned long long fb_present_us = 0;
+
+extern unsigned long long timer_us(void);
+
+void fb_backbuffer_end(void);
+
 static const uint8_t font8x8_basic[128][8] = {
     [' ']={0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
     ['!']={0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x00},
@@ -194,10 +208,15 @@ int fb_set_mode(uint32_t width, uint32_t height)
     fb_dispi_write(0x07, (unsigned short)height);
     fb_dispi_write(0x04, 0x41);
 
+    fb_backbuffer_end();
+
     fb_width  = width;
     fb_height = height;
     fb_pitch  = width * 4;
     fb_bpp    = 32;
+
+    fb_physical = fb_addr;
+    fb_physical_pitch = fb_pitch;
 
     fb_clear(0x000000);
 
@@ -335,6 +354,127 @@ void fb_draw_wallpaper(void) {
         }
     }
 #endif
+}
+
+
+void fb_set_backbuffer_enabled(int enabled)
+{
+    fb_back_enabled = enabled;
+}
+
+void fb_backbuffer_begin(void) {
+    if (!fb_back_enabled || fb_back_active || !fb_addr)
+        return;
+
+    if (fb_width > FB_BACKBUFFER_WIDTH ||
+        fb_height > FB_BACKBUFFER_HEIGHT)
+        return;
+
+    fb_physical = fb_addr;
+    fb_physical_pitch = fb_pitch;
+    fb_addr = fb_backbuffer_pixels;
+    fb_pitch = fb_width * 4;
+    fb_back_active = 1;
+}
+
+void fb_backbuffer_end(void) {
+    if (!fb_back_active)
+        return;
+
+    fb_addr = fb_physical;
+    fb_pitch = fb_physical_pitch;
+    fb_back_active = 0;
+}
+
+unsigned long long fb_get_present_us(void) {
+    return fb_present_us;
+}
+
+void fb_present(void) {
+    if (!fb_back_active || !fb_physical)
+        return;
+
+    unsigned long long start = timer_us();
+
+    for (uint32_t y = 0; y < fb_height; y++) {
+        uint32_t* dst = (uint32_t*)((uint8_t*)fb_physical + y * fb_physical_pitch);
+        uint32_t* src = (uint32_t*)((uint8_t*)fb_backbuffer_pixels + y * fb_pitch);
+
+        for (uint32_t x = 0; x < fb_width; x++)
+            dst[x] = src[x];
+    }
+
+    fb_present_us += timer_us() - start;
+}
+
+static const unsigned short cursor_rows[19] = {
+    0x800, 0xC00, 0xE00, 0xF00, 0xF80, 0xFC0, 0xFE0,
+    0xFF0, 0xFF8, 0xFFC, 0xFFE, 0xFE0, 0xCE0, 0x0E0,
+    0x0E0, 0x070, 0x070, 0x030, 0x030
+};
+
+void fb_draw_cursor(int x, int y) {
+    if (!fb_addr) return;
+
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t color = (pass == 0) ? 0x00000000 : 0x00FFFFFF;
+
+        for (int row = 0; row < 19; row++) {
+            unsigned short bits = cursor_rows[row];
+            int col = 0;
+
+            while (col < 12) {
+                while (col < 12 && !(bits & (0x800 >> col)))
+                    col++;
+                if (col >= 12)
+                    break;
+
+                int start = col;
+                while (col < 12 && (bits & (0x800 >> col)))
+                    col++;
+                int end = col - 1;
+
+                if (pass == 0)
+                    fb_draw_rect(x + start - 1, y + row,
+                                 end - start + 3, 1, color);
+                else
+                    fb_draw_rect(x + start, y + row,
+                                 end - start + 1, 1, color);
+            }
+        }
+    }
+}
+
+void fb_draw_int(int x, int y, int value, uint32_t color) {
+    char buffer[16];
+    int length = 0;
+    unsigned int magnitude;
+
+    if (value < 0) {
+        magnitude = (unsigned int)(-(value + 1)) + 1u;
+        buffer[length++] = '-';
+    } else {
+        magnitude = (unsigned int)value;
+    }
+
+    char digits[12];
+    int digit_count = 0;
+
+    if (magnitude == 0) {
+        digits[digit_count++] = '0';
+    } else {
+        while (magnitude > 0) {
+            digits[digit_count++] = (char)('0' + (magnitude % 10));
+            magnitude /= 10;
+        }
+    }
+
+    while (digit_count > 0)
+        buffer[length++] = digits[--digit_count];
+
+    buffer[length] = '\0';
+
+    fb_draw_text(x, y, buffer, color);
 }
 
 void fb_draw_rect(int x, int y, int w, int h, uint32_t color) {

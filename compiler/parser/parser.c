@@ -377,9 +377,34 @@ static ASTNode* parse_primary(Parser* parser)
                 strcmp(name, "fs_type") == 0 ||
                 strcmp(name, "fs_size") == 0 ||
                 strcmp(name, "fs_path") == 0 ||
+                strcmp(name, "ram_mb") == 0 ||
+                strcmp(name, "uptime_sec") == 0 ||
+                strcmp(name, "disk_used_kb") == 0 ||
+                strcmp(name, "disk_files") == 0 ||
                 strcmp(name, "poweroff") == 0 ||
                 strcmp(name, "reboot") == 0 ||
-                strcmp(name, "wallpaper") == 0)
+                strcmp(name, "wallpaper") == 0 ||
+                strcmp(name, "number") == 0 ||
+                strcmp(name, "flush") == 0 ||
+                strcmp(name, "hour") == 0 ||
+                strcmp(name, "minute") == 0 ||
+                strcmp(name, "second") == 0 ||
+                strcmp(name, "tz_get") == 0 ||
+                strcmp(name, "tz_set") == 0 ||
+                strcmp(name, "cpu_load") == 0 ||
+                strcmp(name, "gpu_load") == 0 ||
+                strcmp(name, "cursor") == 0 ||
+                strcmp(name, "fs_create") == 0 ||
+                strcmp(name, "fs_delete") == 0 ||
+                strcmp(name, "fs_write") == 0 ||
+                strcmp(name, "fs_mkdir") == 0 ||
+                strcmp(name, "buf_clear") == 0 ||
+                strcmp(name, "buf_len") == 0 ||
+                strcmp(name, "buf_put") == 0 ||
+                strcmp(name, "buf_back") == 0 ||
+                strcmp(name, "buf_text") == 0 ||
+                strcmp(name, "buf_load") == 0 ||
+                strcmp(name, "buf_save") == 0)
             {
                 char builtin[64];
 
@@ -493,35 +518,45 @@ static ASTNode* parse_primary(Parser* parser)
     return NULL;
 }
 
-static ASTNode* parse_expression(Parser* parser)
+static ASTNode* parse_unary(Parser* parser)
+{
+    if (parser_is(parser, TOKEN_MINUS) ||
+        parser_is(parser, TOKEN_LOGICAL_NOT))
+    {
+        ASTNode* operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text = copy_text(parser->current.text);
+        parser_advance(parser);
+
+        operation->left = NULL;
+        operation->right = parse_unary(parser);
+
+        return operation;
+    }
+
+    return parse_primary(parser);
+}
+
+static ASTNode* parse_multiplicative(Parser* parser)
 {
     ASTNode* left;
     ASTNode* right;
     ASTNode* operation;
 
-    left = parse_primary(parser);
+    left = parse_unary(parser);
 
     if (left == NULL)
         return NULL;
 
-
     while (
-        parser_is(parser, TOKEN_PLUS) ||
-        parser_is(parser, TOKEN_MINUS) ||
         parser_is(parser, TOKEN_STAR) ||
-        parser_is(parser, TOKEN_SLASH) ||
-        parser_is(parser, TOKEN_EQUAL_EQUAL) ||
-        parser_is(parser, TOKEN_NOT_EQUAL) ||
-        parser_is(parser, TOKEN_LESS) ||
-        parser_is(parser, TOKEN_GREATER) ||
-        parser_is(parser, TOKEN_LESS_EQUAL) ||
-        parser_is(parser, TOKEN_GREATER_EQUAL)
+        parser_is(parser, TOKEN_SLASH)
     )
     {
-        TokenType operator_type;
-
-        operator_type = parser->current.type;
-
         operation = ast_new(
             AST_BINARY_OPERATION,
             parser->current.line,
@@ -533,10 +568,174 @@ static ASTNode* parse_expression(Parser* parser)
 
         parser_advance(parser);
 
-        right = parse_primary(parser);
+        right = parse_unary(parser);
 
         operation->left = left;
         operation->right = right;
+
+        left = operation;
+    }
+
+    return left;
+}
+
+static ASTNode* parse_additive(Parser* parser)
+{
+    ASTNode* left;
+    ASTNode* right;
+    ASTNode* operation;
+
+    left = parse_multiplicative(parser);
+
+    if (left == NULL)
+        return NULL;
+
+    while (
+        parser_is(parser, TOKEN_PLUS) ||
+        parser_is(parser, TOKEN_MINUS)
+    )
+    {
+        operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text =
+            copy_text(parser->current.text);
+
+        parser_advance(parser);
+
+        right = parse_multiplicative(parser);
+
+        operation->left = left;
+        operation->right = right;
+
+        left = operation;
+    }
+
+    return left;
+}
+
+static ASTNode* parse_relational(Parser* parser)
+{
+    ASTNode* left;
+    ASTNode* right;
+    ASTNode* operation;
+
+    left = parse_additive(parser);
+
+    if (left == NULL)
+        return NULL;
+
+    while (
+        parser_is(parser, TOKEN_LESS) ||
+        parser_is(parser, TOKEN_GREATER) ||
+        parser_is(parser, TOKEN_LESS_EQUAL) ||
+        parser_is(parser, TOKEN_GREATER_EQUAL)
+    )
+    {
+        operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text =
+            copy_text(parser->current.text);
+
+        parser_advance(parser);
+
+        right = parse_additive(parser);
+
+        operation->left = left;
+        operation->right = right;
+
+        left = operation;
+    }
+
+    return left;
+}
+
+static ASTNode* parse_equality(Parser* parser)
+{
+    ASTNode* left;
+    ASTNode* right;
+    ASTNode* operation;
+
+    left = parse_relational(parser);
+
+    if (left == NULL)
+        return NULL;
+
+    while (
+        parser_is(parser, TOKEN_EQUAL_EQUAL) ||
+        parser_is(parser, TOKEN_NOT_EQUAL)
+    )
+    {
+        operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text =
+            copy_text(parser->current.text);
+
+        parser_advance(parser);
+
+        right = parse_relational(parser);
+
+        operation->left = left;
+        operation->right = right;
+
+        left = operation;
+    }
+
+    return left;
+}
+
+static ASTNode* parse_logical_and(Parser* parser)
+{
+    ASTNode* left = parse_equality(parser);
+
+    while (parser_is(parser, TOKEN_LOGICAL_AND))
+    {
+        ASTNode* operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text = copy_text(parser->current.text);
+        parser_advance(parser);
+
+        operation->left = left;
+        operation->right = parse_equality(parser);
+
+        left = operation;
+    }
+
+    return left;
+}
+
+static ASTNode* parse_expression(Parser* parser)
+{
+    ASTNode* left = parse_logical_and(parser);
+
+    while (parser_is(parser, TOKEN_LOGICAL_OR))
+    {
+        ASTNode* operation = ast_new(
+            AST_BINARY_OPERATION,
+            parser->current.line,
+            parser->current.column
+        );
+
+        operation->text = copy_text(parser->current.text);
+        parser_advance(parser);
+
+        operation->left = left;
+        operation->right = parse_logical_and(parser);
 
         left = operation;
     }
@@ -1147,9 +1346,34 @@ static ASTNode* parse_nw_statement(Parser* parser)
             strcmp(name, "fs_type")  == 0 ||
             strcmp(name, "fs_size")  == 0 ||
             strcmp(name, "fs_path")  == 0 ||
+            strcmp(name, "ram_mb")   == 0 ||
+            strcmp(name, "uptime_sec") == 0 ||
+            strcmp(name, "disk_used_kb") == 0 ||
+            strcmp(name, "disk_files") == 0 ||
             strcmp(name, "poweroff") == 0 ||
             strcmp(name, "reboot") == 0 ||
-            strcmp(name, "wallpaper") == 0 )
+            strcmp(name, "wallpaper") == 0 ||
+            strcmp(name, "number") == 0 ||
+            strcmp(name, "flush") == 0 ||
+            strcmp(name, "hour") == 0 ||
+            strcmp(name, "minute") == 0 ||
+            strcmp(name, "second") == 0 ||
+            strcmp(name, "tz_get") == 0 ||
+            strcmp(name, "tz_set") == 0 ||
+            strcmp(name, "cpu_load") == 0 ||
+            strcmp(name, "gpu_load") == 0 ||
+            strcmp(name, "cursor") == 0 ||
+            strcmp(name, "fs_create") == 0 ||
+            strcmp(name, "fs_delete") == 0 ||
+            strcmp(name, "fs_write") == 0 ||
+            strcmp(name, "fs_mkdir") == 0 ||
+            strcmp(name, "buf_clear") == 0 ||
+            strcmp(name, "buf_len") == 0 ||
+            strcmp(name, "buf_put") == 0 ||
+            strcmp(name, "buf_back") == 0 ||
+            strcmp(name, "buf_text") == 0 ||
+            strcmp(name, "buf_load") == 0 ||
+            strcmp(name, "buf_save") == 0)
         {
         char builtin[64];
         snprintf(builtin, sizeof(builtin), "nw::%s", name);
@@ -1168,6 +1392,7 @@ static ASTNode* parse_nw_statement(Parser* parser)
             if (!parser_match(parser, TOKEN_COMMA)) break;
         }
         parser_expect(parser, TOKEN_RPAREN);
+        parser_expect(parser, TOKEN_SEMICOLON);
         n->child = first;
         return n;
     }
