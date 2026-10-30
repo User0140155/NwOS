@@ -41,6 +41,11 @@ Thank you for your understanding and support!
 
 **New official profile:** https://github.com/User0140155
 
+## Tiktok page
+(Russian account)
+
+https://www.tiktok.com/@csplayer421
+
 ## Compiler
 
 to compile File you need:
