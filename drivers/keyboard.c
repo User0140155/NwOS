@@ -13,6 +13,8 @@ static int shift_left  = 0;
 static int shift_right = 0;
 static int caps_lock   = 0;
 static int super_pressed = 0;
+static int nwos_ctrl_left = 0;
+static int nwos_ctrl_right = 0;
 static unsigned char kb_inb(
     unsigned short port)
 {
@@ -154,6 +156,8 @@ int keyboard_getkey(void)
         if (scancode == 0xE0)
         {
             unsigned char ext = keyboard_read_scancode();
+            if (ext == 0x1D) { nwos_ctrl_right = 1; continue; }
+            if (ext == 0x9D) { nwos_ctrl_right = 0; continue; }
             //super
             if (ext == 0x5B) { super_pressed = 1; continue; }
             if (ext == 0xDB) { super_pressed = 0; continue; }
@@ -175,14 +179,20 @@ int keyboard_getkey(void)
 
             if (make == 0x2A) shift_left = 0;
             else if (make == 0x36) shift_right = 0;
+            else if (make == 0x1D) nwos_ctrl_left = 0;
 
             continue;
         }
 
         if (scancode == 0x2A) { shift_left = 1; continue; }
         if (scancode == 0x36) { shift_right = 1; continue; }
+        if (scancode == 0x1D) { nwos_ctrl_left = 1; continue; }
         if (scancode == 0x3A) { caps_lock = !caps_lock; continue; }
 
+        /* NwOS nano editor shortcuts (Set-1 make codes). */
+        if (scancode == 0x3F) return KEY_F5;
+        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x1F) return 19; /* Ctrl+S */
+        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x2D) return 24; /* Ctrl+X */
         if (scancode == 0x01) return KEY_ESC;
         if (scancode == 0x0E) return KEY_BACKSPACE;
         if (scancode == 0x0F) return KEY_TAB;

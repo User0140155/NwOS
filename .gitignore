@@ -8,6 +8,7 @@
 *.exe
 *.nwo
 *.fd
+*.bak
 
 .vscode/
 .idea/
@@ -18,3 +19,9 @@ rootfs/
 cloc
 nwimg
 chars
+sysrecov
+apply_nwc_f5.py
+payload/
+refresh_nwc.sh
+.backup-nwc-before-modern-gui-20261029-214819/
+tools/gen_sound.py

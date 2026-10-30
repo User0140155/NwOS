@@ -14,6 +14,7 @@
 
 #define KEY_SUPER_S    263
 
+#define KEY_F5         264
 void keyboard_init(void);
 int keyboard_getkey(void);
 

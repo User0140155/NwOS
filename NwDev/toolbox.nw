@@ -1,0 +1,88 @@
+#include <nwc.h>
+
+1A main() {
+    char command[32];
+    1A keycode;
+    1A operation;
+    1A first;
+    1A second;
+    1A result;
+
+    nw::clear();
+    nw::out << "================================" << nw::endl;
+    nw::out << "          NwOS Toolbox" << nw::endl;
+    nw::out << "================================" << nw::endl;
+    nw::out << "1 - Show system time" << nw::endl;
+    nw::out << "2 - Keyboard test" << nw::endl;
+    nw::out << "3 - Integer calculator" << nw::endl;
+    nw::out << "0 - Exit" << nw::endl;
+
+    while (1) {
+        nw::out << nw::endl;
+        nw::out << "toolbox> ";
+        nw::cin >> command;
+
+        if (strcmp(command, "1") == 0) {
+            nw::out << "System time: ";
+            nw::time();
+            nw::out << nw::endl;
+        } else if (strcmp(command, "2") == 0) {
+            nw::out << "Keyboard test started." << nw::endl;
+            nw::out << "Press any key to show its code. ESC exits." << nw::endl;
+
+            while (1) {
+                keycode = nw::getkey();
+                nw::out << "Key code: " << keycode << nw::endl;
+                if (keycode == 255) {
+                    break;
+                }
+            }
+
+            nw::out << "Keyboard test finished." << nw::endl;
+        } else if (strcmp(command, "3") == 0) {
+            nw::out << "Integer calculator" << nw::endl;
+            nw::out << "1 - Add" << nw::endl;
+            nw::out << "2 - Subtract" << nw::endl;
+            nw::out << "3 - Multiply" << nw::endl;
+            nw::out << "4 - Divide" << nw::endl;
+            nw::out << "Operation: ";
+            nw::cin >> operation;
+
+            if (operation < 1) {
+                nw::out << "Unknown operation." << nw::endl;
+            } else if (operation > 4) {
+                nw::out << "Unknown operation." << nw::endl;
+            } else {
+                nw::out << "First number: ";
+                nw::cin >> first;
+                nw::out << "Second number: ";
+                nw::cin >> second;
+
+                if (operation == 1) {
+                    result = first + second;
+                    nw::out << "Result: " << result << nw::endl;
+                } else if (operation == 2) {
+                    result = first - second;
+                    nw::out << "Result: " << result << nw::endl;
+                } else if (operation == 3) {
+                    result = first * second;
+                    nw::out << "Result: " << result << nw::endl;
+                } else {
+                    if (second == 0) {
+                        nw::out << "Error: division by zero." << nw::endl;
+                    } else {
+                        result = first / second;
+                        nw::out << "Result: " << result << nw::endl;
+                    }
+                }
+            }
+        } else if (strcmp(command, "0") == 0) {
+            nw::out << "NwOS Toolbox closed." << nw::endl;
+            return 0;
+        } else {
+            nw::out << "Unknown command. Choose 1, 2, 3 or 0." << nw::endl;
+        }
+    }
+
+    return 0;
+}

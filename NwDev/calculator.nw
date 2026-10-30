@@ -1,0 +1,28 @@
+#include <nwc.h>
+
+1A main() {
+    1A num1;
+    1A num2;
+    char operation[2];
+
+    nw::out << "Enter first number: ";
+    nw::cin >> num1;
+    nw::out << "Enter operation: ";
+    nw::cin >> operation;
+    nw::out << "Enter second number: ";
+    nw::cin >> num2;
+
+    if (strcmp(operation, "+") == 0) {
+        nw::out << "Result: " << num1 + num2 << nw::endl;
+    } else if (strcmp(operation, "-") == 0) {
+        nw::out << "Result: " << num1 - num2 << nw::endl;
+    } else if (strcmp(operation, "*") == 0) {
+        nw::out << "Result: " << num1 * num2 << nw::endl;
+    } else if (strcmp(operation, "/") == 0) {
+        nw::out << "Result: " << num1 / num2 << nw::endl;
+    } else {
+        nw::out << "Invalid operation!\n";
+    }
+
+    return 0;
+}

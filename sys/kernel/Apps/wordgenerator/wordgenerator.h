@@ -3,5 +3,6 @@
 
 void say(void);
 void chat(void);
+void word_new(void);
 
 #endif

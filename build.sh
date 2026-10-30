@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 
 set -u
@@ -73,6 +72,12 @@ SOURCES=(
     sys/kernel/Apps/Games/rps.c
     sys/kernel/Apps/Games/game_coin.c
     sys/kernel/utf8.c
+    compiler/lexer/lexer.c
+    compiler/parser/parser.c
+    compiler/codegen/codegen.c
+    compiler/nwc_runtime.c
+    compiler/nwc_stdio.c
+    compiler/nwc_kernel.c
 )
 
 mkdir -p "$BUILD" "$ROOT/img"
@@ -221,7 +226,13 @@ for src in "${SOURCES[@]}"; do
     obj_name="${obj_name//./_}"
     obj="$BUILD/$obj_name.o"
 
-    clang "${CFLAGS[@]}" -c "$src" -o "$obj" || fail
+    if [[ "$src" == compiler/*.c ]]; then
+        clang "${CFLAGS[@]}" -DNWC_KERNEL \
+            -I "$ROOT/compiler/kernel_include" -I "$ROOT/compiler" \
+            -c "$src" -o "$obj" || fail
+    else
+        clang "${CFLAGS[@]}" -c "$src" -o "$obj" || fail
+    fi
     OBJS+=("$obj")
 done
 

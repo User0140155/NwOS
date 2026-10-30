@@ -7,6 +7,9 @@ void read_line(char* buffer, int max);
 
 int random_range(int min, int max);
 
+int read_int(void);
+void sleep(unsigned int ms);
+
 static const char* words[] =
 {
 
@@ -478,7 +481,6 @@ static const char* words[] =
     "britania ",
     "united kingdom ",
     "speed ",
-    "ishowspeed ",
     "berlin ",
     "Denmark ",
     "Moldavia ",
@@ -492,10 +494,14 @@ static const char* words[] =
     "width ",
     "height ",
     "end ",
-    "of world"
-    "Sea",
-    "Beach",
-    "Tea",
+    "of world "
+    "Sea ",
+    "Beach ",
+    "Tea ",
+    "Source ",
+    "Linux ",
+    "Coding ",
+    "Guard ",
 };
 
 #define WORD_COUNT \
@@ -503,8 +509,9 @@ static const char* words[] =
 void say(void)
 {
     print("\n\n");
-    print("Program says: ");
-    for (int i = 0; i < 17; i++)
+    print("OS says: ");
+    int count_words = random_range(8, 20);
+    for (int i = 0; i < count_words; i++)
     {
         int randomword;
         randomword =
@@ -512,6 +519,18 @@ void say(void)
         print(words[randomword]);
     }
     print("\n\n");
+}
+void word_new(void)
+{
+    print("Words: ");
+    int words_count = read_int();
+    for (int i = 0; i < words_count; i++) {
+        unsigned int ms_nw = random_range(195, 785);
+        int randomword;
+        randomword = random_range(0, WORD_COUNT - 1);
+        print(words[randomword]);
+        sleep(ms_nw);
+    } print("\n");
 }
 void chat(void)
 {
@@ -544,7 +563,9 @@ void chat(void)
         print("\n");
         print("Computer: ");
 
-        for (int i = 0; i < 17; i++)
+        int word_count = random_range(7, 20);
+
+        for (int i = 0; i < word_count; i++)
         {
             int randomword;
             randomword =

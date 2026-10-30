@@ -73,8 +73,10 @@ unsigned int nwf_ram_mb(void);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
 void read_line(char* buffer, int max);
+void sleep(unsigned int ms);
 
 unsigned int rand_simple(void);
+const char* fs_current_path(void);
 void set_p_shell(void);
 void print_shell_p(void);
 void change_p_color(void);
@@ -119,6 +121,7 @@ void game_word(void);
 void game_coin(void);
 void game_dice(void);
 void game_higher_lower(void);
+static void cmd_passwd(void);
 void game_math(void);
 void game_hangman(void);
 void game_tictactoe(void);
@@ -208,11 +211,18 @@ void fs_save_directory(void);
 int shell_p = 0;
 char invite_user[28] = OS_NAME "> ";
 
+static int cmd_sudo = 0;
+
 #define SETTINGS_FILE "sys.conf"
 #define SETTINGS_MAX  2048
 
 char cfg_user[32] = "user";
 char cfg_os[32] = OS_NAME;
+static char cfg_hostname[64] = "nwos";
+static char cfg_root_salt[17] = "";
+static char cfg_root_hash[65] = "";
+static int cfg_setup_complete = 0;
+static int cfg_require_login = 0;
 
 static unsigned char color_from_name(const char* name);
 static int cfg_find_key(const char* buffer, const char* key, char* out, int out_max);
@@ -690,6 +700,413 @@ static void cfg_strcpy(char* dest, const char* src, int max)
     }
 
     dest[i] = '\0';
+}
+
+static int normalize_username(char* s)
+{
+    int n = 0;
+
+    while (s[n] != '\0')
+    {
+        if (n >= 31)
+            return 0;
+
+        if (s[n] >= 'A' && s[n] <= 'Z')
+            s[n] = (char)(s[n] - 'A' + 'a');
+
+        char c = s[n];
+
+        if (!((c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') ||
+              c == '_' || c == '-'))
+            return 0;
+
+        if (n == 0 && (c == '-' || (c >= '0' && c <= '9')))
+            return 0;
+
+        n++;
+    }
+
+    if (n == 0 || strcmp(s, "root") == 0)
+        return 0;
+
+    return 1;
+}
+
+static int normalize_hostname(char* s)
+{
+    int n = 0;
+
+    while (s[n] != '\0')
+    {
+        if (n >= 63)
+            return 0;
+
+        if (s[n] >= 'A' && s[n] <= 'Z')
+            s[n] = (char)(s[n] - 'A' + 'a');
+
+        char c = s[n];
+
+        if (!((c >= 'a' && c <= 'z') ||
+              (c >= '0' && c <= '9') ||
+              c == '-'))
+            return 0;
+
+        if (n == 0 && c == '-')
+            return 0;
+
+        n++;
+    }
+
+    if (n == 0 || s[n - 1] == '-')
+        return 0;
+
+    return 1;
+}
+
+static int read_password(char* buffer, int max)
+{
+    int length = 0;
+
+    if (buffer == 0 || max < 2)
+        return -1;
+
+    while (1)
+    {
+        int key = keyboard_getkey();
+
+        if (key == KEY_ENTER)
+        {
+            buffer[length] = '\0';
+            putchar_os('\n');
+            return length;
+        }
+
+        if (key == KEY_BACKSPACE)
+        {
+            if (length > 0)
+            {
+                length--;
+                buffer[length] = '\0';
+                putchar_os('\b');
+            }
+
+            continue;
+        }
+
+        if (key >= 32 && key <= 126 && length < max - 1)
+        {
+            buffer[length++] = (char)key;
+            putchar_os('*');
+        }
+    }
+}
+
+typedef struct
+{
+    uint8_t data[64];
+    uint32_t datalen;
+    uint64_t bitlen;
+    uint32_t state[8];
+} nw_sha256_ctx_t;
+
+static const uint32_t nw_sha_k[64] =
+{
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+    0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+    0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+    0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+    0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+    0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+};
+
+static uint32_t nw_rotr32(uint32_t x, unsigned int n)
+{
+    return (x >> n) | (x << (32 - n));
+}
+
+static void nw_sha256_transform(nw_sha256_ctx_t* ctx,
+                                const uint8_t data[64])
+{
+    uint32_t m[64];
+
+    for (int i = 0; i < 16; i++)
+    {
+        m[i] =
+            ((uint32_t)data[i * 4] << 24) |
+            ((uint32_t)data[i * 4 + 1] << 16) |
+            ((uint32_t)data[i * 4 + 2] << 8) |
+            ((uint32_t)data[i * 4 + 3]);
+    }
+
+    for (int i = 16; i < 64; i++)
+    {
+        uint32_t s0 =
+            nw_rotr32(m[i - 15], 7) ^
+            nw_rotr32(m[i - 15], 18) ^
+            (m[i - 15] >> 3);
+
+        uint32_t s1 =
+            nw_rotr32(m[i - 2], 17) ^
+            nw_rotr32(m[i - 2], 19) ^
+            (m[i - 2] >> 10);
+
+        m[i] = m[i - 16] + s0 + m[i - 7] + s1;
+    }
+
+    uint32_t a = ctx->state[0];
+    uint32_t b = ctx->state[1];
+    uint32_t c = ctx->state[2];
+    uint32_t d = ctx->state[3];
+    uint32_t e = ctx->state[4];
+    uint32_t f = ctx->state[5];
+    uint32_t g = ctx->state[6];
+    uint32_t h = ctx->state[7];
+
+    for (int i = 0; i < 64; i++)
+    {
+        uint32_t s1 =
+            nw_rotr32(e, 6) ^
+            nw_rotr32(e, 11) ^
+            nw_rotr32(e, 25);
+
+        uint32_t ch = (e & f) ^ (~e & g);
+
+        uint32_t temp1 =
+            h + s1 + ch + nw_sha_k[i] + m[i];
+
+        uint32_t s0 =
+            nw_rotr32(a, 2) ^
+            nw_rotr32(a, 13) ^
+            nw_rotr32(a, 22);
+
+        uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+        uint32_t temp2 = s0 + maj;
+
+        h = g;
+        g = f;
+        f = e;
+        e = d + temp1;
+        d = c;
+        c = b;
+        b = a;
+        a = temp1 + temp2;
+    }
+
+    ctx->state[0] += a;
+    ctx->state[1] += b;
+    ctx->state[2] += c;
+    ctx->state[3] += d;
+    ctx->state[4] += e;
+    ctx->state[5] += f;
+    ctx->state[6] += g;
+    ctx->state[7] += h;
+}
+
+static void nw_sha256_init(nw_sha256_ctx_t* ctx)
+{
+    ctx->datalen = 0;
+    ctx->bitlen = 0;
+
+    ctx->state[0] = 0x6a09e667;
+    ctx->state[1] = 0xbb67ae85;
+    ctx->state[2] = 0x3c6ef372;
+    ctx->state[3] = 0xa54ff53a;
+    ctx->state[4] = 0x510e527f;
+    ctx->state[5] = 0x9b05688c;
+    ctx->state[6] = 0x1f83d9ab;
+    ctx->state[7] = 0x5be0cd19;
+}
+
+static void nw_sha256_update(nw_sha256_ctx_t* ctx,
+                             const uint8_t* data,
+                             uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++)
+    {
+        ctx->data[ctx->datalen++] = data[i];
+
+        if (ctx->datalen == 64)
+        {
+            nw_sha256_transform(ctx, ctx->data);
+            ctx->bitlen += 512;
+            ctx->datalen = 0;
+        }
+    }
+}
+
+static void nw_sha256_final(nw_sha256_ctx_t* ctx,
+                            uint8_t hash[32])
+{
+    uint32_t i = ctx->datalen;
+
+    ctx->data[i++] = 0x80;
+
+    if (i > 56)
+    {
+        while (i < 64)
+            ctx->data[i++] = 0;
+
+        nw_sha256_transform(ctx, ctx->data);
+
+        for (i = 0; i < 56; i++)
+            ctx->data[i] = 0;
+    }
+    else
+    {
+        while (i < 56)
+            ctx->data[i++] = 0;
+    }
+
+    ctx->bitlen += (uint64_t)ctx->datalen * 8;
+
+    for (i = 0; i < 8; i++)
+        ctx->data[63 - i] =
+            (uint8_t)(ctx->bitlen >> (i * 8));
+
+    nw_sha256_transform(ctx, ctx->data);
+
+    for (i = 0; i < 32; i++)
+    {
+        hash[i] = (uint8_t)(
+            ctx->state[i / 4] >> (24 - (i % 4) * 8)
+        );
+    }
+}
+
+static void nw_password_hash(const char* password,
+                             const char* salt,
+                             char output[65])
+{
+    static const char hex[] = "0123456789abcdef";
+    nw_sha256_ctx_t ctx;
+    uint8_t digest[32];
+    uint32_t salt_len = 0;
+    uint32_t pass_len = 0;
+
+    while (salt[salt_len] != '\0') salt_len++;
+    while (password[pass_len] != '\0') pass_len++;
+
+    nw_sha256_init(&ctx);
+    nw_sha256_update(&ctx, (const uint8_t*)salt, salt_len);
+
+    const uint8_t separator = ':';
+    nw_sha256_update(&ctx, &separator, 1);
+
+    nw_sha256_update(&ctx, (const uint8_t*)password, pass_len);
+    nw_sha256_final(&ctx, digest);
+
+    for (int i = 0; i < 32; i++)
+    {
+        output[i * 2]     = hex[digest[i] >> 4];
+        output[i * 2 + 1] = hex[digest[i] & 0x0F];
+    }
+
+    output[64] = '\0';
+}
+
+static void make_root_salt(char output[17])
+{
+    static const char hex[] = "0123456789abcdef";
+
+    //random_init();
+
+    for (int block = 0; block < 2; block++)
+    {
+        uint32_t lo, hi;
+
+        __asm__ volatile ("rdtsc"
+                          : "=a"(lo), "=d"(hi));
+
+        uint32_t value =
+            rand_simple() ^ lo ^ (hi * 0x9E3779B9u);
+
+        for (int j = 0; j < 8; j++)
+        {
+            output[block * 8 + j] =
+                hex[(value >> (28 - j * 4)) & 0x0F];
+        }
+    }
+
+    output[16] = '\0';
+}
+
+static int root_password_is_set(void)
+{
+    return cfg_root_salt[0] != '\0' &&
+           cfg_root_hash[0] != '\0';
+}
+
+static int verify_root_password(const char* password)
+{
+    if (!password || !root_password_is_set())
+        return 0;
+
+    char hash[65];
+    unsigned int diff = 0;
+
+    nw_password_hash(password, cfg_root_salt, hash);
+
+    for (int i = 0; i < 64; i++)
+        diff |= (unsigned char)hash[i] ^
+                (unsigned char)cfg_root_hash[i];
+
+    for (int i = 0; i < 65; i++)
+        hash[i] = '\0';
+
+    return diff == 0;
+}
+
+static void wipe_secret(char* secret, int size)
+{
+    volatile char* p = secret;
+
+    for (int i = 0; i < size; i++)
+        p[i] = '\0';
+}
+
+static int authenticate_root_password(void)
+{
+    if (!root_password_is_set())
+    {
+        print_error(
+            "Root password is not configured. Run passwd first.\n"
+        );
+        return 0;
+    }
+
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        char password[64];
+
+        print("Root password: ");
+        read_password(password, sizeof(password));
+
+        int valid = verify_root_password(password);
+        wipe_secret(password, sizeof(password));
+
+        if (valid)
+        {
+            print_success("Authentication successful.\n");
+            return 1;
+        }
+
+        print_error("Incorrect password.\n");
+        sleep(750);
+    }
+
+    print_error("Authentication failed.\n");
+    return 0;
 }
 
 void wait_key(void)
@@ -1480,64 +1897,6 @@ static void print_size_human(unsigned long long bytes)
     }
 }
 
-void Calc(void)
-{
-    int a;
-    int b;
-    char operation[4];
-
-    set_color(COLOR_GREEN);
-
-    print("\n=== Calculator ===\n");
-
-    set_color(base_color);
-
-    print("First number: ");
-    a = read_int();
-
-    print("Operation (+ - * ^ /): ");
-    read_line(operation, 4);
-
-    print("Second number: ");
-    b = read_int();
-
-    print_success("Result: ");
-
-    if (operation[0] == '+')
-    {
-        print_int(a + b);
-    }
-    else if (operation[0] == '-')
-    {
-        print_int(a - b);
-    }
-    else if (operation[0] == '*')
-    {
-        print_int(a * b);
-    }
-    else if (operation[0] == '^')
-    {
-        print_int(a ^ b);
-    }
-    else if (operation[0] == '/')
-    {
-        if (b == 0)
-        {
-            print_error("Error: division by zero!");
-            putchar_os('\n');
-            return;
-        }
-
-        print_int(a / b);
-    }
-    else
-    {
-        print_error("Unknown operation!");
-    }
-
-    putchar_os('\n');
-}
-
 void dateCr()
 {
     set_color(COLOR_WHITE);
@@ -1846,7 +2205,7 @@ void nwfetch(void)
             case 0:
                 set_color(COLOR_CYAN);  print(cfg_user);
                 set_color(COLOR_WHITE); print("@");
-                set_color(COLOR_CYAN);  print(cfg_os);
+                set_color(COLOR_CYAN);  print(cfg_hostname);
                 break;
 
             case 1:
@@ -2507,6 +2866,194 @@ int fs_load_status(void) {
     }
     return 1;
 }
+static int fs_prepare_rootfs_path(
+    const char *path,
+    char leaf[MAX_FILENAME]
+)
+{
+    if (path == 0 || path[0] == '\0' || leaf == 0)
+        return -1;
+
+    const char *last_slash = 0;
+
+    for (const char *q = path; *q != '\0'; q++)
+    {
+        if (*q == '/')
+            last_slash = q;
+    }
+
+    const char *leaf_src =
+        last_slash ? last_slash + 1 : path;
+
+    int leaf_len = 0;
+
+    while (leaf_src[leaf_len] != '\0')
+    {
+        if (leaf_len >= MAX_FILENAME - 1)
+            return -1;
+
+        leaf[leaf_len] = leaf_src[leaf_len];
+        leaf_len++;
+    }
+
+    leaf[leaf_len] = '\0';
+
+    if (leaf_len == 0)
+        return -1;
+
+    const char *p = path;
+    const char *end = last_slash ? last_slash : path;
+
+    int parent = 0;
+
+    while (p < end)
+    {
+        while (p < end && *p == '/')
+            p++;
+
+        if (p >= end)
+            break;
+
+        char part[MAX_FILENAME];
+        int len = 0;
+
+        while (p < end && *p != '/')
+        {
+            if (len >= MAX_FILENAME - 1)
+                return -1;
+
+            part[len++] = *p++;
+        }
+
+        part[len] = '\0';
+
+        int child = -1;
+
+        for (int i = 1; i < MAX_FILES; i++)
+        {
+            if (directory[i].used &&
+                directory[i].parent == (uint16_t)parent &&
+                strcmp(directory[i].name, part) == 0)
+            {
+                if (directory[i].type != FS_TYPE_DIR)
+                    return -1;
+
+                child = i;
+                break;
+            }
+        }
+
+        if (child == -1)
+        {
+            for (int i = 1; i < MAX_FILES; i++)
+            {
+                if (!directory[i].used)
+                {
+                    child = i;
+                    break;
+                }
+            }
+
+            if (child == -1)
+                return -1;
+
+            directory[child].used = 1;
+            directory[child].type = FS_TYPE_DIR;
+            directory[child].parent = (uint16_t)parent;
+            directory[child].size = 0;
+
+            for (int i = 0; i <= len; i++)
+                directory[child].name[i] = part[i];
+        }
+
+        parent = child;
+    }
+
+    return parent;
+}
+static int fs_build_home_path(char* out, int capacity)
+{
+    const char* prefix = "/home/";
+    int pos = 0;
+
+    if (out == 0 || capacity < 1)
+        return 0;
+
+    while (*prefix)
+    {
+        if (pos >= capacity - 1)
+            return 0;
+
+        out[pos++] = *prefix++;
+    }
+
+    for (int i = 0; cfg_user[i] != '\0'; i++)
+    {
+        if (pos >= capacity - 1)
+            return 0;
+
+        out[pos++] = cfg_user[i];
+    }
+
+    out[pos] = '\0';
+    return 1;
+}
+
+static int fs_ensure_dir_path(const char* path)
+{
+    char file_path[256];
+    char leaf[MAX_FILENAME];
+    int len = 0;
+
+    if (path == 0 || path[0] == '\0')
+        return -1;
+
+    while (path[len] != '\0')
+    {
+        if (len >= 220)
+            return -1;
+
+        file_path[len] = path[len];
+        len++;
+    }
+
+    while (len > 1 && file_path[len - 1] == '/')
+        len--;
+
+    if (len == 0)
+        return -1;
+
+    if (file_path[len - 1] != '/')
+        file_path[len++] = '/';
+
+    const char marker[] = ".nwos-dir";
+
+    for (int i = 0; marker[i] != '\0'; i++)
+        file_path[len++] = marker[i];
+
+    file_path[len] = '\0';
+
+    int parent = fs_prepare_rootfs_path(file_path, leaf);
+
+    if (parent >= 0)
+        fs_save_directory();
+
+    return parent;
+}
+
+static int fs_create_user_home(void)
+{
+    char home[80];
+
+    if (!fs_build_home_path(home, sizeof(home)))
+        return -1;
+
+    int home_index = fs_ensure_dir_path(home);
+
+    current_dir = 0;
+
+    return home_index;
+}
 void fs_format_disk(int drive_idx) {
     unsigned char zero[512];
     for (int k = 0; k < 512; k++) zero[k] = 0;
@@ -2528,33 +3075,45 @@ void fs_format_disk(int drive_idx) {
 
     directory[0].used = 1; directory[0].type = FS_TYPE_DIR; directory[0].parent = 0; strcpy(directory[0].name, "/");
 
+    current_dir = 0;
+
+    directory[0].used = 1;
+    directory[0].type = FS_TYPE_DIR;
+    directory[0].parent = 0;
+    strcpy(directory[0].name, "/");
+    directory[0].size = 0;
+
     fs_mkdir("sys");
     fs_mkdir("home");
     fs_mkdir("bin");
 
-    for (int i = 0; i < ROOTFS_FILE_COUNT; i++) {
+    for (int i = 0; i < ROOTFS_FILE_COUNT; i++)
+    {
         const char* path = rootfs_files[i].path;
         const unsigned char* data = rootfs_files[i].data;
         unsigned int size = rootfs_files[i].size;
 
-        char dir_path[64];
-        char file_name[32];
-        
-        int last_slash = -1;
-        for (int j = 0; path[j] != '\0'; j++) {
-            if (path[j] == '/') last_slash = j;
+        char file_name[MAX_FILENAME];
+
+        if (size > (unsigned int)(FS_FILE_SECTORS * 512U))
+        {
+            print_error("File exceeds maximum size: ");
+            print(path);
+            putchar_os('\n');
+            continue;
         }
 
-        if (last_slash <= 0) {
-            strcpy(file_name, path + 1);
-            current_dir = 0;
-        } else {
-            for (int j = 0; j < last_slash; j++) dir_path[j] = path[j];
-            dir_path[last_slash] = '\0';
-            strcpy(file_name, path + last_slash + 1);
-            
-            fs_cd(dir_path); 
+        int parent = fs_prepare_rootfs_path(path, file_name);
+
+        if (parent < 0)
+        {
+            print_error("Cannot prepare rootfs path: ");
+            print(path);
+            putchar_os('\n');
+            continue;
         }
+
+        current_dir = (uint16_t)parent;
 
         print("    [");
         print_int(i + 1);
@@ -2566,31 +3125,54 @@ void fs_format_disk(int drive_idx) {
         print_int((int)size);
         print(" bytes)\n");
 
-        if (fs_find(file_name) == -1) {
-            fs_create(file_name);
-            int idx = fs_find(file_name);
-            if (idx != -1) {
-                unsigned char sector[512];
+        if (fs_find(file_name) != -1)
+            continue;
 
-                for (unsigned int s = 0; s < FS_FILE_SECTORS; s++) {
-                    unsigned int offset = s * 512;
-                    if (offset >= size)
-                        break;
+        fs_create(file_name);
 
-                    for (int k = 0; k < 512; k++) sector[k] = 0;
+        int idx = fs_find(file_name);
 
-                    for (unsigned int k = 0; k < 512 && offset + k < size; k++)
-                        sector[k] = data[offset + k];
+        if (idx == -1)
+        {
+            print_error("Cannot create file: ");
+            print(path);
+            putchar_os('\n');
+            continue;
+        }
 
-                    ata_write_sector_d(
-                        fs_current_drive,
-                        FS_DATA_LBA + idx * FS_FILE_SECTORS + s,
-                        sector);
-                }
+        unsigned char sector[512];
 
-                directory[idx].size = size;
+        for (unsigned int s = 0; s < FS_FILE_SECTORS; s++)
+        {
+            unsigned int offset = s * 512U;
+
+            if (offset >= size)
+                break;
+
+            for (int k = 0; k < 512; k++)
+                sector[k] = 0;
+
+            for (unsigned int k = 0;
+                k < 512 && offset + k < size;
+                k++)
+            {
+                sector[k] = data[offset + k];
+            }
+
+            if (ata_write_sector_d(
+                    fs_current_drive,
+                    FS_DATA_LBA + (unsigned int)idx *
+                        FS_FILE_SECTORS + s,
+                    sector) != 0)
+            {
+                print_error("Disk write failed: ");
+                print(path);
+                putchar_os('\n');
+                break;
             }
         }
+
+        directory[idx].size = size;
     }
 
     current_dir = 0;
@@ -2598,8 +3180,18 @@ void fs_format_disk(int drive_idx) {
     fs_mark_formatted(seq);
     fs_save_directory();
 
+    fs_quiet = 1;
+
+    int home_ok = fs_create_user_home();
+
+    settings_save();
+
     fs_quiet = 0;
-    
+    current_dir = 0;
+
+    if (home_ok < 0)
+        print_error("Warning: could not create user home directory.\n");
+
     print_success("Filesystem formatted. Rootfs installed.\n");
 }
 
@@ -2612,13 +3204,279 @@ int fs_find(const char* name)
     for (int i = 0; i < MAX_FILES; i++)
     {
         if (directory[i].used &&
-            directory[i].parent == current_dir && // Ищем только в текущей папке
+            directory[i].parent == current_dir &&
             strcmp(directory[i].name, name) == 0)
         {
             return i;
         }
     }
     return -1;
+}
+
+static int fs_resolve_dir_path(const char* path)
+{
+    if (path == 0 || path[0] == '\0')
+        return -1;
+
+    int dir = (path[0] == '/') ? 0 : current_dir;
+    const char* p = path;
+
+    while (*p)
+    {
+        while (*p == '/')
+            p++;
+
+        if (*p == '\0')
+            break;
+
+        char part[MAX_FILENAME];
+        int len = 0;
+
+        while (*p && *p != '/')
+        {
+            if (len >= MAX_FILENAME - 1)
+                return -1;
+
+            part[len++] = *p++;
+        }
+
+        part[len] = '\0';
+
+        if (strcmp(part, ".") == 0)
+            continue;
+
+        if (strcmp(part, "..") == 0)
+        {
+            if (dir != 0)
+                dir = directory[dir].parent;
+
+            continue;
+        }
+
+        int found = -1;
+
+        for (int i = 1; i < MAX_FILES; i++)
+        {
+            if (directory[i].used &&
+                directory[i].type == FS_TYPE_DIR &&
+                directory[i].parent == (uint16_t)dir &&
+                strcmp(directory[i].name, part) == 0)
+            {
+                found = i;
+                break;
+            }
+        }
+
+        if (found == -1)
+            return -1;
+
+        dir = found;
+    }
+
+    return dir;
+}
+
+static void cmd_cd_path(const char* args)
+{
+    char target[256];
+    int pos = 0;
+
+    if (args == 0 || args[0] == '\0')
+    {
+        print_error("Usage: cd <path|~>\n");
+        return;
+    }
+
+    if (args[0] == '~')
+    {
+        if (args[1] != '\0' && args[1] != '/')
+        {
+            print_error("Invalid home path.\n");
+            return;
+        }
+
+        if (!fs_build_home_path(target, sizeof(target)))
+        {
+            print_error("Home path is too long.\n");
+            return;
+        }
+
+        while (target[pos] != '\0')
+            pos++;
+
+        for (int i = 1; args[i] != '\0'; i++)
+        {
+            if (pos >= (int)sizeof(target) - 1)
+            {
+                print_error("Path is too long.\n");
+                return;
+            }
+
+            target[pos++] = args[i];
+        }
+
+        target[pos] = '\0';
+    }
+    else
+    {
+        int i = 0;
+
+        while (args[i] != '\0')
+        {
+            if (i >= (int)sizeof(target) - 1)
+            {
+                print_error("Path is too long.\n");
+                return;
+            }
+
+            target[i] = args[i];
+            i++;
+        }
+
+        target[i] = '\0';
+    }
+
+    int dir = fs_resolve_dir_path(target);
+
+    if (dir < 0)
+    {
+        print_error("Directory not found: ");
+        print(target);
+        putchar_os('\n');
+        return;
+    }
+
+    current_dir = (uint16_t)dir;
+}
+
+static void run_startup_nwo(const char* filename)
+{
+    uint16_t saved_dir = current_dir;
+    int bin_index = -1;
+
+    if (filename == 0 || filename[0] == '\0')
+        return;
+
+    current_dir = 0;
+
+    for (int i = 1; i < MAX_FILES; i++)
+    {
+        if (directory[i].used &&
+            directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 &&
+            strcmp(directory[i].name, "bin") == 0)
+        {
+            bin_index = i;
+            break;
+        }
+    }
+
+    if (bin_index == -1)
+    {
+        print_error("[INIT] /bin not found.\n");
+        current_dir = saved_dir;
+        return;
+    }
+
+    current_dir = (uint16_t)bin_index;
+
+    int index = fs_find(filename);
+
+    if (index == -1)
+    {
+        print_error("[INIT] Application not found: ");
+        print(filename);
+        putchar_os('\n');
+
+        current_dir = saved_dir;
+        return;
+    }
+
+    if (directory[index].type != FS_TYPE_FILE)
+    {
+        print_error("[INIT] Not a file: ");
+        print(filename);
+        putchar_os('\n');
+
+        current_dir = saved_dir;
+        return;
+    }
+
+    print("[INIT] Starting /bin/");
+    print(filename);
+    putchar_os('\n');
+
+    nwo_run(filename);
+
+    current_dir = saved_dir;
+}
+
+static void run_nwo_from_dir(
+    const char* dir_path,
+    const char* filename
+)
+{
+    if (!dir_path || !filename ||
+        dir_path[0] == '\0' || filename[0] == '\0')
+    {
+        print_error("[INIT] Invalid application path.\n");
+        return;
+    }
+
+    for (int i = 0; filename[i] != '\0'; i++)
+    {
+        if (filename[i] == '/')
+        {
+            print_error("[INIT] Use a filename, not a full path.\n");
+            return;
+        }
+    }
+
+    uint16_t saved_dir = current_dir;
+
+    int dir = fs_resolve_dir_path(dir_path);
+
+    if (dir < 0)
+    {
+        print_error("[INIT] Directory not found: ");
+        print(dir_path);
+        putchar_os('\n');
+        return;
+    }
+
+    current_dir = (uint16_t)dir;
+
+    int index = fs_find(filename);
+
+    if (index < 0)
+    {
+        print_error("[INIT] Application not found: ");
+        print(filename);
+        putchar_os('\n');
+
+        current_dir = saved_dir;
+        return;
+    }
+
+    if (directory[index].type != FS_TYPE_FILE)
+    {
+        print_error("[INIT] Not a file: ");
+        print(filename);
+        putchar_os('\n');
+
+        current_dir = saved_dir;
+        return;
+    }
+
+    print("[INIT] Running ");
+    print(dir_path);
+    print("/");
+    print(filename);
+    putchar_os('\n');
+
+    nwo_run(filename);
+
+    current_dir = saved_dir;
 }
 
 int fs_read_binary(
@@ -2919,7 +3777,6 @@ static void fs_entry_release(int index)
     directory[index].size = 0;
 }
 
-/* frees a directory together with everything inside it */
 static void fs_entry_release_tree(int index, int depth)
 {
     if (depth > 32) return;
@@ -2936,7 +3793,6 @@ static void fs_entry_release_tree(int index, int depth)
     fs_entry_release(index);
 }
 
-/* if the shell was inside the removed tree, go back to its parent */
 static void fs_release_finish(uint16_t fallback)
 {
     for (int i = 0; i < fs_removed_count; i++)
@@ -2949,7 +3805,6 @@ static void fs_release_finish(uint16_t fallback)
     }
 }
 
-/* copies a name into buf and drops the trailing slashes */
 static int fs_name_copy(const char* name, char* buf, int max)
 {
     int n = 0;
@@ -2964,6 +3819,177 @@ static int fs_name_copy(const char* name, char* buf, int max)
 
     return n;
 }
+
+static int fs_entry_in_tree(int index, const char* root_name)
+{
+    int current = index;
+
+    for (int depth = 0;
+         depth < MAX_FILES && current > 0;
+         depth++)
+    {
+        if (current >= MAX_FILES || !directory[current].used)
+            return 0;
+
+        if (directory[current].parent == 0 &&
+            strcmp(directory[current].name, root_name) == 0)
+        {
+            return 1;
+        }
+
+        current = directory[current].parent;
+    }
+
+    return 0;
+}
+
+static int fs_entry_in_sys_apps_tree(int index)
+{
+    int sys_index = -1;
+    int apps_index = -1;
+
+    if (index < 0 || index >= MAX_FILES || !directory[index].used)
+        return 0;
+
+    for (int i = 1; i < MAX_FILES; i++)
+    {
+        if (directory[i].used &&
+            directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 &&
+            strcmp(directory[i].name, "sys") == 0)
+        {
+            sys_index = i;
+            break;
+        }
+    }
+
+    if (sys_index < 0)
+        return 0;
+
+    for (int i = 1; i < MAX_FILES; i++)
+    {
+        if (directory[i].used &&
+            directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == (uint16_t)sys_index &&
+            strcmp(directory[i].name, "apps") == 0)
+        {
+            apps_index = i;
+            break;
+        }
+    }
+
+    if (apps_index < 0)
+        return 0;
+
+    int current = index;
+    for (int depth = 0; depth < MAX_FILES; depth++)
+    {
+        if (current == apps_index)
+            return 1;
+
+        if (current <= 0 || current >= MAX_FILES ||
+            !directory[current].used)
+            return 0;
+
+        current = directory[current].parent;
+    }
+
+    return 0;
+}
+
+static int fs_name_ends_with(const char* name, const char* suffix)
+{
+    int name_len = 0;
+    int suffix_len = 0;
+
+    if (name == 0 || suffix == 0)
+        return 0;
+
+    while (name[name_len] != '\0') name_len++;
+    while (suffix[suffix_len] != '\0') suffix_len++;
+
+    if (suffix_len > name_len)
+        return 0;
+
+    return strcmp(name + name_len - suffix_len, suffix) == 0;
+}
+
+static int fs_entry_requires_admin(int index)
+{
+    if (index <= 0 || index >= MAX_FILES ||
+        !directory[index].used)
+    {
+        return 0;
+    }
+
+    /* Top-level system directories always remain protected. */
+    if (directory[index].parent == 0 &&
+        directory[index].type == FS_TYPE_DIR &&
+        (strcmp(directory[index].name, "sys") == 0 ||
+         strcmp(directory[index].name, "home") == 0 ||
+         strcmp(directory[index].name, "bin") == 0))
+    {
+        return 1;
+    }
+
+    /*
+     * Compiled NWO programs are normally application files, even when they
+     * are stored outside /sys/apps. Keep the known startup GUI binary protected.
+     */
+    if (directory[index].type == FS_TYPE_FILE &&
+        fs_name_ends_with(directory[index].name, ".nwo"))
+    {
+        if (strcmp(directory[index].name, "gui.nwo") == 0)
+            return 1;
+
+        return 0;
+    }
+
+    /* Do not prompt for other ordinary application files under /sys/apps. */
+    if (directory[index].type == FS_TYPE_FILE &&
+        fs_entry_in_sys_apps_tree(index))
+    {
+        return 0;
+    }
+
+    /* Non-binary content in system trees still requires authorization. */
+    if (fs_entry_in_tree(index, "sys") ||
+        fs_entry_in_tree(index, "bin"))
+    {
+        return 1;
+    }
+
+    return 0;
+}
+
+static int authorize_sensitive_action(
+    const char* description,
+    const char* confirmation
+)
+{
+    print_error("\nWARNING: dangerous operation!\n");
+    print(description);
+    print("\nThis action may make NwOS unusable.\n");
+
+    if (!cmd_sudo && !authenticate_root_password())
+        return 0;
+
+    print("To confirm, type exactly: ");
+    print(confirmation);
+    print("\n> ");
+
+    char answer[40];
+    read_line(answer, sizeof(answer));
+
+    if (strcmp(answer, confirmation) != 0)
+    {
+        print("Operation cancelled.\n");
+        return 0;
+    }
+
+    return 1;
+}
+
 
 void fs_rmdir(const char* name)
 {
@@ -3001,6 +4027,16 @@ void fs_rmdir(const char* name)
         return;
     }
 
+    if (fs_entry_requires_admin(index))
+    {
+        if (!authorize_sensitive_action(
+                "Deleting a protected system directory",
+                directory[index].name))
+        {
+            return;
+        }
+    }
+
     uint16_t parent = directory[index].parent;
 
     fs_removed_count = 0;
@@ -3022,40 +4058,35 @@ void fs_rm(const char* args)
 
     if (args == 0) args = "";
 
-    while (args[i] == ' ') i++;
+    while (args[i] == ' ' || args[i] == '\t') i++;
 
+    /* Keep the original rm option parsing. */
     while (args[i] == '-')
     {
         i++;
-
-        while (args[i] != '\0' && args[i] != ' ')
+        while (args[i] != '\0' && args[i] != ' ' && args[i] != '\t')
         {
             if (args[i] == 'r' || args[i] == 'R') recursive = 1;
             else if (args[i] == 'f' || args[i] == 'F') force = 1;
             i++;
         }
-
-        while (args[i] == ' ') i++;
+        while (args[i] == ' ' || args[i] == '\t') i++;
     }
 
-    while (args[i] != '\0' && args[i] != ' ' && n < MAX_FILENAME)
-    {
-        buf[n++] = args[i];
-        i++;
-    }
-
+    while (args[i] != '\0' && args[i] != ' ' && args[i] != '\t' &&
+           n < MAX_FILENAME)
+        buf[n++] = args[i++];
     buf[n] = '\0';
 
     while (n > 0 && buf[n - 1] == '/') buf[--n] = '\0';
 
     if (n == 0)
     {
-        print_error("Usage: rm [-r] [-f] <file>\n");
+        print_error("Usage: rm [-r] [-f] <file|directory>\n");
         return;
     }
 
     int index = fs_find(buf);
-
     if (index == -1)
     {
         if (force) return;
@@ -3063,6 +4094,7 @@ void fs_rm(const char* args)
         return;
     }
 
+    /* Never let rm recursively erase the filesystem root. */
     if (index == 0)
     {
         print_error("Cannot remove the root directory.\n");
@@ -3077,24 +4109,66 @@ void fs_rm(const char* args)
             return;
         }
 
-        uint16_t parent = directory[index].parent;
+        /* Ask for password + exact confirmation only for protected paths. */
+        if (fs_entry_requires_admin(index))
+        {
+            if (!authorize_sensitive_action(
+                    "Deleting a protected system directory",
+                    directory[index].name))
+                return;
+        }
 
+        /* Preserve the original directory-removal sequence. */
+        uint16_t parent = directory[index].parent;
         fs_removed_count = 0;
         fs_entry_release_tree(index, 0);
         fs_release_finish(parent);
-
         fs_save_directory();
 
         print_success("Directory removed.\n");
         return;
     }
 
+    if (fs_entry_requires_admin(index))
+    {
+        if (!authorize_sensitive_action(
+                "Deleting a protected system file",
+                directory[index].name))
+            return;
+    }
+
+    /* Preserve the original file-removal sequence. */
     fs_removed_count = 0;
     fs_entry_release(index);
+    fs_save_directory();
+    print_success("File removed.\n");
+}
 
+static void cmd_rm_root(void)
+{
+    if (!authorize_sensitive_action(
+            "Deleting everything inside the root directory",
+            "/"))
+    {
+        return;
+    }
+
+    current_dir = 0;
+    fs_removed_count = 0;
+
+    for (int i = 1; i < MAX_FILES; i++)
+    {
+        if (directory[i].used &&
+            directory[i].parent == 0)
+        {
+            fs_entry_release_tree(i, 0);
+        }
+    }
+
+    current_dir = 0;
     fs_save_directory();
 
-    print_success("File removed.\n");
+    print_success("Root directory contents removed.\n");
 }
 
 int fs_read_text(
@@ -3447,6 +4521,49 @@ void fs_write(const char* name, const char* text)
     fs_store_data(index, text, "File written.\n");
 }
 
+
+/* Write NwC output as binary; unlike fs_store_data(), this preserves zero bytes. */
+int fs_write_binary(const char* name, const unsigned char* data, unsigned int size)
+{
+    static unsigned char sector[512];
+    int index;
+    int previous_quiet;
+    unsigned int i;
+    unsigned int sector_index;
+
+    if (name == 0 || data == 0 || size > MAX_FILE_SIZE ||
+        size > FS_FILE_SECTORS * 512u)
+        return 0;
+
+    index = fs_find(name);
+    if (index == -1)
+    {
+        previous_quiet = fs_quiet;
+        fs_quiet = 1;
+        fs_create(name);
+        fs_quiet = previous_quiet;
+        index = fs_find(name);
+    }
+    if (index < 0 || directory[index].type != FS_TYPE_FILE)
+        return 0;
+
+    directory[index].size = size;
+    for (sector_index = 0; sector_index < FS_FILE_SECTORS; ++sector_index)
+    {
+        for (i = 0; i < 512; ++i)
+        {
+            unsigned int offset = sector_index * 512u + i;
+            sector[i] = offset < size ? data[offset] : 0;
+        }
+        ata_write_sector_d(
+            fs_current_drive,
+            FS_DATA_LBA + (unsigned int)index * FS_FILE_SECTORS + sector_index,
+            sector);
+    }
+    fs_save_directory();
+    return 1;
+}
+
 void fs_read(const char* name)
 {
     int index = fs_find(name);
@@ -3787,6 +4904,55 @@ static void cmd_drive_status(void)
     cmd_drive("");
 }
 
+static void cmd_passwd(void)
+{
+    if (root_password_is_set() &&
+        !authenticate_root_password())
+    {
+        return;
+    }
+
+    char password[64];
+    char confirm[64];
+
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        print("New root password: ");
+
+        int length = read_password(password, sizeof(password));
+
+        print("Confirm new password: ");
+
+        int confirm_length =
+            read_password(confirm, sizeof(confirm));
+
+        if (length != confirm_length ||
+            strcmp(password, confirm) != 0)
+        {
+            wipe_secret(password, sizeof(password));
+            wipe_secret(confirm, sizeof(confirm));
+
+            print_error("Passwords do not match.\n");
+            continue;
+        }
+
+        make_root_salt(cfg_root_salt);
+        nw_password_hash(password, cfg_root_salt, cfg_root_hash);
+
+        wipe_secret(password, sizeof(password));
+        wipe_secret(confirm, sizeof(confirm));
+
+        cfg_setup_complete = 1;
+
+        settings_save();
+
+        print_success("Root password updated.\n");
+        return;
+    }
+
+    print_error("Password was not changed.\n");
+}
+
 static void cmd_disk_info(const char* args)
 {
     if (ata_drive_count() == 0)
@@ -3890,9 +5056,53 @@ static void cmd_disk_info(const char* args)
     putchar_os('\n');
 }
 
+static void fs_enter_user_home(void)
+{
+    char home[80];
+
+    if (!fs_build_home_path(home, sizeof(home)))
+    {
+        current_dir = 0;
+        return;
+    }
+
+    int dir = fs_resolve_dir_path(home);
+
+    if (dir < 0)
+        dir = fs_ensure_dir_path(home);
+
+    current_dir = (dir >= 0) ? (uint16_t)dir : 0;
+}
+
+static void cmd_format(void)
+{
+    if (!cmd_sudo && !authenticate_root_password())
+        return;
+
+    print_error("This will erase the active NwOS filesystem.\n");
+    print("Type format to continue: ");
+
+    char answer[16];
+    read_line(answer, sizeof(answer));
+
+    if (strcmp(answer, "format") != 0)
+    {
+        print("Formatting cancelled.\n");
+        return;
+    }
+
+    fs_format_disk(fs_current_drive);
+}
+
 
 void death_screen(void) {
-    print("Removing everything...\n");
+    if (!authorize_sensitive_action(
+            "Deleting everything inside the root directory",
+            "/"))
+    {
+        return;
+    }
+    print_error("Deleting '/' directory..\n");
     sleep(1000);
     
     for (int i = 1; i < MAX_FILES; i++) {
@@ -3911,7 +5121,7 @@ void death_screen(void) {
     directory[1].type = FS_TYPE_FILE;
     directory[1].parent = 0;
     strcpy(directory[1].name, "death.bsod");
-    const char* msg = "Root filesystem destroyed. System bricked.";
+    const char* msg = "Root filesystem destroyed.";
     directory[1].size = 45;
     
     unsigned char sector[512];
@@ -3921,11 +5131,21 @@ void death_screen(void) {
     
     fs_save_directory();
     
-    KPANIC_FATAL(ERR_DEATH, "Root filesystem destroyed. Reboot to see death screen.");
+    KPANIC_FATAL(ERR_DEATH, "Root filesystem destroyed.");
 }
 
 void disk_death(void) {
     unknow_panic(DISK_DEATH);
+}
+
+static void cmd_pwd(void)
+{
+    print(fs_current_path());
+    putchar_os('\n');
+}
+
+void run_calc(void) {
+    run_nwo_from_dir("/sys/apps", "calculator.nwo");
 }
 
 static const Command commands[] =
@@ -3936,18 +5156,18 @@ static const Command commands[] =
     CMD    ("about",        cmd_about,       "about  - OS information"),
     CMD    ("nwfetch",      nwfetch,         "nwfetch - system info"),
     CMD    ("games",        games_menu,      "games  - list games"),
-    CMD    ("calc",         Calc,            "calc   - Calculator"),
+    CMD    ("calc",         run_calc,        "calc   - Calculator"),
     CMD    ("color",        t_colorsetter,   "color  - change color"),
-    CMD    ("format",       fs_format,       "format  - erase all files"),
+    CMD    ("format",       cmd_format,       "format  - erase all files"),
     CMD    ("panic safe",   cmd_panic_safe,  "panic safe|fatal - test kernel panic"),
     CMD    ("panic fatal",  cmd_panic_fatal, 0),
+    CMD    ("passwd",       cmd_passwd,       "passwd - set or change the root password"),
     CMD_ARG("touch",       fs_create,       "touch <file> - create file"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
+    CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
     CMD_ARG("edit",         redactor,        "edit <file> - edit a file"),
     //CMD_ARG("delete",       fs_delete,       "delete <file> - delete file"),
-    /* the joke commands are exact matches, so they have to stay in front
-       of "rm" (which is matched by prefix) */
     CMD    ("rm -rf /",     death_screen,    0),
     CMD    ("rm /",         death_screen,    0),
     CMD    ("rm disk/",     disk_death,      0),
@@ -3980,8 +5200,9 @@ static const Command commands[] =
     CMD    ("install",      cmd_install,      "install - run the installation wizard"),
     CMD    ("ls",           fs_ls,           "ls     - list files in current dir"),
     CMD_ARG("mkdir",        fs_mkdir,        "mkdir <dir> - create directory"),
-    CMD_ARG("cd",           fs_cd,           "cd <dir> - change directory (use .. for up)"),
+    CMD_ARG("cd",           cmd_cd_path,               "cd <path> - change directory; supports ~, .. and nested paths"),
     CMD    ("gui",          run_gui,         "gui    - launch graphical shell"),
+    CMD    ("word",         word_new,        "word   - generate random word"),
 
     /* network */
     CMD_ARG("ping",         net_ping,        "ping <host or IP> - e.g. ping www.google.com"),
@@ -4178,6 +5399,60 @@ static int execute_single_command(char* command)
     if (command[0] == '\0')
         return 1;
 
+    if (strcmp(command, "sudo") == 0)
+    {
+        print_error("Usage: sudo <command>\n");
+        return 0;
+    }
+
+    if (strncmp(command, "sudo ", 5) == 0)
+    {
+        if (cmd_sudo)
+        {
+            print_error("Nested sudo is not supported.\n");
+            return 0;
+        }
+
+        char nested[128];
+        const char* src = command + 5;
+
+        while (*src == ' ' || *src == '\t')
+            src++;
+
+        int length = 0;
+
+        while (*src && length < (int)sizeof(nested) - 1)
+            nested[length++] = *src++;
+
+        while (length > 0 &&
+            (nested[length - 1] == ' ' ||
+                nested[length - 1] == '\t'))
+        {
+            length--;
+        }
+
+        nested[length] = '\0';
+
+        if (length == 0)
+        {
+            print_error("Usage: sudo <command>\n");
+            return 0;
+        }
+
+        if (!authenticate_root_password())
+            return 0;
+
+        int previous_sudo = cmd_sudo;
+
+        cmd_sudo = 1;
+
+        int result = execute_single_command(nested);
+
+        cmd_sudo = previous_sudo;
+
+        return result;
+    }
+
     for (unsigned int i = 0; i < COMMAND_COUNT; i++)
     {
         const Command* c = &commands[i];
@@ -4279,7 +5554,7 @@ static void shell_execute(const char* command)
 void set_p_shell(void)
 {
     int choose_p = 0;
-    print("1.Default (" OS_NAME "> )\n2.D disk (D:/>)\n3.C disk (C:/>)\n4.Custom\n5.Current disk (");
+    print("1.Default (" OS_NAME "> )\n2.D disk (D:/>)\n3.C disk (C:/>)\n4.Custom\n5.Current disk (\n6.Unix prompt");
     putchar_os(fs_get_drive_letter());
     print(":/>)\n");
     print("|\n");
@@ -4306,6 +5581,9 @@ void set_p_shell(void)
         print_success("Set to 'Current disk'\n");
         shell_p = 3;
         cfg_strcpy(invite_user, "drive", 28);
+    } else if (choose_p == 6) {
+        shell_p = 4;
+        print_success("Set to 'Unix'\n");
     } else {
         print_error("Invalid choose!\n");
         return;
@@ -4380,7 +5658,7 @@ static int cfg_find_key(const char* buffer, const char* key, char* out, int out_
 void settings_load(void)
 {
     char buffer[SETTINGS_MAX];
-    char value[64];
+    char value[80];
     int prev_dir = current_dir;
     int sys_dir = -1;
 
@@ -4407,14 +5685,28 @@ void settings_load(void)
         if (cfg_find_key(buffer, "OS", value, sizeof(value)))
             cfg_strcpy(cfg_os, value, sizeof(cfg_os));
 
-        /* the version is a build-time constant (OS_VERSION_STR), it is
-           not taken from the settings file */
+        if (cfg_find_key(buffer, "hostname", value, sizeof(value)))
+            cfg_strcpy(cfg_hostname, value, sizeof(cfg_hostname));
+
+        if (cfg_find_key(buffer, "root_salt", value, sizeof(value)))
+            cfg_strcpy(cfg_root_salt, value, sizeof(cfg_root_salt));
+
+        if (cfg_find_key(buffer, "root_hash", value, sizeof(value)))
+            cfg_strcpy(cfg_root_hash, value, sizeof(cfg_root_hash));
+
+        if (cfg_find_key(buffer, "require_login", value, sizeof(value)))
+            cfg_require_login = (strcmp(value, "1") == 0);
+
+        if (cfg_find_key(buffer, "setup_complete", value, sizeof(value)))
+            cfg_setup_complete = (strcmp(value, "1") == 0);
 
         if (cfg_find_key(buffer, "prompt", value, sizeof(value)))
         {
             cfg_strcpy(invite_user, value, 28);
 
-            if (strcmp(value, "drive") == 0)
+            if (strcmp(value, "unix") == 0)
+                shell_p = 4;
+            else if (strcmp(value, "drive") == 0)
                 shell_p = 3;
             else if (strcmp(value, "D:/> ") == 0)
                 shell_p = 1;
@@ -4481,29 +5773,137 @@ void settings_save(void)
 
     buffer[0] = '\0';
 
-    cfg_append(buffer, &pos, sizeof(buffer), "name", cfg_user);
-    cfg_append(buffer, &pos, sizeof(buffer), "OS", cfg_os);
-    cfg_append(buffer, &pos, sizeof(buffer), "version", OS_VERSION_STR);
-    if (shell_p == 3)
-        cfg_append(buffer, &pos, sizeof(buffer), "prompt", "drive");
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "name", cfg_user);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "OS", cfg_os);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "hostname", cfg_hostname);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "root_salt", cfg_root_salt);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "root_hash", cfg_root_hash);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "require_login",
+            cfg_require_login ? "1" : "0");
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "version", OS_VERSION_STR);
+
+    if (shell_p == 4)
+        cfg_append(buffer, &pos, sizeof(buffer),
+                "prompt", "unix");
+    else if (shell_p == 3)
+        cfg_append(buffer, &pos, sizeof(buffer),
+                "prompt", "drive");
     else
-        cfg_append(buffer, &pos, sizeof(buffer), "prompt", invite_user);
-    cfg_append(buffer, &pos, sizeof(buffer), "prompt_color", color_names[prompt_color & 0x0F]);
-    cfg_append(buffer, &pos, sizeof(buffer), "color", color_names[base_color & 0x0F]);
-    cfg_append(buffer, &pos, sizeof(buffer), "help_color", color_names[text_color & 0x0F]);
+        cfg_append(buffer, &pos, sizeof(buffer),
+                "prompt", invite_user);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "prompt_color",
+            color_names[prompt_color & 0x0F]);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "color",
+            color_names[base_color & 0x0F]);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "help_color",
+            color_names[text_color & 0x0F]);
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+            "setup_complete",
+            cfg_setup_complete ? "1" : "0");
+
+    if (fs_find(SETTINGS_FILE) == -1)
+        fs_create(SETTINGS_FILE);
 
     fs_write(SETTINGS_FILE, buffer);
 
     current_dir = prev_dir;
 }
 
+static void prompt_append(
+    char* out,
+    int capacity,
+    int* pos,
+    const char* text
+)
+{
+    while (*text && *pos < capacity - 1)
+        out[(*pos)++] = *text++;
+
+    out[*pos] = '\0';
+}
+
 static const char* shell_prompt_text(void)
 {
     static char drive_prompt[8];
+    static char unix_prompt[384];
 
-    if (shell_p == 0) return OS_NAME "> ";
-    if (shell_p == 1) return "D:/> ";
-    if (shell_p == 2) return "C:/> ";
+    if (shell_p == 4)
+    {
+        char home[80];
+        const char* cwd = fs_current_path();
+        int pos = 0;
+
+        unix_prompt[0] = '\0';
+
+        if (!fs_build_home_path(home, sizeof(home)))
+            cfg_strcpy(home, "/home/user", sizeof(home));
+
+        prompt_append(unix_prompt, sizeof(unix_prompt),
+                      &pos, cfg_user);
+
+        prompt_append(unix_prompt, sizeof(unix_prompt),
+                      &pos, "@");
+
+        prompt_append(unix_prompt, sizeof(unix_prompt),
+                      &pos, cfg_hostname);
+
+        prompt_append(unix_prompt, sizeof(unix_prompt),
+                      &pos, ":");
+
+        int home_len = 0;
+
+        while (home[home_len] != '\0')
+            home_len++;
+
+        if (strncmp(cwd, home, home_len) == 0 &&
+            (cwd[home_len] == '\0' || cwd[home_len] == '/'))
+        {
+            prompt_append(unix_prompt, sizeof(unix_prompt),
+                          &pos, "~");
+
+            prompt_append(unix_prompt, sizeof(unix_prompt),
+                          &pos, cwd + home_len);
+        }
+        else
+        {
+            prompt_append(unix_prompt, sizeof(unix_prompt),
+                          &pos, cwd);
+        }
+
+        prompt_append(unix_prompt, sizeof(unix_prompt),
+                      &pos, "$ ");
+
+        return unix_prompt;
+    }
+
+    if (shell_p == 0)
+        return OS_NAME "> ";
+
+    if (shell_p == 1)
+        return "D:/> ";
+
+    if (shell_p == 2)
+        return "C:/> ";
 
     if (shell_p == 3)
     {
@@ -4531,7 +5931,7 @@ void cmd_settings(void)
     print("color       = "); print(color_names[base_color & 0x0F]);   putchar_os('\n');
     print("help_color  = "); print(color_names[text_color & 0x0F]);   putchar_os('\n');
     print("disk        = "); putchar_os(fs_get_drive_letter());      putchar_os('\n');
-    putchar_os('\n');
+    print("hostname    = "); print(cfg_hostname);    putchar_os('\n'); putchar_os('\n');
 }
 
 void run_gui(void) {
@@ -4590,7 +5990,6 @@ static unsigned long long rootfs_total_size(void)
 
 static unsigned long long install_disk_usage(void)
 {
-    /* magic sector + directory sectors + file data slots */
     return (unsigned long long)(1 + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS) * 512ULL;
 }
 
@@ -4634,8 +6033,102 @@ static void installer_print_disks(int selected)
     }
 }
 
+static int installer_collect_setup(void)
+{
+    char input[64];
+    char password[64];
+    char confirm[64];
+
+    print_title("\n=== NwOS SETUP ===\n\n");
+    print("Configure your new NwOS installation.\n\n");
+
+    while (1)
+    {
+        print("Hostname [nwos]: ");
+        read_line(input, sizeof(input));
+
+        if (input[0] == '\0')
+        {
+            cfg_strcpy(cfg_hostname, "nwos", sizeof(cfg_hostname));
+            break;
+        }
+
+        if (normalize_hostname(input))
+        {
+            cfg_strcpy(cfg_hostname, input, sizeof(cfg_hostname));
+            break;
+        }
+
+        print_error("Invalid hostname. Use letters, digits and '-'.\n");
+    }
+
+    while (1)
+    {
+        print("Username [user]: ");
+        read_line(input, 32);
+
+        if (input[0] == '\0')
+        {
+            cfg_strcpy(cfg_user, "user", sizeof(cfg_user));
+            break;
+        }
+
+        if (normalize_username(input))
+        {
+            cfg_strcpy(cfg_user, input, sizeof(cfg_user));
+            break;
+        }
+
+        print_error("Invalid username. Use 1-31 characters; root is reserved.\n");
+    }
+
+    while (1)
+    {
+        print("Root password: ");
+        int len = read_password(password, sizeof(password));
+
+        print("Confirm root password: ");
+        read_password(confirm, sizeof(confirm));
+
+        if (strcmp(password, confirm) != 0)
+        {
+            print_error("Passwords do not match. Try again.\n");
+            continue;
+        }
+
+        break;
+    }
+
+    make_root_salt(cfg_root_salt);
+    nw_password_hash(password, cfg_root_salt, cfg_root_hash);
+
+    for (int i = 0; i < (int)sizeof(password); i++)
+    {
+        password[i] = '\0';
+        confirm[i] = '\0';
+    }
+
+    cfg_setup_complete = 1;
+    shell_p = 4;
+
+    print_success("\nSetup configuration collected.\n");
+    print("Hostname: ");
+    print(cfg_hostname);
+    print("\nUsername: ");
+    print(cfg_user);
+    print("\n\n");
+
+    return 1;
+}
+
 static void cmd_install(void)
 {
+    if (root_password_is_set() &&
+        !cmd_sudo &&
+        !authenticate_root_password())
+    {
+        return;
+    }
     installer_cancelled = 0;
 
     installer();
@@ -4667,6 +6160,18 @@ void installer(void) {
         installer_cancelled = 1;
         return;
     }
+
+    if (!installer_collect_setup())
+    {
+        installer_cancelled = 1;
+        return;
+    }
+
+    print_title("\n  Disk configuration:\n");
+    print("    Mode: existing NwFS raw-disk layout\n");
+    print("    Target disk: selected below\n");
+    print("    GPT/MBR partitioning: not implemented yet\n");
+    print("    Warning: use a disposable QEMU test disk\n\n");
 
     print_title("  Detected disks:\n");
     installer_print_disks(-1);
@@ -4739,6 +6244,18 @@ void installer(void) {
         print_error("\n  WARNING: this disk already contains an " OS_NAME " installation.\n");
     }
 
+    print("Require a password at startup? [Y/n]: ");
+
+    char answer[8];
+    read_line(answer, sizeof(answer));
+
+    if (answer[0] == 'n' || answer[0] == 'N')
+        cfg_require_login = 0;
+    else
+        cfg_require_login = 1;
+
+    cfg_setup_complete = 1;
+
     print("\n  ALL data on ");
     putchar_os(target->letter);
     print(": will be erased!\n  Continue? (y/n): ");
@@ -4782,6 +6299,44 @@ void installer(void) {
     reboot();
 }
 
+static int login_prompt(void)
+{
+    if (!cfg_require_login)
+        return 1;
+
+    if (!root_password_is_set())
+    {
+        print_error("Login is enabled but no root password is configured.\n");
+        return 0;
+    }
+
+    while (1)
+    {
+        char password[64];
+        int tries;
+
+        print("\nNwOS login: ");
+        print(cfg_user);
+        print("\nPassword: ");
+
+        read_password(password, sizeof(password));
+
+        int valid = verify_root_password(password);
+        wipe_secret(password, sizeof(password));
+
+        if (valid)
+        {
+            print_success("Login successful.\n");
+            return 1;
+        }
+
+        print_error("Incorrect password. Try again.\n");
+        tries++;
+
+        sleep(1000);
+    }
+}
+
 void kernel_main(void) {
     fb_init();
     
@@ -4818,7 +6373,6 @@ void kernel_main(void) {
     if (status == 0) {
         installer();
 
-        /* the installer reboots on success, so we only get here if it was cancelled */
         while(1) __asm__ volatile("hlt");
         return;
     }
@@ -4847,10 +6401,9 @@ void kernel_main(void) {
     print("        Welcome to " OS_NAME " " OS_VERSION_STR "\n");
     print("================================\n\n");
     set_color(COLOR_LIGHT_GREEN);
-    print("copyright " STR_COPYRIGHT " User014015  2026\n\n");
+    print("copyright (c) User0140155 2026\n\n");
     set_color(COLOR_LIGHT_GRAY);
     print("Github: https://github.com/User0140155/NwOS"); print("\n");
-    print("Scroll Up/Down: ⬆️⬇️\n");
     print("Type 'help' for commands.\n\n");
     set_color(COLOR_GREEN);
     print("================");
@@ -4858,6 +6411,12 @@ void kernel_main(void) {
     print("================\n");
     set_color(COLOR_LIGHT_GRAY);
 
+    fs_enter_user_home();
+    if (!login_prompt())
+    {
+        while (1)
+            __asm__ volatile ("hlt");
+    }
     shell();
 
     while (1)

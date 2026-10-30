@@ -22,8 +22,37 @@ static unsigned int nwc_output_capacity = 0;
 static unsigned int nwc_output_pos = 0;
 static unsigned int* nwc_output_size_ptr = 0;
 
+static char *nwc_capture_buffer = 0;
+static unsigned int nwc_capture_capacity = 0;
+static unsigned int nwc_capture_position = 0;
+
+void nwc_capture_begin(char *buffer, unsigned int capacity)
+{
+    nwc_capture_buffer = buffer;
+    nwc_capture_capacity = capacity;
+    nwc_capture_position = 0;
+    if (buffer && capacity) buffer[0] = '\0';
+}
+
+void nwc_capture_end(void)
+{
+    if (nwc_capture_buffer && nwc_capture_capacity)
+        nwc_capture_buffer[nwc_capture_position < nwc_capture_capacity ?
+                           nwc_capture_position : nwc_capture_capacity - 1] = '\0';
+    nwc_capture_buffer = 0;
+    nwc_capture_capacity = 0;
+    nwc_capture_position = 0;
+}
+
+
 static void nwc_write_char(char c)
 {
+    if (nwc_capture_buffer && nwc_capture_capacity)
+    {
+        if (nwc_capture_position + 1 < nwc_capture_capacity)
+            nwc_capture_buffer[nwc_capture_position++] = c;
+        return;
+    }
     putchar_os(c);
 }
 
@@ -115,7 +144,10 @@ static void nwc_vprintf(const char* format, va_list ap)
             const char* text = va_arg(ap, const char*);
 
             if (text != 0)
-                print(text);
+            {
+                while (*text != '\0')
+                    nwc_write_char(*text++);
+            }
 
             i++;
             continue;
@@ -173,7 +205,11 @@ static void nwc_vprintf(const char* format, va_list ap)
     }
 }
 
+#ifdef NWC_KERNEL
+FILE *stderr = 0;
+#else
 void* stderr = 0;
+#endif
 
 int printf(const char* format, ...)
 {
@@ -186,7 +222,11 @@ int printf(const char* format, ...)
     return 0;
 }
 
+#ifdef NWC_KERNEL
+int fprintf(FILE* stream, const char* format, ...)
+#else
 int fprintf(void* stream, const char* format, ...)
+#endif
 {
     va_list ap;
 
@@ -357,26 +397,6 @@ double strtod(const char* text, char** endptr)
         *endptr = (char*)(text + i);
 
     return sign < 0 ? -value : value;
-}
-
-char* strcpy(char* dst, const char* src)
-{
-    unsigned int i = 0;
-
-    if (dst == 0)
-        return dst;
-
-    if (src == 0)
-        src = "";
-
-    while (src[i] != '\0')
-    {
-        dst[i] = src[i];
-        i++;
-    }
-
-    dst[i] = '\0';
-    return dst;
 }
 
 const char* strrchr(const char* text, int ch)

@@ -10,7 +10,7 @@
 #define OS_NAME            "NwOS"
 #define OS_VERSION_MAJOR   1
 #define OS_VERSION_MINOR   4
-#define OS_VERSION_PATCH   7
+#define OS_VERSION_PATCH   8
 #define OS_MADE_DATE      "2026.08.27"
 
 #define OS_STR_HELPER(x)   #x
@@ -63,6 +63,7 @@ int fs_find(const char* name);
 int atoi_simple(const char* text);
 void fs_store_data(int index, const char* text, const char* success_message);
 void fs_write(const char* name, const char* text);
+int fs_write_binary(const char* name, const unsigned char* data, unsigned int size);
 void fs_read(const char* name);
 void fs_edit(const char* name, const char* text);
 void fs_delete(const char* name);
