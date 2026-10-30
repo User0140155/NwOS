@@ -41,6 +41,8 @@ Thank you for your understanding and support!
 
 **New official profile:** https://github.com/User0140155
 
+**Old profile (if you need archives of <v1.4.6):** https://github.com/User014015/
+
 ## Tiktok page
 (Russian account)
 
