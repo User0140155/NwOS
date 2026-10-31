@@ -188,11 +188,12 @@ int keyboard_getkey(void)
         if (scancode == 0x36) { shift_right = 1; continue; }
         if (scancode == 0x1D) { nwos_ctrl_left = 1; continue; }
         if (scancode == 0x3A) { caps_lock = !caps_lock; continue; }
+        if (scancode == 0x48) return KEY_NUMPAD_8;
+        if (scancode == 0x50) return KEY_NUMPAD_2;
 
-        /* NwOS nano editor shortcuts (Set-1 make codes). */
         if (scancode == 0x3F) return KEY_F5;
-        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x1F) return 19; /* Ctrl+S */
-        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x2D) return 24; /* Ctrl+X */
+        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x1F) return 19;
+        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x2D) return 24;
         if (scancode == 0x01) return KEY_ESC;
         if (scancode == 0x0E) return KEY_BACKSPACE;
         if (scancode == 0x0F) return KEY_TAB;

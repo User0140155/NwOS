@@ -12,9 +12,12 @@
 #define KEY_LEFT       261
 #define KEY_RIGHT      262
 
-#define KEY_SUPER_S    263
+#define KEY_NUMPAD_8   265
+#define KEY_NUMPAD_2   266
 
+#define KEY_SUPER_S    263
 #define KEY_F5         264
+
 void keyboard_init(void);
 int keyboard_getkey(void);
 

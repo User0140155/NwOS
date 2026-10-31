@@ -25,3 +25,5 @@ payload/
 refresh_nwc.sh
 .backup-nwc-before-modern-gui-20261029-214819/
 tools/gen_sound.py
+NwC.md
+shortNwC.md

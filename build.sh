@@ -78,6 +78,7 @@ SOURCES=(
     compiler/nwc_runtime.c
     compiler/nwc_stdio.c
     compiler/nwc_kernel.c
+    sys/kernel/package.c
 )
 
 mkdir -p "$BUILD" "$ROOT/img"

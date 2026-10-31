@@ -17,6 +17,8 @@
 #include "Apps/baseconverter/baseconverter.h"
 #include "rootfs_data.h"
 
+#include "package.h"
+
 
 #include "network/net.h"
 
@@ -50,10 +52,11 @@ void game_snake(void);
 
 
 /*
-* MADE BY: User014015 (Lost accout, new is: User0140155)
+* MADE BY: User014015 (Lost account, new is: User0140155)
 * Created: 28 july 2026 (v.0.1)
 * Name: NwOS
 * Github: https://github.com/User0140155/NwOS
+* Old github: https://github.com/User014015/NwOS
 * License MIT: (github file: LICENSE)
 */
 
@@ -166,6 +169,10 @@ typedef unsigned short uint16_t;
 #define FS_TYPE_FILE 0
 #define FS_TYPE_DIR  1
 
+#define MAX_HISTORY_COMMANDS 256
+#define MAX_CMD_LENGTH 1024
+#define HISTORY_MAX_BYTES 10240
+
 typedef struct __attribute__((packed)) {
     uint8_t used;
     uint8_t type;
@@ -223,6 +230,7 @@ static char cfg_root_salt[17] = "";
 static char cfg_root_hash[65] = "";
 static int cfg_setup_complete = 0;
 static int cfg_require_login = 0;
+static int cfg_disk_history = 0;
 
 static unsigned char color_from_name(const char* name);
 static int cfg_find_key(const char* buffer, const char* key, char* out, int out_max);
@@ -1115,9 +1123,165 @@ void wait_key(void)
     keyboard_getkey();
 }
 
+static char cmd_history[MAX_HISTORY_COMMANDS][MAX_CMD_LENGTH];
+static int history_count = 0;
+static int history_pos = -1;
+
+static void history_check_size(void)
+{
+    int prev_dir = current_dir;
+    int sys_dir = -1;
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 && strcmp(directory[i].name, "sys") == 0)
+        {
+            sys_dir = i;
+            break;
+        }
+    }
+
+    if (sys_dir == -1) return;
+    current_dir = sys_dir;
+
+    unsigned int size = fs_get_file_size("history.txt");
+    if (size > HISTORY_MAX_BYTES)
+    {
+        fs_delete("history.txt");
+        history_count = 0;
+        history_pos = -1;
+    }
+
+    current_dir = prev_dir;
+}
+
+void history_load(void)
+{
+    if (!cfg_disk_history) return;
+
+    int prev_dir = current_dir;
+    int sys_dir = -1;
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 && strcmp(directory[i].name, "sys") == 0)
+        {
+            sys_dir = i;
+            break;
+        }
+    }
+
+    if (sys_dir == -1) return;
+    current_dir = sys_dir;
+
+    history_check_size();
+
+    char buffer[2048];
+    if (fs_read_text("history.txt", buffer, sizeof(buffer)))
+    {
+        int i = 0;
+        int line_idx = 0;
+        int char_idx = 0;
+
+        while (buffer[i] != '\0' && line_idx < MAX_HISTORY_COMMANDS)
+        {
+            if (buffer[i] == '\n')
+            {
+                cmd_history[line_idx][char_idx] = '\0';
+                line_idx++;
+                char_idx = 0;
+            }
+            else if (buffer[i] != '\r')
+            {
+                if (char_idx < MAX_CMD_LENGTH - 1)
+                {
+                    cmd_history[line_idx][char_idx++] = buffer[i];
+                }
+            }
+            i++;
+        }
+        history_count = line_idx;
+    }
+
+    current_dir = prev_dir;
+}
+
+void history_save(void)
+{
+    if (!cfg_disk_history) return;
+
+    int prev_dir = current_dir;
+    int sys_dir = -1;
+
+    for (int i = 0; i < MAX_FILES; i++)
+    {
+        if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 && strcmp(directory[i].name, "sys") == 0)
+        {
+            sys_dir = i;
+            break;
+        }
+    }
+
+    if (sys_dir == -1) return;
+    current_dir = sys_dir;
+
+    history_check_size();
+
+    char accum[2048];
+    int pos = 0;
+    accum[0] = '\0';
+
+    for (int i = 0; i < history_count; i++)
+    {
+        int j = 0;
+        while (cmd_history[i][j] != '\0' && pos < (int)sizeof(accum) - 3)
+        {
+            accum[pos++] = cmd_history[i][j++];
+        }
+        accum[pos++] = '\n';
+    }
+    accum[pos] = '\0';
+
+    if (fs_find("history.txt") == -1)
+    {
+        fs_create("history.txt");
+    }
+    fs_write("history.txt", accum);
+
+    current_dir = prev_dir;
+}
+
+void history_add_command(const char* cmd)
+{
+    if (cmd == 0 || cmd[0] == '\0') return;
+    
+    if (history_count > 0 && strcmp(cmd_history[history_count - 1], cmd) == 0)
+        return;
+
+    if (history_count < MAX_HISTORY_COMMANDS)
+    {
+        strcpy(cmd_history[history_count++], cmd);
+    }
+    else
+    {
+        for (int i = 0; i < MAX_HISTORY_COMMANDS - 1; i++)
+        {
+            strcpy(cmd_history[i], cmd_history[i + 1]);
+        }
+        strcpy(cmd_history[MAX_HISTORY_COMMANDS - 1], cmd);
+    }
+
+    history_pos = history_count;
+    history_save();
+}
+
 void read_line(char* buffer, int max)
 {
     int length = 0;
+    history_pos = history_count;
 
     while (1)
     {
@@ -1140,9 +1304,12 @@ void read_line(char* buffer, int max)
         if (key == KEY_ENTER)
         {
             buffer[length] = '\0';
-
             putchar_os('\n');
-
+            
+            if (length > 0)
+            {
+                history_add_command(buffer);
+            }
             return;
         }
 
@@ -1151,33 +1318,77 @@ void read_line(char* buffer, int max)
             if (length > 0)
             {
                 length--;
-
                 buffer[length] = '\0';
-
                 putchar_os('\b');
             }
 
             continue;
         }
+
         if (key == KEY_UP)
         {
-            scroll_view_up();
+            if (history_count > 0 && history_pos > 0)
+            {
+                history_pos--;
+                
+                while (length > 0)
+                {
+                    putchar_os('\b');
+                    length--;
+                }
+
+                int i = 0;
+                while (cmd_history[history_pos][i] != '\0' && i < max - 1)
+                {
+                    buffer[i] = cmd_history[history_pos][i];
+                    putchar_os(buffer[i]);
+                    i++;
+                }
+                length = i;
+                buffer[length] = '\0';
+            }
             continue;
         }
 
         if (key == KEY_DOWN)
         {
-            scroll_view_down();
+            if (history_count > 0 && history_pos < history_count)
+            {
+                history_pos++;
+
+                while (length > 0)
+                {
+                    putchar_os('\b');
+                    length--;
+                }
+
+                if (history_pos < history_count)
+                {
+                    int i = 0;
+                    while (cmd_history[history_pos][i] != '\0' && i < max - 1)
+                    {
+                        buffer[i] = cmd_history[history_pos][i];
+                        putchar_os(buffer[i]);
+                        i++;
+                    }
+                    length = i;
+                    buffer[length] = '\0';
+                }
+                else
+                {
+                    buffer[0] = '\0';
+                    length = 0;
+                }
+            }
             continue;
         }
+
         if (key > 0 && key < 256)
         {
             if (length < max - 1)
             {
                 buffer[length] = (char)key;
-
                 length++;
-
                 putchar_os((char)key);
             }
         }
@@ -3095,13 +3306,15 @@ void fs_format_disk(int drive_idx) {
 
         char file_name[MAX_FILENAME];
 
-        if (size > (unsigned int)(FS_FILE_SECTORS * 512U))
-        {
-            print_error("File exceeds maximum size: ");
-            print(path);
-            putchar_os('\n');
-            continue;
-        }
+        // removing limit
+
+        // if (size > (unsigned int)(FS_FILE_SECTORS * 512U))
+        // {
+        //     print_error("File exceeds maximum size: ");
+        //     print(path);
+        //     putchar_os('\n');
+        //     continue;
+        // }
 
         int parent = fs_prepare_rootfs_path(path, file_name);
 
@@ -4236,6 +4449,11 @@ void startingNWOS() {
     print("[OK] ");
     set_color(base_color);
     print("RANDOM\n");
+    history_load();
+    set_color(COLOR_GREEN);
+    print("[OK] ");
+    set_color(base_color);
+    print("HISTORY\n");
     ata_init();
     set_color(COLOR_GREEN);
     print("[OK] ");
@@ -5697,6 +5915,9 @@ void settings_load(void)
         if (cfg_find_key(buffer, "require_login", value, sizeof(value)))
             cfg_require_login = (strcmp(value, "1") == 0);
 
+        if (cfg_find_key(buffer, "disk_history", value, sizeof(value)))
+                    cfg_disk_history = (strcmp(value, "1") == 0 || strcmp(value, "true") == 0);
+
         if (cfg_find_key(buffer, "setup_complete", value, sizeof(value)))
             cfg_setup_complete = (strcmp(value, "1") == 0);
 
@@ -5791,6 +6012,10 @@ void settings_save(void)
     cfg_append(buffer, &pos, sizeof(buffer),
             "require_login",
             cfg_require_login ? "1" : "0");
+
+    cfg_append(buffer, &pos, sizeof(buffer),
+                "disk_history",
+                cfg_disk_history ? "true" : "false");
 
     cfg_append(buffer, &pos, sizeof(buffer),
             "version", OS_VERSION_STR);
