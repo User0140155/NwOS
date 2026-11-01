@@ -12,6 +12,7 @@
 #include "Apps/Games/game_memory.h"
 #include "Apps/Games/snake.h"
 #include "kernel.h"
+#include "../../compiler/nwc_kernel.h"
 
 #include "Apps/fileStats/filestats.h"
 #include "Apps/baseconverter/baseconverter.h"
@@ -70,7 +71,7 @@ void fs_rm(const char* args);
 void clear(void);
 void unknow_panic(unsigned int code);
 static const char* shell_prompt_text(void);
-static void shell_execute(const char* command);
+static int shell_execute(const char* command);
 void nwo_run(const char* filename);
 void nwf_cpu_name(char* out);
 unsigned int nwf_ram_mb(void);
@@ -4311,49 +4312,19 @@ void fs_rmdir(const char* name)
     print_success("Directory removed.\n");
 }
 
-void fs_rm(const char* args)
+static void fs_rm_one(const char* name, int recursive, int force)
 {
-    char buf[MAX_FILENAME + 1];
-    int recursive = 0;
-    int force = 0;
-    int i = 0;
-    int n = 0;
+    int index = fs_find(name);
 
-    if (args == 0) args = "";
-
-    while (args[i] == ' ' || args[i] == '\t') i++;
-
-    /* Keep the original rm option parsing. */
-    while (args[i] == '-')
-    {
-        i++;
-        while (args[i] != '\0' && args[i] != ' ' && args[i] != '\t')
-        {
-            if (args[i] == 'r' || args[i] == 'R') recursive = 1;
-            else if (args[i] == 'f' || args[i] == 'F') force = 1;
-            i++;
-        }
-        while (args[i] == ' ' || args[i] == '\t') i++;
-    }
-
-    while (args[i] != '\0' && args[i] != ' ' && args[i] != '\t' &&
-           n < MAX_FILENAME)
-        buf[n++] = args[i++];
-    buf[n] = '\0';
-
-    while (n > 0 && buf[n - 1] == '/') buf[--n] = '\0';
-
-    if (n == 0)
-    {
-        print_error("Usage: rm [-r] [-f] <file|directory>\n");
-        return;
-    }
-
-    int index = fs_find(buf);
     if (index == -1)
     {
-        if (force) return;
-        print_error("No such file or directory.\n");
+        if (!force)
+            print_error("No such file or directory: ");
+        if (!force)
+        {
+            print(name);
+            putchar_os('\n');
+        }
         return;
     }
 
@@ -4388,7 +4359,9 @@ void fs_rm(const char* args)
         fs_release_finish(parent);
         fs_save_directory();
 
-        print_success("Directory removed.\n");
+        print_success("Directory removed: ");
+        print(name);
+        putchar_os('\n');
         return;
     }
 
@@ -4404,7 +4377,72 @@ void fs_rm(const char* args)
     fs_removed_count = 0;
     fs_entry_release(index);
     fs_save_directory();
-    print_success("File removed.\n");
+    print_success("File removed: ");
+    print(name);
+    putchar_os('\n');
+}
+
+void fs_rm(const char* args)
+{
+    const char* p = args ? args : "";
+    int recursive = 0;
+    int force = 0;
+    int targets = 0;
+
+    /* Preserve the original rm option parsing. */
+    while (*p == ' ' || *p == '\t') p++;
+
+    while (*p == '-')
+    {
+        p++;
+        while (*p != '\0' && *p != ' ' && *p != '\t' && *p != ',')
+        {
+            if (*p == 'r' || *p == 'R') recursive = 1;
+            else if (*p == 'f' || *p == 'F') force = 1;
+            p++;
+        }
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+    }
+
+    /* Every whitespace/comma-separated token is a separate target. */
+    while (*p != '\0')
+    {
+        char name[MAX_FILENAME];
+        int n = 0;
+        int too_long = 0;
+
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (*p == '\0') break;
+
+        while (*p != '\0' && *p != ' ' && *p != '\t' && *p != ',')
+        {
+            if (n < MAX_FILENAME - 1)
+                name[n++] = *p;
+            else
+                too_long = 1;
+            p++;
+        }
+        name[n] = '\0';
+
+        while (n > 0 && name[n - 1] == '/')
+            name[--n] = '\0';
+
+        if (n == 0)
+            continue;
+
+        targets++;
+
+        if (too_long)
+        {
+            print_error("Filename is too long (maximum 31 characters).\n");
+            continue;
+        }
+
+        fs_rm_one(name, recursive, force);
+    }
+
+    if (targets == 0)
+        print_error("Usage: rm [-r] [-f] <file1> [file2 ...]\n");
 }
 
 static void cmd_rm_root(void)
@@ -4660,7 +4698,11 @@ typedef struct
 static void cmd_help(void);
 static void cmd_about(void);
 static void cmd_echo(const char* args);
+static void cmd_touch(const char* args);
 static void cmd_write(const char* args);
+static void cmd_bash(const char* args);
+static void cmd_bat(const char* args);
+static void cmd_nwc(const char* args);
 static void cmd_panic_safe(void);
 static void cmd_panic_fatal(void);
 static void cmd_mem(void);
@@ -4901,9 +4943,27 @@ void fs_delete(const char* name)
 }
 
 void fs_create(const char* name) {
-    if (name[0] == '\0') {
+    int name_len = 0;
+
+    if (name == 0 || name[0] == '\0') {
         print_error("Filename is empty.\n");
         return;
+    }
+
+    /* File names are single tokens: spaces and tabs are not allowed. */
+    while (name[name_len] != '\0') {
+        if (name[name_len] == ' ' || name[name_len] == '\t' ||
+            name[name_len] == '\n' || name[name_len] == '\r') {
+            print_error("Filename cannot contain whitespace.\n");
+            return;
+        }
+
+        if (name_len >= MAX_FILENAME - 1) {
+            print_error("Filename is too long (maximum 31 characters).\n");
+            return;
+        }
+
+        name_len++;
     }
 
     for (int i = 0; i < MAX_FILES; i++) {
@@ -5430,7 +5490,10 @@ static const Command commands[] =
     CMD    ("panic safe",   cmd_panic_safe,  "panic safe|fatal - test kernel panic"),
     CMD    ("panic fatal",  cmd_panic_fatal, 0),
     CMD    ("passwd",       cmd_passwd,       "passwd - set or change the root password"),
-    CMD_ARG("touch",       fs_create,       "touch <file> - create file"),
+    CMD_ARG("touch",       cmd_touch,       "touch <file1> [file2 ...] - create files"),
+    CMD_ARG("bash",        cmd_bash,        "bash <file.sh> - run NwSH script"),
+    CMD_ARG("bat",         cmd_bat,         "bat <file.bat> - run NwBAT script"),
+    CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> -o <file.nwo> - compile NwC source"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
     CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
@@ -5439,7 +5502,7 @@ static const Command commands[] =
     CMD    ("rm -rf /",     death_screen,    0),
     CMD    ("rm /",         death_screen,    0),
     CMD    ("rm disk/",     disk_death,      0),
-    CMD_ARG("rm",           fs_rm,           "rm [-r] <file> - remove file (-r = directory)"),
+    CMD_ARG("rm",           fs_rm,           "rm [-r] <file1> [file2 ...] - remove files (-r = directories)"),
     CMD_ARG("rmdir",        fs_rmdir,        "rmdir <dir> - remove directory with its content"),
     CMD    ("reboot",       reboot,          "reboot - restart " OS_NAME),
     CMD_ARG("run",          nwo_run,         "run <file.nwo> - run NWO application"),
@@ -5591,6 +5654,49 @@ static void cmd_echo(const char* args)
     putchar_os('\n');
 }
 
+static void cmd_touch(const char* args)
+{
+    const char* p = args ? args : "";
+    int files = 0;
+
+    /* A space, tab or comma separates file names. */
+    while (*p != '\0')
+    {
+        char name[MAX_FILENAME];
+        int n = 0;
+        int too_long = 0;
+
+        while (*p == ' ' || *p == '\t' || *p == ',') p++;
+        if (*p == '\0') break;
+
+        while (*p != '\0' && *p != ' ' && *p != '\t' && *p != ',')
+        {
+            if (n < MAX_FILENAME - 1)
+                name[n++] = *p;
+            else
+                too_long = 1;
+            p++;
+        }
+        name[n] = '\0';
+
+        if (n == 0)
+            continue;
+
+        files++;
+
+        if (too_long)
+        {
+            print_error("Filename is too long (maximum 31 characters).\n");
+            continue;
+        }
+
+        fs_create(name);
+    }
+
+    if (files == 0)
+        print_error("Usage: touch <file1> [file2 ...]\n");
+}
+
 static void cmd_write(const char* args)
 {
     char name[128];
@@ -5611,6 +5717,831 @@ static void cmd_write(const char* args)
     }
 
     fs_write(name, args + i + 1);
+}
+
+#define SCRIPT_MAX_VARS       32
+#define SCRIPT_VAR_NAME       32
+#define SCRIPT_VAR_VALUE      128
+#define SCRIPT_LINE_MAX       256
+#define SCRIPT_MAX_STEPS      10000
+#define SCRIPT_MODE_BASH      0
+#define SCRIPT_MODE_BAT       1
+
+static struct
+{
+    char name[SCRIPT_VAR_NAME];
+    char value[SCRIPT_VAR_VALUE];
+} script_vars[SCRIPT_MAX_VARS];
+
+static int script_var_count = 0;
+static int script_depth = 0;
+static int script_last_status = 0;
+
+static int script_command_failed = 0;
+
+static int script_is_space(char c)
+{
+    return c == ' ' || c == '\t';
+}
+
+static int script_is_name_start(char c)
+{
+    return (c >= 'A' && c <= 'Z') ||
+           (c >= 'a' && c <= 'z') || c == '_';
+}
+
+static int script_is_name_char(char c)
+{
+    return script_is_name_start(c) || (c >= '0' && c <= '9');
+}
+
+static int script_has_prefix(const char* text, const char* prefix)
+{
+    while (*prefix)
+    {
+        char a = *text++;
+        char b = *prefix++;
+        if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static void script_trim(char* text)
+{
+    int start = 0;
+    int end = 0;
+    int out = 0;
+
+    if (!text) return;
+    while (script_is_space(text[start])) start++;
+    while (text[start + end] != '\0') end++;
+    while (end > 0 && script_is_space(text[start + end - 1])) end--;
+
+    while (out < end)
+    {
+        text[out] = text[start + out];
+        out++;
+    }
+    text[out] = '\0';
+}
+
+static void script_clear_vars(void)
+{
+    for (int i = 0; i < SCRIPT_MAX_VARS; i++)
+    {
+        script_vars[i].name[0] = '\0';
+        script_vars[i].value[0] = '\0';
+    }
+    script_var_count = 0;
+}
+
+static const char* script_get_var(const char* name)
+{
+    for (int i = 0; i < script_var_count; i++)
+    {
+        if (strcmp(script_vars[i].name, name) == 0)
+            return script_vars[i].value;
+    }
+    return "";
+}
+
+static int script_set_var(const char* name, const char* value)
+{
+    int index = -1;
+    int name_len = 0;
+    int value_len = 0;
+
+    if (!name || !value || !script_is_name_start(name[0]))
+        return 0;
+
+    while (name[name_len] != '\0')
+    {
+        if (!script_is_name_char(name[name_len]) ||
+            name_len >= SCRIPT_VAR_NAME - 1)
+            return 0;
+        name_len++;
+    }
+
+    while (value[value_len] != '\0')
+    {
+        if (value_len >= SCRIPT_VAR_VALUE - 1)
+            return 0;
+        value_len++;
+    }
+
+    for (int i = 0; i < script_var_count; i++)
+    {
+        if (strcmp(script_vars[i].name, name) == 0)
+        {
+            index = i;
+            break;
+        }
+    }
+
+    if (index < 0)
+    {
+        if (script_var_count >= SCRIPT_MAX_VARS)
+            return 0;
+        index = script_var_count++;
+    }
+
+    strcpy(script_vars[index].name, name);
+    strcpy(script_vars[index].value, value);
+    return 1;
+}
+
+static int script_unset_var(const char* name)
+{
+    for (int i = 0; i < script_var_count; i++)
+    {
+        if (strcmp(script_vars[i].name, name) == 0)
+        {
+            for (int j = i; j < script_var_count - 1; j++)
+                script_vars[j] = script_vars[j + 1];
+            script_var_count--;
+            script_vars[script_var_count].name[0] = '\0';
+            script_vars[script_var_count].value[0] = '\0';
+            return 1;
+        }
+    }
+    return 1;
+}
+
+static void script_status_text(char output[4])
+{
+    output[0] = script_last_status ? '1' : '0';
+    output[1] = '\0';
+}
+
+static int script_expand_vars(const char* input, char* output,
+                              unsigned int output_size, int mode)
+{
+    unsigned int out = 0;
+    unsigned int i = 0;
+    int single_quote = 0;
+    int double_quote = 0;
+    int escaped = 0;
+
+    if (!input || !output || output_size == 0)
+        return 0;
+
+    while (input[i] != '\0')
+    {
+        char var_name[SCRIPT_VAR_NAME];
+        unsigned int name_len = 0;
+        const char* value = 0;
+        int is_variable = 0;
+        int can_expand = 1;
+
+        if (mode == SCRIPT_MODE_BASH && escaped)
+        {
+            escaped = 0;
+            can_expand = 0;
+        }
+        else if (mode == SCRIPT_MODE_BASH && input[i] == '\\' && !single_quote)
+        {
+            escaped = 1;
+        }
+        else if (mode == SCRIPT_MODE_BASH && input[i] == '\'' && !double_quote)
+        {
+            single_quote = !single_quote;
+        }
+        else if (mode == SCRIPT_MODE_BASH && input[i] == '"' && !single_quote)
+        {
+            double_quote = !double_quote;
+        }
+
+        if (mode == SCRIPT_MODE_BASH && can_expand && !single_quote && input[i] == '$' && input[i + 1] == '?')
+        {
+            char status_text[4];
+            unsigned int k = 0;
+            script_status_text(status_text);
+            while (status_text[k] != '\0')
+            {
+                if (out + 1 >= output_size) return 0;
+                output[out++] = status_text[k++];
+            }
+            i += 2;
+            continue;
+        }
+        else if (mode == SCRIPT_MODE_BASH && can_expand && !single_quote && input[i] == '$')
+        {
+            unsigned int j = i + 1;
+            int braced = input[j] == '{';
+            if (braced) j++;
+
+            if (script_is_name_start(input[j]))
+            {
+                while (script_is_name_char(input[j]) &&
+                       name_len < SCRIPT_VAR_NAME - 1)
+                    var_name[name_len++] = input[j++];
+
+                if (braced)
+                {
+                    if (input[j] == '}')
+                    {
+                        j++;
+                        is_variable = 1;
+                    }
+                }
+                else
+                {
+                    is_variable = 1;
+                }
+
+                if (is_variable)
+                {
+                    var_name[name_len] = '\0';
+                    value = script_get_var(var_name);
+                    i = j;
+                }
+            }
+        }
+        else if (mode == SCRIPT_MODE_BAT && input[i] == '%' &&
+                 input[i + 1] != '\0')
+        {
+            unsigned int j = i + 1;
+            while (input[j] != '\0' && input[j] != '%' &&
+                   name_len < SCRIPT_VAR_NAME - 1)
+                var_name[name_len++] = input[j++];
+
+            if (input[j] == '%' && name_len > 0)
+            {
+                var_name[name_len] = '\0';
+                value = script_get_var(var_name);
+                i = j + 1;
+                is_variable = 1;
+            }
+        }
+
+        if (is_variable)
+        {
+            unsigned int k = 0;
+            while (value[k] != '\0')
+            {
+                if (out + 1 >= output_size) return 0;
+                output[out++] = value[k++];
+            }
+            continue;
+        }
+
+        if (out + 1 >= output_size) return 0;
+        output[out++] = input[i++];
+    }
+
+    output[out] = '\0';
+    return 1;
+}
+
+static void script_strip_bash_comment(char* line)
+{
+    int single_quote = 0;
+    int double_quote = 0;
+    int escaped = 0;
+
+    for (int i = 0; line[i] != '\0'; i++)
+    {
+        char c = line[i];
+        if (escaped) { escaped = 0; continue; }
+        if (c == '\\' && !single_quote) { escaped = 1; continue; }
+        if (c == '\'' && !double_quote) { single_quote = !single_quote; continue; }
+        if (c == '"' && !single_quote) { double_quote = !double_quote; continue; }
+        if (c == '#' && !single_quote && !double_quote)
+        {
+            line[i] = '\0';
+            return;
+        }
+    }
+}
+
+static int script_parse_assignment(char* line, int mode)
+{
+    char name[SCRIPT_VAR_NAME];
+    char raw_value[SCRIPT_VAR_VALUE];
+    char expanded[SCRIPT_VAR_VALUE];
+    int name_len = 0;
+    int value_len = 0;
+    int i = 0;
+    int is_bat_set = 0;
+
+    if (mode == SCRIPT_MODE_BASH && script_has_prefix(line, "export "))
+        i = 7;
+    else if (mode == SCRIPT_MODE_BAT && script_has_prefix(line, "set "))
+    {
+        i = 4;
+        is_bat_set = 1;
+    }
+
+    if (is_bat_set && line[i] == '"') i++;
+
+    if (!script_is_name_start(line[i]))
+        return is_bat_set ? -1 : 0;
+
+    while (script_is_name_char(line[i]) && name_len < SCRIPT_VAR_NAME - 1)
+        name[name_len++] = line[i++];
+    name[name_len] = '\0';
+
+    if (line[i] != '=')
+        return is_bat_set ? -1 : 0;
+    i++;
+
+    while (line[i] != '\0' && value_len < SCRIPT_VAR_VALUE - 1)
+        raw_value[value_len++] = line[i++];
+    if (line[i] != '\0')
+    {
+        print_error("Script variable value is too long.\n");
+        return -1;
+    }
+    raw_value[value_len] = '\0';
+
+    if (is_bat_set && value_len > 0 && raw_value[value_len - 1] == '"')
+        raw_value[--value_len] = '\0';
+
+    if (value_len >= 2 &&
+        ((raw_value[0] == '"' && raw_value[value_len - 1] == '"') ||
+         (raw_value[0] == '\'' && raw_value[value_len - 1] == '\'')))
+    {
+        for (int j = 0; j < value_len - 2; j++)
+            raw_value[j] = raw_value[j + 1];
+        raw_value[value_len - 2] = '\0';
+    }
+
+    if (!script_expand_vars(raw_value, expanded, sizeof(expanded), mode))
+    {
+        print_error("Expanded script variable is too long.\n");
+        return -1;
+    }
+
+    if (!script_set_var(name, expanded))
+    {
+        print_error("Invalid variable or variable table is full.\n");
+        return -1;
+    }
+
+    return 1;
+}
+
+static void script_echo(char* text)
+{
+    script_trim(text);
+    if (text[0] == '\0')
+    {
+        putchar_os('\n');
+        return;
+    }
+
+    int len = 0;
+    while (text[len] != '\0') len++;
+    if (len >= 2 &&
+        ((text[0] == '"' && text[len - 1] == '"') ||
+         (text[0] == '\'' && text[len - 1] == '\'')))
+    {
+        text[len - 1] = '\0';
+        text++;
+    }
+
+    print(text);
+    putchar_os('\n');
+}
+
+static int script_run(const char* filename, int mode)
+{
+    static char file_buffer[MAX_FILE_SIZE + 1];
+    char line[SCRIPT_LINE_MAX];
+    char expanded[SCRIPT_LINE_MAX];
+    unsigned int pos = 0;
+    int line_number = 0;
+    int steps = 0;
+    int index;
+    int result = 1;
+    int errexit = 0;
+    int explicit_exit = 0;
+
+    if (!filename || filename[0] == '\0')
+    {
+        print_error(mode == SCRIPT_MODE_BASH ?
+            "Usage: bash <file.sh>\n" : "Usage: bat <file.bat>\n");
+        return 0;
+    }
+
+    if (script_depth >= 1)
+    {
+        print_error("Nested scripts are not supported yet.\n");
+        return 0;
+    }
+
+    index = fs_find(filename);
+    if (index < 0 || directory[index].type != FS_TYPE_FILE)
+    {
+        print_error("Script file not found.\n");
+        return 0;
+    }
+
+    if (!fs_read_text(filename, file_buffer, sizeof(file_buffer)))
+    {
+        print_error("Could not read script file.\n");
+        return 0;
+    }
+
+    script_clear_vars();
+    script_last_status = 0;
+    script_depth++;
+
+    while (file_buffer[pos] != '\0')
+    {
+        int n = 0;
+        int too_long = 0;
+
+        line_number++;
+        while (file_buffer[pos] != '\0' &&
+               file_buffer[pos] != '\n')
+        {
+            char c = file_buffer[pos++];
+            if (c == '\r') continue;
+            if (n < SCRIPT_LINE_MAX - 1)
+                line[n++] = c;
+            else
+                too_long = 1;
+        }
+        if (file_buffer[pos] == '\n') pos++;
+        line[n] = '\0';
+
+        steps++;
+        if (steps > SCRIPT_MAX_STEPS)
+        {
+            print_error("Script stopped: instruction limit exceeded.\n");
+            result = 0;
+            break;
+        }
+        if (too_long)
+        {
+            print_error("Script line is too long at line ");
+            print_int(line_number);
+            putchar_os('\n');
+            result = 0;
+            break;
+        }
+
+        script_trim(line);
+        if (line[0] == '\0') continue;
+
+        if (mode == SCRIPT_MODE_BASH)
+        {
+            if (line[0] == '#') continue;
+            script_strip_bash_comment(line);
+            script_trim(line);
+            if (line[0] == '\0') continue;
+
+            if (strcmp(line, "set -e") == 0)
+            {
+                errexit = 1;
+                continue;
+            }
+            if (strcmp(line, "set +e") == 0)
+            {
+                errexit = 0;
+                continue;
+            }
+        }
+        else
+        {
+            if (line[0] == '@')
+            {
+                for (int i = 0; line[i] != '\0'; i++) line[i] = line[i + 1];
+                script_trim(line);
+            }
+            if (line[0] == '\0' || line[0] == ':' ||
+                script_has_prefix(line, "rem ") ||
+                script_has_prefix(line, "rem\t") ||
+                strcmp(line, "rem") == 0)
+                continue;
+        }
+
+        if (mode == SCRIPT_MODE_BAT &&
+            (strcmp(line, "echo off") == 0 || strcmp(line, "echo on") == 0))
+            continue;
+
+        if (mode == SCRIPT_MODE_BAT && script_has_prefix(line, "set "))
+        {
+            int parsed = script_parse_assignment(line, mode);
+            if (parsed < 0) { result = 0; break; }
+            script_last_status = 0;
+            continue;
+        }
+
+        if (mode == SCRIPT_MODE_BASH)
+        {
+            if (script_has_prefix(line, "unset "))
+            {
+                char* name = line + 6;
+                script_trim(name);
+                if (name[0] == '\0')
+                {
+                    print_error("Usage: unset NAME\n");
+                    result = 0;
+                    break;
+                }
+                script_unset_var(name);
+                script_last_status = 0;
+                continue;
+            }
+
+            if (script_has_prefix(line, "export "))
+            {
+                char* assignment = line + 7;
+                int has_equal = 0;
+                for (int i = 0; assignment[i] != '\0'; i++)
+                    if (assignment[i] == '=') { has_equal = 1; break; }
+                if (!has_equal)
+                {
+                    script_last_status = 0;
+                    continue;
+                }
+            }
+
+            int parsed = script_parse_assignment(line, mode);
+            if (parsed < 0) { result = 0; break; }
+            if (parsed > 0)
+            {
+                script_last_status = 0;
+                continue;
+            }
+        }
+
+        if (strcmp(line, "true") == 0)
+        {
+            script_last_status = 0;
+            continue;
+        }
+        if (strcmp(line, "false") == 0)
+        {
+            script_last_status = 1;
+            if (errexit) { result = 0; break; }
+            continue;
+        }
+
+        if (strcmp(line, "exit") == 0 ||
+            strcmp(line, "exit 0") == 0 ||
+            strcmp(line, "exit /b") == 0 ||
+            strcmp(line, "exit /b 0") == 0)
+        {
+            result = script_last_status == 0;
+            explicit_exit = 1;
+            break;
+        }
+
+        if (script_has_prefix(line, "exit "))
+        {
+            const char* code = line + 5;
+            while (script_is_space(*code)) code++;
+            result = (*code == '0' && code[1] == '\0');
+            explicit_exit = 1;
+            break;
+        }
+
+        if (script_has_prefix(line, "echo") &&
+            (line[4] == '\0' || script_is_space(line[4])))
+        {
+            char* text = line + 4;
+            while (script_is_space(*text)) text++;
+            if (!script_expand_vars(text, expanded, sizeof(expanded), mode))
+            {
+                print_error("Expanded echo line is too long.\n");
+                result = 0;
+                break;
+            }
+            script_echo(expanded);
+            script_last_status = 0;
+            continue;
+        }
+
+        if (!script_expand_vars(line, expanded, sizeof(expanded), mode))
+        {
+            print_error("Expanded command is too long at line ");
+            print_int(line_number);
+            putchar_os('\n');
+            result = 0;
+            break;
+        }
+
+        script_last_status = shell_execute(expanded) ? 0 : 1;
+        if (script_last_status != 0 && errexit)
+        {
+            result = 0;
+            break;
+        }
+    }
+
+    if (!explicit_exit && result)
+        result = (script_last_status == 0);
+
+    script_depth--;
+    script_clear_vars();
+    return result;
+}
+
+static void cmd_bash(const char* args)
+{
+    char filename[MAX_FILENAME];
+    int i = 0;
+    int n = 0;
+
+    if (!args) args = "";
+    while (script_is_space(args[i])) i++;
+    while (args[i] != '\0' && !script_is_space(args[i]) && n < MAX_FILENAME - 1)
+        filename[n++] = args[i++];
+    filename[n] = '\0';
+    while (script_is_space(args[i])) i++;
+
+    if (n == 0 || args[i] != '\0' ||
+        n < 3 || strcmp(filename + n - 3, ".sh") != 0)
+    {
+        print_error("Usage: bash <file.sh>\n");
+        return;
+    }
+
+    if (script_run(filename, SCRIPT_MODE_BASH))
+        print_success("Script completed.\n");
+    else
+        print_error("Script failed.\n");
+}
+
+static void cmd_bat(const char* args)
+{
+    char filename[MAX_FILENAME];
+    int i = 0;
+    int n = 0;
+
+    if (!args) args = "";
+    while (script_is_space(args[i])) i++;
+    while (args[i] != '\0' && !script_is_space(args[i]) && n < MAX_FILENAME - 1)
+        filename[n++] = args[i++];
+    filename[n] = '\0';
+    while (script_is_space(args[i])) i++;
+
+    if (n == 0 || args[i] != '\0' ||
+        n < 4 || strcmp(filename + n - 4, ".bat") != 0)
+    {
+        print_error("Usage: bat <file.bat>\n");
+        return;
+    }
+
+    if (script_run(filename, SCRIPT_MODE_BAT))
+        print_success("Batch file completed.\n");
+    else
+        print_error("Batch file failed.\n");
+}
+
+static int nwc_next_token(const char* args, int* position,
+                          char* output, int output_capacity)
+{
+    int i = *position;
+    int n = 0;
+    char quote = 0;
+
+    while (args[i] == ' ' || args[i] == '\t') i++;
+    if (args[i] == '\0')
+    {
+        *position = i;
+        return 0;
+    }
+
+    if (args[i] == '\'' || args[i] == '"')
+        quote = args[i++];
+
+    while (args[i] != '\0')
+    {
+        if (quote)
+        {
+            if (args[i] == quote)
+            {
+                i++;
+                quote = 0;
+                break;
+            }
+        }
+        else if (args[i] == ' ' || args[i] == '\t')
+        {
+            break;
+        }
+
+        if (n >= output_capacity - 1)
+            return -1;
+        output[n++] = args[i++];
+    }
+
+    if (quote)
+        return -1;
+
+    output[n] = '\0';
+    while (args[i] == ' ' || args[i] == '\t') i++;
+    *position = i;
+    return n > 0 ? 1 : -1;
+}
+
+static int nwc_has_suffix(const char* name, const char* suffix)
+{
+    int name_len = 0;
+    int suffix_len = 0;
+    while (name[name_len] != '\0') name_len++;
+    while (suffix[suffix_len] != '\0') suffix_len++;
+    if (name_len < suffix_len) return 0;
+    return strcmp(name + name_len - suffix_len, suffix) == 0;
+}
+
+static void cmd_nwc(const char* args)
+{
+    char input_name[MAX_FILENAME];
+    char option[8];
+    char output_name[MAX_FILENAME];
+    int position = 0;
+    int input_index;
+    int token_result;
+    unsigned int source_size;
+    unsigned int nwo_size = 0;
+
+    script_command_failed = 1;
+
+    static char source_buffer[NWC_MAX_SOURCE_SIZE + 1];
+    static unsigned char nwo_buffer[FS_FILE_SECTORS * 512u];
+
+    if (!args) args = "";
+
+    token_result = nwc_next_token(args, &position,
+                                  input_name, sizeof(input_name));
+    if (token_result != 1 ||
+        nwc_next_token(args, &position, option, sizeof(option)) != 1 ||
+        nwc_next_token(args, &position, output_name, sizeof(output_name)) != 1 ||
+        args[position] != '\0' || strcmp(option, "-o") != 0)
+    {
+        print_error("Usage: nwc <file.nw> -o <file.nwo>\n");
+        return;
+    }
+
+    if (!nwc_has_suffix(input_name, ".nw") ||
+        !nwc_has_suffix(output_name, ".nwo"))
+    {
+        print_error("NwC expects an input .nw file and an output .nwo file.\n");
+        return;
+    }
+
+    if (strcmp(input_name, output_name) == 0)
+    {
+        print_error("Input and output filenames must be different.\n");
+        return;
+    }
+
+    input_index = fs_find(input_name);
+    if (input_index < 0 || directory[input_index].type != FS_TYPE_FILE)
+    {
+        print_error("NwC source file not found.\n");
+        return;
+    }
+
+    source_size = directory[input_index].size;
+    if (source_size > NWC_MAX_SOURCE_SIZE)
+    {
+        print_error("NwC source exceeds the 16 KiB compiler limit.\n");
+        return;
+    }
+
+    if (!fs_read_text(input_name, source_buffer, sizeof(source_buffer)))
+    {
+        print_error("Could not read NwC source file.\n");
+        return;
+    }
+
+    print("NwC: compiling ");
+    print(input_name);
+    print("...\n");
+
+    if (!nwc_compile_source(source_buffer, source_size,
+                            nwo_buffer, sizeof(nwo_buffer), &nwo_size))
+    {
+        print_error("NwC compilation failed.\n");
+        return;
+    }
+
+    if (nwo_size == 0 || nwo_size > sizeof(nwo_buffer))
+    {
+        print_error("NwC returned an invalid output size.\n");
+        return;
+    }
+
+    if (!fs_write_binary(output_name, nwo_buffer, nwo_size))
+    {
+        print_error("Could not save NWO output file. Check filename and disk space.\n");
+        return;
+    }
+
+    print_success("NwC: created ");
+    print(output_name);
+    print(" (");
+    print_int((int)nwo_size);
+    print(" bytes).\n");
+    script_command_failed = 0;
 }
 
 static void cmd_panic_safe(void)
@@ -5730,8 +6661,9 @@ static int execute_single_command(char* command)
             /* exact-word command */
             if (strcmp(command, c->name) == 0)
             {
+                script_command_failed = 0;
                 c->run();
-                return 1;
+                return script_command_failed ? 0 : 1;
             }
 
             continue;
@@ -5743,10 +6675,13 @@ static int execute_single_command(char* command)
         if (strncmp(command, c->name, n) != 0)
             continue;
 
-        if (command[n] == ' ')
+        if (command[n] == ' ' || command[n] == '\t')
         {
-            c->run_arg(command + n + 1);
-            return 1;
+            const char* args = command + n;
+            while (*args == ' ' || *args == '\t') args++;
+            script_command_failed = 0;
+            c->run_arg(args);
+            return script_command_failed ? 0 : 1;
         }
 
         if (command[n] == '\0')
@@ -5762,61 +6697,102 @@ static int execute_single_command(char* command)
     return 0;
 }
 
-static void shell_execute(const char* command)
+static int shell_execute(const char* command)
 {
-    if (command[0] == '\0')
-        return;
+    char segment[256];
+    int length = 0;
+    int single_quote = 0;
+    int double_quote = 0;
+    int escaped = 0;
+    int run_next = 1;
+    int last_status = 1;
 
-    char buf[256];
-    int j = 0;
-    for (int i = 0; command[i] != '\0' && j < 255; i++)
+    if (command == 0 || command[0] == '\0')
+        return 1;
+
+    for (int i = 0; ; i++)
     {
-        if (command[i] == '&' && command[i + 1] == '&')
+        char c = command[i];
+        int at_end = (c == '\0');
+        int separator = 0;
+        int is_and = 0;
+
+        if (!at_end && escaped)
         {
-            buf[j] = '\0';
-            char cmd[128];
-            int k = 0;
-            for (int t = 0; buf[t] != '\0' && k < 127; t++)
+            escaped = 0;
+        }
+        else if (!at_end && c == '\\' && !single_quote)
+        {
+            escaped = 1;
+        }
+        else if (!at_end && c == '\'' && !double_quote)
+        {
+            single_quote = !single_quote;
+        }
+        else if (!at_end && c == '"' && !single_quote)
+        {
+            double_quote = !double_quote;
+        }
+        else if (!single_quote && !double_quote)
+        {
+            if (at_end || c == ';')
+                separator = 1;
+            else if (c == '&' && command[i + 1] == '&')
             {
-                cmd[k++] = buf[t];
+                separator = 1;
+                is_and = 1;
             }
-            cmd[k] = '\0';
+        }
 
-            /* trim */
-            int start = 0;
-            while (cmd[start] == ' ' || cmd[start] == '\t') start++;
-            int end = k - 1;
-            while (end >= start && (cmd[end] == ' ' || cmd[end] == '\t')) end--;
-            char trimmed[128];
-            int tt = 0;
-            for (int t = start; t <= end && tt < 127; t++) trimmed[tt++] = cmd[t];
-            trimmed[tt] = '\0';
+        if (separator)
+        {
+            segment[length] = '\0';
+            script_trim(segment);
 
-            if (execute_single_command(trimmed) == 0)
-                return;
-            i++;
-            j = 0;
+            if (segment[0] != '\0' && run_next)
+            {
+                last_status = execute_single_command(segment);
+            }
+
+            if (at_end)
+                break;
+
+            if (is_and)
+            {
+                if (!last_status)
+                    run_next = 0;
+                i++; /* Skip the second '&'. */
+            }
+            else
+            {
+                run_next = 1;
+            }
+
+            length = 0;
             continue;
         }
-        buf[j++] = command[i];
-    }
-    buf[j] = '\0';
 
-    {
-        char cmd[128];
-        int k = 0;
-        for (int t = 0; buf[t] != '\0' && k < 127; t++) cmd[k++] = buf[t];
-        cmd[k] = '\0';
-        int start = 0;
-        while (cmd[start] == ' ' || cmd[start] == '\t') start++;
-        int end = k - 1;
-        while (end >= start && (cmd[end] == ' ' || cmd[end] == '\t')) end--;
-        char trimmed[128];
-        int tt = 0;
-        for (int t = start; t <= end && tt < 127; t++) trimmed[tt++] = cmd[t];
-        trimmed[tt] = '\0';
-        execute_single_command(trimmed);
+        if (!at_end)
+        {
+            if (length >= (int)sizeof(segment) - 1)
+            {
+                print_error("Command is too long (maximum 255 characters).\n");
+                return 0;
+            }
+            segment[length++] = c;
+        }
+        else
+        {
+            if (single_quote || double_quote)
+            {
+                print_error("Unclosed quote in command.\n");
+                return 0;
+            }
+            break;
+        }
     }
+
+    return last_status;
 }
 
 void set_p_shell(void)

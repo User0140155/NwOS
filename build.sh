@@ -298,6 +298,8 @@ if [[ ! -s "$ROOT/NwOS.iso" ]]; then
     fail
 fi
 
+"$LIMINE_HOST" bios-install "$ROOT/NwOS.iso" || fail
+
 echo
 echo "============================"
 echo "       BUILD SUCCESS"
