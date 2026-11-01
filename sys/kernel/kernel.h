@@ -9,8 +9,8 @@
 
 #define OS_NAME            "NwOS"
 #define OS_VERSION_MAJOR   1
-#define OS_VERSION_MINOR   4
-#define OS_VERSION_PATCH   9
+#define OS_VERSION_MINOR   5
+#define OS_VERSION_PATCH   0
 #define OS_MADE_DATE      "2026.08.27"
 
 #define OS_STR_HELPER(x)   #x
