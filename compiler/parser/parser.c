@@ -372,6 +372,8 @@ static ASTNode* parse_primary(Parser* parser)
             if (strcmp(name, "mouse_x") == 0 ||
                 strcmp(name, "mouse_y") == 0 ||
                 strcmp(name, "mouse_buttons") == 0 ||
+                strcmp(name, "pollkey") == 0 ||
+                strcmp(name, "random_word") == 0 ||
                 strcmp(name, "fs_count") == 0 ||
                 strcmp(name, "fs_name") == 0 ||
                 strcmp(name, "fs_type") == 0 ||

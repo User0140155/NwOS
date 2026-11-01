@@ -149,34 +149,27 @@
     }
     call icon(k, x + 14, y + 22, 32, c);
     if (k == 0) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "Terminal");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "Command shell");
+        nw::text(x + 56, y + 24, 0x00EEF2F5, "NwOS Terminal");
     }
     if (k == 1) {
         nw::text(x + 56, y + 24, 0x00EEF2F5, "File Manager");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "Browse storage");
     }
     if (k == 2) {
         nw::text(x + 56, y + 24, 0x00EEF2F5, "Text Editor");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "Edit plain text");
     }
     if (k == 3) {
         nw::text(x + 56, y + 24, 0x00EEF2F5, "Calculator");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "Quick arithmetic");
     }
     if (k == 4) {
         nw::text(x + 56, y + 24, 0x00EEF2F5, "Settings");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "Accent and style");
     }
     if (k == 5) {
         nw::text(x + 56, y + 24, 0x00EEF2F5, "System Monitor");
-        nw::text(x + 56, y + 44, 0x009AA4AE, "CPU, GPU, memory");
     }
 }
 
 0A win(1A theme, 1A x, 1A y, 1A w, 1A h, str title) {
     str title2 = title;
-    call draw_desktop(theme, 0);
     1A mx = nw::mouse_x();
     1A my = nw::mouse_y();
     nw::rect(x + 8, y + 10, w, h, 0x000C0F12);
@@ -197,7 +190,6 @@
 0A draw_desktop(1A theme, 1A menu) {
     1A c = accent(theme);
     1A i = 0;
-    1A load = 0;
     1A x = 0;
     nw::rect(0, 0, 1280, 240, 0x001B2229);
     nw::rect(0, 240, 1280, 240, 0x00161C21);
@@ -219,36 +211,14 @@
     nw::text(886, 11, 0x009AA4AE, "MB");
     call clock_small(1160, 11, 0x00E8ECEF);
 
-    call box(40, 56, 360, 150, 0x001A1F24, 0x00343B42);
-    nw::rect(40, 56, 4, 150, c);
-    nw::text(62, 74, 0x009AA4AE, "LOCAL TIME");
-    call clock_big(62, 94, c);
-
-    call box(40, 222, 360, 220, 0x001A1F24, 0x00343B42);
-    nw::rect(40, 222, 4, 220, c);
-    nw::text(62, 242, 0x00E8ECEF, "SYSTEM");
-    nw::text(300, 242, accent_dim(theme), "LIVE");
-    nw::text(62, 270, 0x009AA4AE, "CPU");
-    load = nw::cpu_load();
-    nw::number(332, 270, 0x00C7CED5, load);
-    nw::rect(62, 286, 280, 8, 0x00303940);
-    nw::rect(62, 286, load * 28 / 10, 8, c);
-    nw::text(62, 306, 0x009AA4AE, "GPU");
-    load = nw::gpu_load();
-    nw::number(332, 306, 0x00C7CED5, load);
-    nw::rect(62, 322, 280, 8, 0x00303940);
-    nw::rect(62, 322, load * 28 / 10, 8, c);
-    nw::text(62, 342, 0x009AA4AE, "RAM");
-    nw::number(116, 342, 0x00C7CED5, nw::ram_mb());
-    nw::text(170, 342, 0x009AA4AE, "MB");
-    nw::text(212, 342, 0x009AA4AE, "DISK");
-    nw::number(260, 342, 0x00C7CED5, nw::disk_used_kb());
-    nw::text(334, 342, 0x009AA4AE, "KB");
-    nw::text(62, 366, 0x009AA4AE, "UPTIME");
-    nw::number(130, 366, 0x00C7CED5, nw::uptime_sec() / 60);
-    nw::text(184, 366, 0x009AA4AE, "MIN");
-    nw::text(62, 390, 0x009AA4AE, "FILES");
-    nw::number(130, 390, 0x00C7CED5, nw::disk_files());
+    call box(1030, 56, 210, 120, 0x001A1F24, 0x00343B42);
+    nw::rect(1030, 56, 4, 120, c);
+    nw::rect(1052, 78, 66, 44, 0x00313940);
+    nw::rect(1052, 78, 66, 2, c);
+    nw::text(1072, 94, c, "F7");
+    nw::text(1136, 86, 0x00E8ECEF, "Word");
+    nw::text(1136, 104, 0x009AA4AE, "Generator");
+    nw::text(1052, 144, 0x0088929A, "Click or press F7");
 
     call box(414, 640, 452, 68, 0x001A1F24, 0x00343B42);
     nw::rect(414, 640, 452, 2, c);
@@ -268,7 +238,7 @@
         nw::rect(30, 300, 560, 54, 0x00262D33);
         nw::rect(30, 300, 560, 3, c);
         nw::text(52, 318, 0x00F2F4F6, "Applications");
-        nw::text(156, 318, 0x009AA4AE, "NwOS 26: GUI");
+        nw::text(156, 318, 0x009AA4AE, "NwOS");
         nw::text(516, 318, 0x009AA4AE, "ESC");
         call app_tile(0, 48, 372, c);
         call app_tile(1, 224, 372, c);
@@ -296,7 +266,7 @@
     1A i = 0;
     1A n = 0;
     1A yy = 0;
-    call win(theme, x, y, w, h, "Terminal");
+    call win(theme, x, y, w, h, "NwOS Terminal");
     nw::rect(x + 22, y + 58, w - 44, h - 170, 0x0013181C);
     nw::rect(x + 22, y + 58, w - 44, 1, 0x00383F46);
     nw::text(x + 42, y + 74, c, "user@nwos");
@@ -304,29 +274,29 @@
     nw::text(x + 42, y + 98, 0x00E8ECEF, "NwOS Terminal");
     yy = y + 126;
     if (mode == 0) {
-        nw::text(x + 42, yy, 0x009AA4AE, "Type a command and press Enter.");
-        nw::text(x + 42, yy + 24, 0x009AA4AE, "Type help to list available commands.");
-        nw::text(x + 42, yy + 48, 0x009AA4AE, "Press Esc to close this window.");
+        nw::text(x + 42, yy, 0x009AA4AE, "Type a command, press Enter.");
+        nw::text(x + 42, yy + 24, 0x009AA4AE, "help lists commands");
+        nw::text(x + 42, yy + 48, 0x009AA4AE, "Esc closes.");
     }
     if (mode == 1) {
         nw::text(x + 42, yy, c, "COMMAND");
         nw::text(x + 162, yy, c, "ACTION");
         nw::text(x + 42, yy + 22, 0x00D7DEE5, "help");
-        nw::text(x + 162, yy + 22, 0x009AA4AE, "show this list");
+        nw::text(x + 162, yy + 22, 0x009AA4AE, "list");
         nw::text(x + 42, yy + 44, 0x00D7DEE5, "ver");
-        nw::text(x + 162, yy + 44, 0x009AA4AE, "GUI version");
+        nw::text(x + 162, yy + 44, 0x009AA4AE, "version");
         nw::text(x + 42, yy + 66, 0x00D7DEE5, "time");
-        nw::text(x + 162, yy + 66, 0x009AA4AE, "current time");
+        nw::text(x + 162, yy + 66, 0x009AA4AE, "time");
         nw::text(x + 42, yy + 88, 0x00D7DEE5, "ls");
-        nw::text(x + 162, yy + 88, 0x009AA4AE, "list directory");
+        nw::text(x + 162, yy + 88, 0x009AA4AE, "files");
         nw::text(x + 42, yy + 110, 0x00D7DEE5, "pwd");
-        nw::text(x + 162, yy + 110, 0x009AA4AE, "current path");
+        nw::text(x + 162, yy + 110, 0x009AA4AE, "path");
         nw::text(x + 42, yy + 132, 0x00D7DEE5, "up / root");
-        nw::text(x + 162, yy + 132, 0x009AA4AE, "change directory");
+        nw::text(x + 162, yy + 132, 0x009AA4AE, "navigate");
         nw::text(x + 42, yy + 154, 0x00D7DEE5, "calc files editor settings");
-        nw::text(x + 162, yy + 154, 0x009AA4AE, "open a desktop app");
-        nw::text(x + 42, yy + 176, 0x00D7DEE5, "clear / exit");
-        nw::text(x + 162, yy + 176, 0x009AA4AE, "clear output / close");
+        nw::text(x + 162, yy + 154, 0x009AA4AE, "launch app");
+        nw::text(x + 42, yy + 176, 0x00D7DEE5, "clear / nwfetch");
+        nw::text(x + 162, yy + 176, 0x009AA4AE, "clear / info");
     }
     if (mode == 2) {
         nw::text(x + 42, yy, c, "DIRECTORY");
@@ -355,13 +325,25 @@
         call clock_big(x + 42, yy + 30, c);
     }
     if (mode == 5) {
-        nw::text(x + 42, yy, c, "NWOS PLASMA 1.0");
-        nw::text(x + 42, yy + 26, 0x009AA4AE, "NwC graphical desktop for NwOS");
-        nw::text(x + 42, yy + 48, 0x009AA4AE, "1280 x 720 / backbuffer renderer");
+        nw::text(x + 42, yy, c, "NwOS");
+        nw::text(x + 42, yy + 26, 0x009AA4AE, "NwC desktop");
+        nw::text(x + 42, yy + 48, 0x009AA4AE, "1280x720");
+    }
+    if (mode == 9) {
+        nw::text(x + 42, yy, c, "NwOS 1.4.9 x86_64");
+        nw::text(x + 42, yy + 30, 0x00D7DEE5, "RAM:");
+        nw::number(x + 90, yy + 30, 0x00F2F4F6, nw::ram_mb());
+        nw::text(x + 146, yy + 30, 0x009AA4AE, "MB");
+        nw::text(x + 42, yy + 86, 0x00D7DEE5, "Uptime:");
+        nw::number(x + 120, yy + 86, 0x00F2F4F6, nw::uptime_sec());
+        nw::text(x + 190, yy + 86, 0x009AA4AE, "sec");
+        nw::text(x + 42, yy + 114, 0x00D7DEE5, "CPU:");
+        nw::number(x + 90, yy + 114, 0x00F2F4F6, nw::cpu_load());
+        nw::text(x + 118, yy + 114, 0x009AA4AE, "%");
     }
     if (mode == 7) {
         nw::text(x + 42, yy, 0x00E06C75, "Command not found.");
-        nw::text(x + 42, yy + 26, 0x009AA4AE, "Type help to see valid commands.");
+        nw::text(x + 42, yy + 26, 0x009AA4AE, "Type help.");
     }
     if (mode == 8) {
         nw::text(x + 42, yy, c, "Returned to terminal.");
@@ -370,7 +352,7 @@
     nw::text(x + 122, y + h - 82, 0x00E8ECEF, nw::buf_text());
     nw::rect(x + 122 + nw::buf_len() * 8, y + h - 82, 7, 10, c);
     nw::rect(x + 22, y + h - 54, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + h - 38, 0x009AA4AE, "Enter run   Backspace edit   Esc close   help lists commands");
+    nw::text(x + 42, y + h - 38, 0x009AA4AE, "Enter run   Esc close");
 }
 
 1A terminal_app(1A theme) {
@@ -381,7 +363,7 @@
         call terminal_draw(theme, mode);
         nw::cursor(nw::mouse_x(), nw::mouse_y());
         nw::flush();
-        key = nw::getkey();
+        key = nw::pollkey();
         if (key == 255) done = 1;
         if (key == 256) {
             if (strcmp(nw::buf_text(), "help") == 0) mode = 1;
@@ -389,6 +371,7 @@
             else if (strcmp(nw::buf_text(), "time") == 0) mode = 4;
             else if (strcmp(nw::buf_text(), "ls") == 0) mode = 2;
             else if (strcmp(nw::buf_text(), "pwd") == 0) mode = 3;
+            else if (strcmp(nw::buf_text(), "nwfetch") == 0) mode = 9;
             else if (strcmp(nw::buf_text(), "up") == 0) {
                 nw::fs_up();
                 mode = 3;
@@ -422,6 +405,7 @@
         if (key >= 32 && key <= 126) {
             if (nw::buf_len() < 60) nw::buf_put(key);
         }
+        sleep(8);
     }
     return theme;
 }
@@ -616,7 +600,7 @@
     nw::text(x + 38, y + 214, 0x009AA4AE, "System  /sys");
     nw::rect(x + 24, y + 234, 150, 24, 0x002A3036);
     nw::text(x + 38, y + 242, 0x009AA4AE, "Bin  /bin");
-    if (notice == 1) nw::text(x + 24, y + 278, 0x00E06C75, "File is too large to edit.");
+    if (notice == 1) nw::text(x + 24, y + 278, 0x00E06C75, "File too large.");
     nw::rect(x + 198, y + 128, w - 222, 1, 0x00383F46);
     nw::text(x + 210, y + 144, 0x009AA4AE, "TYPE");
     nw::text(x + 280, y + 144, 0x009AA4AE, "NAME");
@@ -642,7 +626,7 @@
         i = i + 1;
     }
     if (n == 0) nw::text(x + 210, y + 188, 0x009AA4AE, "This directory is empty.");
-    nw::text(x + 24, y + h - 34, 0x009AA4AE, "Click folder to enter   Select file then Open file");
+    nw::text(x + 24, y + h - 34, 0x009AA4AE, "Click folder   Open file");
 }
 
 0A file_manager_app(1A theme) {
@@ -757,7 +741,7 @@
     nw::text(x + 42, y + 74, c, name);
     nw::text(x + 42, y + 100, 0x00D7DEE5, nw::buf_text());
     nw::rect(x + 22, y + h - 72, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + h - 54, 0x009AA4AE, "Type to edit   Enter new line   Backspace delete   Ctrl+S save   Esc close");
+    nw::text(x + 42, y + h - 54, 0x009AA4AE, "Type, Enter, Ctrl+S, Esc");
     nw::rect(x + 42 + cc * 8, y + 100 + (cl - 1) * 8, 7, 10, c);
 }
 
@@ -773,7 +757,7 @@
         call editor_draw(theme, name, cl, cc);
         nw::cursor(nw::mouse_x(), nw::mouse_y());
         nw::flush();
-        key = nw::getkey();
+        key = nw::pollkey();
         if (key == 255) done = 1;
         if (key == 19) nw::buf_save(name);
         if (key == 256) {
@@ -797,6 +781,7 @@
                 cc = cc + 1;
             }
         }
+        sleep(8);
     }
 }
 
@@ -815,15 +800,11 @@
     nw::text(x + 40, y + 78, c, "APPEARANCE");
     nw::rect(x + 22, y + 98, 200, 30, 0x00313A42);
     nw::text(x + 40, y + 108, 0x00D7DEE5, "Accent color");
-    nw::text(x + 40, y + 144, 0x009AA4AE, "Desktop");
-    nw::text(x + 40, y + 170, 0x009AA4AE, "Workspace");
-    nw::text(x + 40, y + 196, 0x009AA4AE, "Display");
-    nw::text(x + 40, y + 222, 0x009AA4AE, "Power");
-    nw::text(x + 40, y + 248, 0x009AA4AE, "Sound");
-    nw::text(x + 40, y + h - 74, 0x0088929A, "NwOS Plasma");
-    nw::text(x + 40, y + h - 54, 0x0088929A, "Settings 1.0");
+    nw::rect(x + 40, y + 150, 164, 118, 0x0013181C);
+    nw::rect(x + 56, y + 166, 132, 86, accent(theme));
+    nw::rect(x + 56, y + 166, 132, 10, accent_dim(theme));
     nw::text(x + 252, y + 78, 0x00E8ECEF, "Accent color");
-    nw::text(x + 252, y + 102, 0x009AA4AE, "Choose a color for panels, buttons and the clock.");
+    nw::text(x + 252, y + 102, 0x009AA4AE, "Pick an accent color.");
     i = 0;
     while (i < 4) {
         yy = y + 140 + (i / 2) * 132;
@@ -835,9 +816,9 @@
     }
     nw::rect(x + 252, y + 412, 520, 1, 0x00383F46);
     nw::text(x + 252, y + 434, 0x00E8ECEF, "Wallpaper");
-    nw::text(x + 252, y + 458, 0x009AA4AE, "Replace sys/wallpaper.png and rebuild the ISO.");
-    nw::text(x + 252, y + 482, 0x009AA4AE, "The desktop redraws it behind every panel.");
-    nw::text(x + 252, y + 516, 0x0088929A, "Click a color card   X closes settings");
+    nw::text(x + 252, y + 458, 0x009AA4AE, "Edit sys/wallpaper.png.");
+    nw::text(x + 252, y + 482, 0x009AA4AE, "It renders behind panels.");
+    nw::text(x + 252, y + 516, 0x0088929A, "X closes");
 }
 
 0A theme_card(1A cur, 1A t, 1A x, 1A y, 1A c, 1A mx, 1A my) {
@@ -849,13 +830,13 @@
     if (cur == t) nw::rect(x, y, 250, 2, accent(t));
     nw::rect(x + 18, y + 18, 48, 48, accent(t));
     nw::rect(x + 18, y + 18, 48, 6, accent_dim(t));
-    if (t == 0) nw::text(x + 82, y + 26, 0x00E8ECEF, "Breeze Blue");
+    if (t == 0) nw::text(x + 82, y + 26, 0x00E8ECEF, "Breeze");
     if (t == 1) nw::text(x + 82, y + 26, 0x00E8ECEF, "Emerald");
     if (t == 2) nw::text(x + 82, y + 26, 0x00E8ECEF, "Violet");
     if (t == 3) nw::text(x + 82, y + 26, 0x00E8ECEF, "Amber");
-    nw::text(x + 82, y + 50, 0x009AA4AE, "Accent preset");
+    nw::text(x + 82, y + 50, 0x009AA4AE, "Preset");
     if (cur == t) nw::text(x + 82, y + 74, accent(t), "ACTIVE");
-    else nw::text(x + 82, y + 74, 0x0088929A, "Click to apply");
+    else nw::text(x + 82, y + 74, 0x0088929A, "Apply");
 }
 
 1A settings_app(1A theme) {
@@ -923,7 +904,7 @@
     bar = cpu * 3;
     if (bar > 300) bar = 300;
     nw::rect(x + 44, y + 140, bar, 64, c);
-    nw::text(x + 44, y + 212, 0x009AA4AE, "Processor load");
+    nw::text(x + 44, y + 212, 0x009AA4AE, "CPU load");
     nw::rect(x + 388, y + 92, 340, 142, 0x0013181C);
     nw::text(x + 406, y + 110, c, "GPU");
     nw::number(x + 662, y + 110, 0x00F2F4F6, gpu);
@@ -932,16 +913,16 @@
     bar = gpu * 3;
     if (bar > 300) bar = 300;
     nw::rect(x + 406, y + 140, bar, 64, c);
-    nw::text(x + 406, y + 212, 0x009AA4AE, "Present load");
+    nw::text(x + 406, y + 212, 0x009AA4AE, "GPU load");
     nw::rect(x + 26, y + 254, 340, 168, 0x0013181C);
     nw::text(x + 44, y + 272, c, "MEMORY");
-    nw::text(x + 44, y + 302, 0x00D7DEE5, "Installed RAM");
+    nw::text(x + 44, y + 302, 0x00D7DEE5, "RAM");
     nw::number(x + 244, y + 302, 0x00F2F4F6, nw::ram_mb());
     nw::text(x + 300, y + 302, 0x009AA4AE, "MB");
     nw::text(x + 44, y + 332, 0x00D7DEE5, "Disk used");
     nw::number(x + 244, y + 332, 0x00F2F4F6, nw::disk_used_kb());
     nw::text(x + 314, y + 332, 0x009AA4AE, "KB");
-    nw::text(x + 44, y + 362, 0x00D7DEE5, "Files stored");
+    nw::text(x + 44, y + 362, 0x00D7DEE5, "Files");
     nw::number(x + 244, y + 362, 0x00F2F4F6, nw::disk_files());
     nw::rect(x + 388, y + 254, 340, 168, 0x0013181C);
     nw::text(x + 406, y + 272, c, "SYSTEM");
@@ -952,7 +933,7 @@
     nw::text(x + 618, y + 326, 0x009AA4AE, "SEC");
     nw::text(x + 406, y + 356, 0x00D7DEE5, "Display");
     nw::text(x + 406, y + 380, 0x009AA4AE, "1280 x 720 / 32-bit");
-    nw::text(x + 26, y + h - 36, 0x009AA4AE, "Live metrics   X closes");
+    nw::text(x + 26, y + h - 36, 0x009AA4AE, "Live   X close");
 }
 
 0A monitor_app(1A theme) {
@@ -976,6 +957,59 @@
     }
 }
 
+1A word_app(1A theme) {
+    str words[15];
+    1A count = 0;
+    1A open = 1;
+    1A key = 0;
+    1A mx = 0;
+    1A my = 0;
+    1A btn = 0;
+    1A lastbtn = 0;
+    1A i = 0;
+    1A c = accent(theme);
+    1A x = 390;
+    1A y = 150;
+    1A w = 500;
+    1A h = 370;
+    while (open == 1) {
+        call win(theme, x, y, w, h, "Word Generator");
+        nw::text(x + 24, y + 58, 0x009AA4AE, "F7 adds a word");
+        nw::number(x + w - 62, y + 58, c, count);
+        nw::text(x + w - 36, y + 58, 0x009AA4AE, "/15");
+        i = 0;
+        while (i < count) {
+            if (i < 5) {
+                nw::text(x + 24, y + 92 + i * 34, 0x00D7DEE5, words[i]);
+            }
+            else if (i < 10) {
+                nw::text(x + 190, y + 92 + (i - 5) * 34, 0x00D7DEE5, words[i]);
+            }
+            else {
+                nw::text(x + 356, y + 92 + (i - 10) * 34, 0x00D7DEE5, words[i]);
+            }
+            i = i + 1;
+        }
+        if (count == 0) nw::text(x + 24, y + 100, 0x009AA4AE, "Press F7 to generate.");
+        nw::text(x + 24, y + h - 32, 0x009AA4AE, "F7 new   Esc close");
+        mx = nw::mouse_x();
+        my = nw::mouse_y();
+        btn = nw::mouse_buttons();
+        nw::cursor(mx, my);
+        nw::flush();
+        key = nw::pollkey();
+        if (key == 255) open = 0;
+        if (key == KEY_F7) {
+            if (count >= 15) count = 0;
+            words[count] = nw::random_word();
+            count = count + 1;
+        }
+        if (btn == 1 && lastbtn == 0 && close_hit(mx, my, x, y, w) == 1) open = 0;
+        lastbtn = btn;
+        sleep(8);
+    }
+    return 0;
+}
 1A main() {
     1A running = 1;
     1A theme = 0;
@@ -989,11 +1023,17 @@
     1A lastbtn = 0;
     1A i = 0;
     1A x = 0;
+    1A key = 0;
     nw::buf_clear();
     while (running == 1) {
         mx = nw::mouse_x();
         my = nw::mouse_y();
         btn = nw::mouse_buttons();
+        key = nw::pollkey();
+        if (key == KEY_F7) {
+            call word_app(theme);
+            dirty = 1;
+        }
         if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
         if (btn == 1 && lastbtn == 0) {
             if (menu == 1) {
@@ -1042,7 +1082,11 @@
                     dirty = 1;
                 }
             } else {
-                if (inside(mx, my, 422, 648, 44, 48) == 1) {
+                if (inside(mx, my, 1030, 56, 210, 120) == 1) {
+                    call word_app(theme);
+                    dirty = 1;
+                }
+                else if (inside(mx, my, 422, 648, 44, 48) == 1) {
                     menu = 1;
                     dirty = 1;
                 }

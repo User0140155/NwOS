@@ -15,6 +15,7 @@ static int caps_lock   = 0;
 static int super_pressed = 0;
 static int nwos_ctrl_left = 0;
 static int nwos_ctrl_right = 0;
+static int ext_pending = 0;
 static unsigned char kb_inb(
     unsigned short port)
 {
@@ -121,6 +122,9 @@ void keyboard_init(void)
     shift_right   = 0;
     caps_lock     = 0;
     super_pressed = 0;
+    nwos_ctrl_left = 0;
+    nwos_ctrl_right = 0;
+    ext_pending = 0;
 }
 
 static unsigned char keyboard_read_scancode(void)
@@ -144,87 +148,132 @@ static unsigned char keyboard_read_scancode(void)
     }
 }
 
-int keyboard_getkey(void)
+static int keyboard_read_scancode_nb(void)
 {
-    unsigned char scancode;
+    unsigned char status = kb_inb(KEYBOARD_STATUS_PORT);
+
+    if (!(status & KEYBOARD_STATUS_OUTPUT_FULL))
+        return -1;
+
+    unsigned char byte = kb_inb(KEYBOARD_DATA_PORT);
+
+    if (status & 0x20)
+    {
+        mouse_handle_byte(byte);
+        return -1;
+    }
+
+    return (int)byte;
+}
+
+static int keyboard_decode_scancode(unsigned char scancode)
+{
     char c;
 
-    while (1)
+    if (ext_pending)
     {
-        scancode = keyboard_read_scancode();
+        ext_pending = 0;
 
-        if (scancode == 0xE0)
-        {
-            unsigned char ext = keyboard_read_scancode();
-            if (ext == 0x1D) { nwos_ctrl_right = 1; continue; }
-            if (ext == 0x9D) { nwos_ctrl_right = 0; continue; }
-            //super
-            if (ext == 0x5B) { super_pressed = 1; continue; }
-            if (ext == 0xDB) { super_pressed = 0; continue; }
-
-            if (ext & KEYBOARD_RELEASE)
-                continue;
-
-            if (ext == 0x48) return KEY_UP;
-            if (ext == 0x50) return KEY_DOWN;
-            if (ext == 0x4B) return KEY_LEFT;
-            if (ext == 0x4D) return KEY_RIGHT;
-
-            continue;
-        }
+        if (scancode == 0x1D) { nwos_ctrl_right = 1; return 0; }
+        if (scancode == 0x9D) { nwos_ctrl_right = 0; return 0; }
+        if (scancode == 0x5B) { super_pressed = 1; return 0; }
+        if (scancode == 0xDB) { super_pressed = 0; return 0; }
 
         if (scancode & KEYBOARD_RELEASE)
-        {
-            unsigned char make = scancode & 0x7F;
+            return 0;
 
-            if (make == 0x2A) shift_left = 0;
-            else if (make == 0x36) shift_right = 0;
-            else if (make == 0x1D) nwos_ctrl_left = 0;
+        if (scancode == 0x48) return KEY_UP;
+        if (scancode == 0x50) return KEY_DOWN;
+        if (scancode == 0x4B) return KEY_LEFT;
+        if (scancode == 0x4D) return KEY_RIGHT;
 
-            continue;
-        }
+        return 0;
+    }
 
-        if (scancode == 0x2A) { shift_left = 1; continue; }
-        if (scancode == 0x36) { shift_right = 1; continue; }
-        if (scancode == 0x1D) { nwos_ctrl_left = 1; continue; }
-        if (scancode == 0x3A) { caps_lock = !caps_lock; continue; }
-        if (scancode == 0x48) return KEY_NUMPAD_8;
-        if (scancode == 0x50) return KEY_NUMPAD_2;
+    if (scancode == 0xE0)
+    {
+        ext_pending = 1;
+        return 0;
+    }
 
-        if (scancode == 0x3F) return KEY_F5;
-        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x1F) return 19;
-        if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x2D) return 24;
-        if (scancode == 0x01) return KEY_ESC;
-        if (scancode == 0x0E) return KEY_BACKSPACE;
-        if (scancode == 0x0F) return KEY_TAB;
-        if (scancode == 0x1C) return KEY_ENTER;
-        if (scancode == 0x1F && super_pressed) {
-            return KEY_SUPER_S;
-        }
+    if (scancode & KEYBOARD_RELEASE)
+    {
+        unsigned char make = scancode & 0x7F;
 
-        if (scancode >= 128)
-            continue;
+        if (make == 0x2A) shift_left = 0;
+        else if (make == 0x36) shift_right = 0;
+        else if (make == 0x1D) nwos_ctrl_left = 0;
 
-        if (shift_left || shift_right)
-            c = shifted_keymap[scancode];
-        else
-            c = keymap[scancode];
+        return 0;
+    }
 
-        if (c == 0)
-            continue;
+    if (scancode == 0x2A) { shift_left = 1; return 0; }
+    if (scancode == 0x36) { shift_right = 1; return 0; }
+    if (scancode == 0x1D) { nwos_ctrl_left = 1; return 0; }
+    if (scancode == 0x3A) { caps_lock = !caps_lock; return 0; }
+    if (scancode == 0x48) return KEY_NUMPAD_8;
+    if (scancode == 0x50) return KEY_NUMPAD_2;
 
-        if (c >= 'a' && c <= 'z')
-        {
-            if (caps_lock && !(shift_left || shift_right))
-                c = (char)(c - 'a' + 'A');
-        }
+    if (scancode == 0x3F) return KEY_F5;
+    if (scancode == 0x41) return KEY_F7;
+    if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x1F) return 19;
+    if ((nwos_ctrl_left || nwos_ctrl_right) && scancode == 0x2D) return 24;
+    if (scancode == 0x01) return KEY_ESC;
+    if (scancode == 0x0E) return KEY_BACKSPACE;
+    if (scancode == 0x0F) return KEY_TAB;
+    if (scancode == 0x1C) return KEY_ENTER;
+    if (scancode == 0x1F && super_pressed) return KEY_SUPER_S;
 
-        if (c >= 'A' && c <= 'Z')
-        {
-            if (caps_lock && (shift_left || shift_right))
-                c = (char)(c - 'A' + 'a');
-        }
+    if (scancode >= 128)
+        return 0;
 
-        return (int)c;
+    if (shift_left || shift_right)
+        c = shifted_keymap[scancode];
+    else
+        c = keymap[scancode];
+
+    if (c == 0)
+        return 0;
+
+    if (c >= 'a' && c <= 'z')
+    {
+        if (caps_lock && !(shift_left || shift_right))
+            c = (char)(c - 'a' + 'A');
+    }
+
+    if (c >= 'A' && c <= 'Z')
+    {
+        if (caps_lock && (shift_left || shift_right))
+            c = (char)(c - 'A' + 'a');
+    }
+
+    return (int)c;
+}
+
+int keyboard_getkey(void)
+{
+    while (1)
+    {
+        int key = keyboard_decode_scancode(keyboard_read_scancode());
+
+        if (key != KEY_NONE)
+            return key;
+    }
+}
+
+int keyboard_pollkey(void)
+{
+    while (1)
+    {
+        int scancode = keyboard_read_scancode_nb();
+        int key;
+
+        if (scancode < 0)
+            return KEY_NONE;
+
+        key = keyboard_decode_scancode((unsigned char)scancode);
+
+        if (key != KEY_NONE)
+            return key;
     }
 }

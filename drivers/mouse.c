@@ -183,10 +183,7 @@ int mouse_poll(void)
     while (ps2_inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT)
     {
         if (!(ps2_inb(PS2_STATUS_PORT) & PS2_STATUS_AUX))
-        {
-            (void)ps2_inb(PS2_DATA_PORT);
-            continue;
-        }
+            break;
 
         mouse_handle_byte(ps2_inb(PS2_DATA_PORT));
         updated = 1;

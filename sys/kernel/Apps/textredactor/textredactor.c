@@ -34,8 +34,8 @@ void nwc_capture_end(void);
 #define COLOR_WHITE 15
 #endif
 
-#define REDACTOR_MAX_LINES 2048 // basicaly 32
-#define REDACTOR_LINE_SIZE 512 // basicaly 121
+#define REDACTOR_MAX_LINES 32
+#define REDACTOR_LINE_SIZE 121
 #define REDACTOR_FILE_SIZE 4096
 #define REDACTOR_VIEW_LINES 16
 #define REDACTOR_TEXT_X 4

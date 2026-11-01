@@ -259,6 +259,8 @@ typedef enum
     OP_BUF_TEXT  = 0xBB,
     OP_BUF_LOAD  = 0xBC,
     OP_BUF_SAVE  = 0xBD,
+    OP_POLLKEY   = 0xBE,
+    OP_RANDOM_WORD = 0xBF,
 
     OP_HALT         = 0xFF
 
@@ -332,6 +334,8 @@ static int cg_key_constant(const char* name, long long* value)
         { "LEFT", 261 },
         { "RIGHT", 262 },
         { "SUPER_S", 263 },
+        { "F5", 264 },
+        { "F7", 267 },
         { "SPACE", 32 },
         { "KEY_NONE", 0 },
         { "KEY_ESC", 255 },
@@ -343,6 +347,8 @@ static int cg_key_constant(const char* name, long long* value)
         { "KEY_LEFT", 261 },
         { "KEY_RIGHT", 262 },
         { "KEY_SUPER_S", 263 },
+        { "KEY_F5", 264 },
+        { "KEY_F7", 267 },
         { "KEY_SPACE", 32 }
     };
 
@@ -828,6 +834,18 @@ static int cg_call(Codegen* cg, ASTNode* node)
             cg_emit_byte(cg, OP_GETKEY);
         }
 
+        return 1;
+    }
+
+    if (strcmp(node->text, "nw::pollkey") == 0)
+    {
+        cg_emit_byte(cg, OP_POLLKEY);
+        return 1;
+    }
+
+    if (strcmp(node->text, "nw::random_word") == 0)
+    {
+        cg_emit_byte(cg, OP_RANDOM_WORD);
         return 1;
     }
 

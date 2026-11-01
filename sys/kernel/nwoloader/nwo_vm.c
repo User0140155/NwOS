@@ -10,6 +10,7 @@ void clear(void);
 void set_color(unsigned char color);
 
 int keyboard_getkey(void);
+int keyboard_pollkey(void);
 int mouse_x(void);
 int mouse_y(void);
 int mouse_buttons(void);
@@ -40,6 +41,7 @@ void sleep(unsigned int ms);
 unsigned int nwf_ram_mb(void);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
+const char* nwf_random_word(void);
 unsigned long long timer_ms(void);
 
 
@@ -76,6 +78,8 @@ unsigned long long timer_ms(void);
 #define OP_BUF_TEXT    0xBB
 #define OP_BUF_LOAD    0xBC
 #define OP_BUF_SAVE    0xBD
+#define OP_POLLKEY     0xBE
+#define OP_RANDOM_WORD 0xBF
 
 #define OP_JUMP         0x80
 #define OP_JUMP_FALSE   0x81
@@ -230,9 +234,17 @@ typedef struct
 static VmValue vm_array_pool[NWO_ARRAY_POOL_SIZE];
 static int     vm_array_pool_used = 0;
 
+#define NWO_TYPE_VOID   0
+#define NWO_TYPE_STRING 7
+#define NWO_ARRAY_STRING_SLOTS 64
+static char vm_array_string_storage[NWO_ARRAY_STRING_SLOTS][NWO_INPUT_SIZE];
+static int  vm_array_string_used = 0;
+
 typedef struct
 {
     unsigned int return_ip;
+    int array_pool_mark;
+    int array_string_mark;
 
 } VmCallFrame;
 
@@ -1182,6 +1194,8 @@ static int vm_find_function(
             case OP_UPTIME_SEC:
             case OP_DISK_KB:
             case OP_DISK_FILES:
+            case OP_POLLKEY:
+            case OP_RANDOM_WORD:
                 break;
             case OP_LOAD:
             case OP_STORE:
@@ -1301,6 +1315,7 @@ int nwo_execute(
     vm_clear_variables(&vm);
 
     vm_array_pool_used = 0;
+    vm_array_string_used = 0;
     vm_literal_next = 0;
 
     vm.text_color = 7;
@@ -1665,7 +1680,7 @@ int nwo_execute(
                 vm.variables[index].array_size = size;
                 vm.variables[index].array_start = -1;
 
-                if (type != 6 && type != 7 && size > 0)
+                if (type != NWO_TYPE_VOID && size > 0)
                 {
                     if (vm_array_pool_used + (int)size > NWO_ARRAY_POOL_SIZE)
                     {
@@ -1673,16 +1688,38 @@ int nwo_execute(
                         return -1;
                     }
 
-                  vm.variables[index].array_start = vm_array_pool_used;
-                  vm_array_pool_used += (int)size;
+                    if (type == NWO_TYPE_STRING &&
+                        vm_array_string_used + (int)size > NWO_ARRAY_STRING_SLOTS)
+                    {
+                        print("[NWO VM] String array pool exhausted.\n");
+                        return -1;
+                    }
 
-                   for (k = 0; k < size; k++)
-                   {
-                       vm_array_pool[vm.variables[index].array_start + k].type = VM_INT;
-                       vm_array_pool[vm.variables[index].array_start + k].as.integer = 0;
-                       vm_array_pool[vm.variables[index].array_start + k].string_length = 0;
-                   }
-               }
+                    vm.variables[index].array_start = vm_array_pool_used;
+                    vm_array_pool_used += (int)size;
+
+                    for (k = 0; k < size; k++)
+                    {
+                        VmValue* slot =
+                            &vm_array_pool[vm.variables[index].array_start + k];
+
+                        if (type == NWO_TYPE_STRING)
+                        {
+                            slot->type = VM_STRING;
+                            slot->string_length = 0;
+                            slot->as.string =
+                                vm_array_string_storage[vm_array_string_used];
+                            vm_array_string_storage[vm_array_string_used][0] = '\0';
+                            vm_array_string_used++;
+                        }
+                        else
+                        {
+                            slot->type = VM_INT;
+                            slot->as.integer = 0;
+                            slot->string_length = 0;
+                        }
+                    }
+                }
 
                 break;
             }
@@ -1917,7 +1954,36 @@ int nwo_execute(
                     return -1;
                 }
 
-                vm_array_pool[v->array_start + idx] = val;
+                if (v->declared_type == NWO_TYPE_STRING)
+                {
+                    unsigned int n = 0;
+                    char* dest;
+
+                    if (val.type != VM_STRING)
+                    {
+                        print("[NWO VM] Type mismatch for string array.\n");
+                        return -1;
+                    }
+
+                    dest = (char*)vm_array_pool[v->array_start + idx].as.string;
+
+                    while (n < NWO_INPUT_SIZE - 1 &&
+                           val.as.string != 0 &&
+                           val.as.string[n] != '\0')
+                    {
+                        dest[n] = val.as.string[n];
+                        n++;
+                    }
+
+                    dest[n] = '\0';
+                    vm_array_pool[v->array_start + idx].type = VM_STRING;
+                    vm_array_pool[v->array_start + idx].string_length = n;
+                    vm_array_pool[v->array_start + idx].as.string = dest;
+                }
+                else
+                {
+                    vm_array_pool[v->array_start + idx] = val;
+                }
                 break;
             }
 
@@ -2156,6 +2222,26 @@ int nwo_execute(
                 VmValue v;
                 if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
                 v.type = VM_INT; v.as.integer = nwf_fs_write(name, vm_file_buf);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_POLLKEY:
+            {
+                VmValue v;
+                v.type = VM_INT;
+                v.as.integer = keyboard_pollkey();
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_RANDOM_WORD:
+            {
+                const char* word = nwf_random_word();
+                VmValue v;
+                unsigned int n = 0;
+                while (word[n]) n++;
+                v.type = VM_STRING;
+                v.string_length = n;
+                v.as.string = word;
                 if (!vm_push(&vm, v)) return -1;
                 break;
             }
@@ -2960,6 +3046,8 @@ int nwo_execute(
                 }
 
                 vm.call_stack[vm.call_sp].return_ip = vm.ip;
+                vm.call_stack[vm.call_sp].array_pool_mark = vm_array_pool_used;
+                vm.call_stack[vm.call_sp].array_string_mark = vm_array_string_used;
                 vm.call_sp++;
                 vm.scope_depth = vm.call_sp;
 
@@ -3039,6 +3127,8 @@ int nwo_execute(
                     vm.call_sp--;
                     vm.scope_depth = vm.call_sp;
                     vm_release_scope(&vm, finished_scope);
+                    vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
+                    vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;
 
                     if (!vm_push(&vm, value))
@@ -3076,6 +3166,8 @@ int nwo_execute(
                     vm.call_sp--;
                     vm.scope_depth = vm.call_sp;
                     vm_release_scope(&vm, finished_scope);
+                    vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
+                    vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;
 
                     if (!vm_push(&vm, result))
@@ -3104,6 +3196,8 @@ int nwo_execute(
                     vm.call_sp--;
                     vm.scope_depth = vm.call_sp;
                     vm_release_scope(&vm, finished_scope);
+                    vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
+                    vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;
 
                     if (!vm_push(&vm, value))

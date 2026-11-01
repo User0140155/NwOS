@@ -17,8 +17,10 @@
 
 #define KEY_SUPER_S    263
 #define KEY_F5         264
+#define KEY_F7         267
 
 void keyboard_init(void);
 int keyboard_getkey(void);
+int keyboard_pollkey(void);
 
 #endif

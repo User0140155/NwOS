@@ -18,6 +18,7 @@
 #include "rootfs_data.h"
 
 #include "package.h"
+#include "words_data.h"
 
 
 #include "network/net.h"
@@ -75,6 +76,7 @@ void nwf_cpu_name(char* out);
 unsigned int nwf_ram_mb(void);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
+const char* nwf_random_word(void);
 void read_line(char* buffer, int max);
 void sleep(unsigned int ms);
 
@@ -203,6 +205,7 @@ static int fb_graphics_mode = 0;
 static unsigned char text_color = COLOR_LIGHT_GRAY;
 static unsigned char base_color = COLOR_LIGHT_GRAY;
 static unsigned char prompt_color = COLOR_CYAN;
+static int console_f7_enabled = 0;
 
 static int timezone_offset = 0; /* UTC+0 by default */
 static int custom_time_offset = 0;
@@ -1287,6 +1290,40 @@ void read_line(char* buffer, int max)
     {
         int key = keyboard_getkey();
 
+        if (console_f7_enabled && key == KEY_F7)
+        {
+            const char* word = nwf_random_word();
+            int start = length;
+
+            while (start > 0 && buffer[start - 1] != ' ')
+                start--;
+
+            while (length > start)
+            {
+                putchar_os('\b');
+                length--;
+            }
+
+            buffer[length] = '\0';
+
+            int i = 0;
+            while (word[i] != '\0' && length < max - 1)
+            {
+                buffer[length++] = word[i];
+                putchar_os(word[i]);
+                i++;
+            }
+
+            if (length < max - 1)
+            {
+                buffer[length++] = ' ';
+                putchar_os(' ');
+            }
+
+            buffer[length] = '\0';
+            continue;
+        }
+
         if (key == KEY_TAB)
         {
             for (int i = 0; i < 4; i++)
@@ -1440,6 +1477,17 @@ unsigned int rand_simple(void)
         random_seed * 1103515245 + 12345;
 
     return random_seed;
+}
+
+const char* nwf_random_word(void)
+{
+    int index;
+
+    if (NWOS_WORD_COUNT <= 0)
+        return "";
+
+    index = random_range(0, NWOS_WORD_COUNT - 1);
+    return nw_words[index];
 }
 
 void random_init(void)
@@ -2744,7 +2792,9 @@ void shell(void)
         print_shell_p();
         set_color(base_color);
 
+        console_f7_enabled = 1;
         read_line(command, 128);
+        console_f7_enabled = 0;
 
         shell_execute(command);
     }
@@ -6639,6 +6689,7 @@ void kernel_main(void) {
     fs_enter_user_home();
     if (!login_prompt())
     {
+        print_error("error\n");
         while (1)
             __asm__ volatile ("hlt");
     }
