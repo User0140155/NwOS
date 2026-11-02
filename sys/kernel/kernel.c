@@ -2605,8 +2605,131 @@ static DirEntry directory[MAX_FILES];
 static int fs_current_drive = 0;
 static int fs_quiet = 0;
 
+/*
+ * Sector access abstraction.
+ *
+ * fs_part_lba is the offset of the NwFS area inside the selected disk
+ * (0 for the legacy whole-disk layout, 2048 for automatic MBR layouts).
+ * In live mode all reads and writes go to a RAM-backed copy instead of
+ * touching any real disk.
+ */
+static int fs_ram_mode = 0;
+static unsigned int fs_part_lba = 0;
+static int fs_live_build = 0;
+
+#define FS_RAM_LBAS 8192
+static unsigned char fs_ram_disk[FS_RAM_LBAS * 512];
+
+static void fs_bytes_zero(unsigned char* p, unsigned int n)
+{
+    for (unsigned int i = 0; i < n; i++) p[i] = 0;
+}
+
+static int fs_read_lba(unsigned int lba, unsigned char* buf)
+{
+    if (buf == 0) return -1;
+
+    if (fs_ram_mode)
+    {
+        unsigned long long abs = (unsigned long long)fs_part_lba + lba;
+
+        if (abs >= FS_RAM_LBAS)
+        {
+            fs_bytes_zero(buf, 512);
+            return -1;
+        }
+
+        unsigned char* src = fs_ram_disk + (unsigned int)abs * 512u;
+
+        for (unsigned int i = 0; i < 512; i++) buf[i] = src[i];
+
+        return 0;
+    }
+
+    if (ata_drive_count() == 0) return -1;
+    if (fs_current_drive < 0 || fs_current_drive >= ata_drive_count()) return -1;
+
+    return ata_read_sector_d(fs_current_drive, fs_part_lba + lba, buf);
+}
+
+static int fs_write_lba(unsigned int lba, const unsigned char* buf)
+{
+    if (buf == 0) return -1;
+
+    if (fs_ram_mode)
+    {
+        unsigned long long abs = (unsigned long long)fs_part_lba + lba;
+
+        if (abs >= FS_RAM_LBAS) return -1;
+
+        unsigned char* dst = fs_ram_disk + (unsigned int)abs * 512u;
+
+        for (unsigned int i = 0; i < 512; i++) dst[i] = buf[i];
+
+        return 0;
+    }
+
+    if (ata_drive_count() == 0) return -1;
+    if (fs_current_drive < 0 || fs_current_drive >= ata_drive_count()) return -1;
+
+    return ata_write_sector_d(fs_current_drive, fs_part_lba + lba, buf);
+}
+
+static int fs_drive_has_fs_at(int idx, unsigned int base)
+{
+    unsigned char sector[512];
+
+    if (idx < 0 || idx >= ata_drive_count()) return 0;
+    if (ata_read_sector_d(idx, base + FS_MAGIC_LBA, sector) != 0) return 0;
+
+    return *(unsigned int*)sector == FS_MAGIC_VALUE &&
+           *(unsigned int*)(sector + FS_VER_OFFSET) == FS_FORMAT_VER;
+}
+
+/*
+ * Returns the start LBA of the NwFS area on a disk, or 0xFFFFFFFF if the
+ * disk has no NwOS installation. Partitioned disks are checked first.
+ */
+static unsigned int fs_drive_fs_base(int idx)
+{
+    unsigned char mbr[512];
+
+    if (idx < 0 || idx >= ata_drive_count()) return 0xFFFFFFFFu;
+
+    if (ata_read_sector_d(idx, 0, mbr) == 0 &&
+        mbr[510] == 0x55 && mbr[511] == 0xAA)
+    {
+        for (int p = 0; p < 4; p++)
+        {
+            unsigned char* entry = mbr + 446 + p * 16;
+
+            if (entry[4] == 0) continue;
+
+            unsigned int start =
+                (unsigned int)entry[8] |
+                ((unsigned int)entry[9] << 8) |
+                ((unsigned int)entry[10] << 16) |
+                ((unsigned int)entry[11] << 24);
+
+            if (start == 0) continue;
+
+            if (fs_drive_has_fs_at(idx, start)) return start;
+        }
+    }
+
+    if (fs_drive_has_fs_at(idx, 0)) return 0;
+
+    return 0xFFFFFFFFu;
+}
+
 void fs_set_drive(int idx)
 {
+    if (fs_ram_mode)
+    {
+        fs_current_drive = 0;
+        return;
+    }
+
     if (idx < 0 || idx >= ata_drive_count()) return;
     fs_current_drive = idx;
 }
@@ -2626,10 +2749,10 @@ void fs_load(void)
         directory[i].size = 0;
     }
 
-    if (ata_drive_count() == 0) return;/* if no disk */
+    if (!fs_ram_mode && ata_drive_count() == 0) return;/* if no disk */
 
     for (int s = 0; s < FS_DIR_SECTORS; s++) {
-        if (ata_read_sector_d(fs_current_drive, FS_DIR_LBA + s, buffer + s * 512) != 0) {
+        if (fs_read_lba(FS_DIR_LBA + s, buffer + s * 512) != 0) {
             print_error("Warning: FS read failed.\n");
             return;
         }
@@ -2647,7 +2770,7 @@ void fs_load(void)
 }
 void fs_save_directory(void)
 {
-    if (ata_drive_count() == 0) return;
+    if (!fs_ram_mode && ata_drive_count() == 0) return;
     unsigned char buffer[FS_DIR_SECTORS * 512];
 
     for (int k = 0; k < FS_DIR_SECTORS * 512; k++) buffer[k] = 0;
@@ -2661,18 +2784,12 @@ void fs_save_directory(void)
 
     for (int s = 0; s < FS_DIR_SECTORS; s++)
     {
-        ata_write_sector_d(fs_current_drive, FS_DIR_LBA + s, buffer + s * 512);
+        fs_write_lba(FS_DIR_LBA + s, buffer + s * 512);
     }
 }
 static int fs_drive_has_fs(int idx)
 {
-    unsigned char sector[512];
-
-    if (idx < 0 || idx >= ata_drive_count()) return 0;
-    if (ata_read_sector_d(idx, FS_MAGIC_LBA, sector) != 0) return 0;
-
-    return *(unsigned int*)sector == FS_MAGIC_VALUE &&
-           *(unsigned int*)(sector + FS_VER_OFFSET) == FS_FORMAT_VER;
+    return fs_drive_fs_base(idx) != 0xFFFFFFFFu;
 }
 
 static const char* disk_position_name(ata_drive_t* d)
@@ -2720,14 +2837,21 @@ int fs_change_drive(int idx)
 {
     if (idx < 0 || idx >= ata_drive_count()) return -1;
 
-    if (!fs_drive_has_fs(idx)) return -2;
+    unsigned int base = fs_drive_fs_base(idx);
+
+    if (base == 0xFFFFFFFFu) return -2;
 
     if (idx != fs_current_drive)
     {
         fs_current_drive = idx;
+        fs_part_lba = base;
         current_dir = 0;
 
         fs_load();
+    }
+    else
+    {
+        fs_part_lba = base;
     }
 
     return 0;
@@ -2816,9 +2940,13 @@ static int fs_read_directory_of(int idx, DirEntry* out)
 {
     if (idx < 0 || idx >= ata_drive_count()) return -1;
 
+    unsigned int base = fs_drive_fs_base(idx);
+
+    if (base == 0xFFFFFFFFu) return -1;
+
     for (int s = 0; s < FS_DIR_SECTORS; s++)
     {
-        if (ata_read_sector_d(idx, FS_DIR_LBA + s, fs_scratch + s * 512) != 0)
+        if (ata_read_sector_d(idx, base + FS_DIR_LBA + s, fs_scratch + s * 512) != 0)
             return -1;
     }
 
@@ -3042,10 +3170,11 @@ int nwf_fs_read(const char* name, char* buffer, unsigned int max_size)
 static unsigned int fs_drive_seq(int idx)
 {
     unsigned char sector[512];
+    unsigned int base = fs_drive_fs_base(idx);
 
-    if (!fs_drive_has_fs(idx)) return 0;
+    if (base == 0xFFFFFFFFu) return 0;
 
-    if (ata_read_sector_d(idx, FS_MAGIC_LBA, sector) != 0) return 0;
+    if (ata_read_sector_d(idx, base + FS_MAGIC_LBA, sector) != 0) return 0;
 
     return *(unsigned int*)(sector + FS_SEQ_OFFSET);
 }
@@ -3053,6 +3182,19 @@ static unsigned int fs_drive_seq(int idx)
 static unsigned int fs_max_seq(void)
 {
     unsigned int max = 0;
+
+    if (fs_ram_mode)
+    {
+        unsigned char sector[512];
+
+        if (fs_read_lba(FS_MAGIC_LBA, sector) == 0 &&
+            *(unsigned int*)sector == FS_MAGIC_VALUE)
+        {
+            return *(unsigned int*)(sector + FS_SEQ_OFFSET);
+        }
+
+        return 0;
+    }
 
     for (int i = 0; i < ata_drive_count(); i++)
     {
@@ -3088,7 +3230,7 @@ static int fs_find_drive_with_fs(void)
 
 static int fs_is_formatted(void) {
     unsigned char sector[512];
-    if (ata_read_sector_d(fs_current_drive, FS_MAGIC_LBA, sector) != 0) return 0;
+    if (fs_read_lba(FS_MAGIC_LBA, sector) != 0) return 0;
     return *(unsigned int*)sector == FS_MAGIC_VALUE &&
            *(unsigned int*)(sector + FS_VER_OFFSET) == FS_FORMAT_VER;
 }
@@ -3099,14 +3241,14 @@ static void fs_mark_formatted(unsigned int seq) {
     *(unsigned int*)sector = FS_MAGIC_VALUE;
     *(unsigned int*)(sector + FS_SEQ_OFFSET) = seq;
     *(unsigned int*)(sector + FS_VER_OFFSET) = FS_FORMAT_VER;
-    ata_write_sector_d(fs_current_drive, FS_MAGIC_LBA, sector);
+    fs_write_lba(FS_MAGIC_LBA, sector);
 }
 
 static void fs_wipe_magic(void) {
     unsigned char sector[512];
     for (int k = 0; k < 512; k++) sector[k] = 0;
     *(unsigned int*)sector = 0xDEADBEEF;
-    ata_write_sector_d(fs_current_drive, FS_MAGIC_LBA, sector);
+    fs_write_lba(FS_MAGIC_LBA, sector);
 }
 
 int fs_load_status(void) {
@@ -3117,7 +3259,8 @@ int fs_load_status(void) {
     if (drive < 0) return 0;
 
     fs_set_drive(drive);
-    
+    fs_part_lba = fs_drive_fs_base(drive);
+
     fs_load();
     
     for (int i = 0; i < MAX_FILES; i++) {
@@ -3326,7 +3469,7 @@ void fs_format_disk(int drive_idx) {
     unsigned int seq = fs_max_seq() + 1;
 
     for (int i = 0; i < MAX_FILES * FS_FILE_SECTORS; i++) {
-        ata_write_sector_d(fs_current_drive, FS_DATA_LBA + i, zero);
+        fs_write_lba(FS_DATA_LBA + i, zero);
     }
     
     for (int i = 0; i < MAX_FILES; i++) {
@@ -3379,15 +3522,18 @@ void fs_format_disk(int drive_idx) {
 
         current_dir = (uint16_t)parent;
 
-        print("    [");
-        print_int(i + 1);
-        print("/");
-        print_int(ROOTFS_FILE_COUNT);
-        print("] ");
-        print(path);
-        print("  (");
-        print_int((int)size);
-        print(" bytes)\n");
+        if (!fs_live_build)
+        {
+            print("    [");
+            print_int(i + 1);
+            print("/");
+            print_int(ROOTFS_FILE_COUNT);
+            print("] ");
+            print(path);
+            print("  (");
+            print_int((int)size);
+            print(" bytes)\n");
+        }
 
         if (fs_find(file_name) != -1)
             continue;
@@ -3423,8 +3569,7 @@ void fs_format_disk(int drive_idx) {
                 sector[k] = data[offset + k];
             }
 
-            if (ata_write_sector_d(
-                    fs_current_drive,
+            if (fs_write_lba(
                     FS_DATA_LBA + (unsigned int)idx *
                         FS_FILE_SECTORS + s,
                     sector) != 0)
@@ -3456,11 +3601,81 @@ void fs_format_disk(int drive_idx) {
     if (home_ok < 0)
         print_error("Warning: could not create user home directory.\n");
 
-    print_success("Filesystem formatted. Rootfs installed.\n");
+    if (!fs_live_build)
+        print_success("Filesystem formatted. Rootfs installed.\n");
 }
 
 void fs_format(void) {
     fs_format_disk(fs_current_drive);
+}
+
+#define FS_PART_START_LBA 2048u
+
+static unsigned int fs_layout_sectors(void)
+{
+    return 1u + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS;
+}
+
+/*
+ * Live boot: build the complete NwFS tree inside RAM. No sector of any
+ * real disk is written while the system is running in this mode.
+ */
+static void fs_live_init(void)
+{
+    fs_ram_mode = 1;
+    fs_part_lba = 0;
+    fs_current_drive = 0;
+
+    for (unsigned int i = 0; i < (unsigned int)FS_RAM_LBAS * 512u; i++)
+        fs_ram_disk[i] = 0;
+
+    cfg_require_login = 0;
+    cfg_setup_complete = 1;
+
+    fs_live_build = 1;
+    fs_format_disk(0);
+    fs_live_build = 0;
+
+    current_dir = 0;
+}
+
+/*
+ * Write a minimal MBR with one Linux-type partition. The NwFS area is
+ * placed at FS_PART_START_LBA, leaving the first megabyte for a future
+ * bootloader/ESP without changing the filesystem itself.
+ */
+static int fs_write_mbr_partition(int drive_idx, unsigned int start_lba,
+                                  unsigned int total_sectors)
+{
+    unsigned char mbr[512];
+    fs_bytes_zero(mbr, 512);
+
+    if (total_sectors <= start_lba) return -1;
+
+    unsigned int part_sectors = total_sectors - start_lba;
+    unsigned char* e = mbr + 446;
+
+    e[0] = 0x00; /* not marked bootable: the ISO remains the boot media */
+    e[1] = 0x00;
+    e[2] = 0x00;
+    e[3] = 0x00;
+    e[4] = 0x83; /* Linux filesystem type */
+    e[5] = 0xFE;
+    e[6] = 0xFF;
+    e[7] = 0xFF;
+    e[8]  = (unsigned char)(start_lba & 0xFF);
+    e[9]  = (unsigned char)((start_lba >> 8) & 0xFF);
+    e[10] = (unsigned char)((start_lba >> 16) & 0xFF);
+    e[11] = (unsigned char)((start_lba >> 24) & 0xFF);
+    e[12] = (unsigned char)(part_sectors & 0xFF);
+    e[13] = (unsigned char)((part_sectors >> 8) & 0xFF);
+    e[14] = (unsigned char)((part_sectors >> 16) & 0xFF);
+    e[15] = (unsigned char)((part_sectors >> 24) & 0xFF);
+
+    mbr[510] = 0x55;
+    mbr[511] = 0xAA;
+
+    return ata_write_sector_d(drive_idx, 0, mbr);
 }
 
 int fs_find(const char* name)
@@ -4509,8 +4724,7 @@ int fs_read_text(
         if (chunk > copy_size - copied)
             chunk = copy_size - copied;
 
-        ata_read_sector_d(
-            fs_current_drive,
+        fs_read_lba(
             FS_DATA_LBA + index * FS_FILE_SECTORS + sector_index,
             sector
         );
@@ -4606,8 +4820,7 @@ int fs_read_binary(
         if (chunk > copy_size - copied)
             chunk = copy_size - copied;
 
-        ata_read_sector_d(
-            fs_current_drive,
+        fs_read_lba(
             FS_DATA_LBA + (unsigned int)index * FS_FILE_SECTORS + sector_index,
             sector);
 
@@ -4801,8 +5014,7 @@ void fs_store_data(int index, const char* text, const char* success_message)
 
     for (int s = 0; s < FS_FILE_SECTORS; s++)
     {
-        ata_write_sector_d(
-            fs_current_drive,
+        fs_write_lba(
             FS_DATA_LBA + index * FS_FILE_SECTORS + s,
             buffer + s * 512);
     }
@@ -4865,12 +5077,173 @@ int fs_write_binary(const char* name, const unsigned char* data, unsigned int si
             unsigned int offset = sector_index * 512u + i;
             sector[i] = offset < size ? data[offset] : 0;
         }
-        ata_write_sector_d(
-            fs_current_drive,
+        fs_write_lba(
             FS_DATA_LBA + (unsigned int)index * FS_FILE_SECTORS + sector_index,
             sector);
     }
     fs_save_directory();
+    return 1;
+}
+
+static int fs_split_file_path(const char* path, char* dir_out,
+                              int dir_capacity, char* leaf_out)
+{
+    int last_slash = -1;
+    int length = 0;
+
+    if (path == 0 || dir_out == 0 || leaf_out == 0)
+        return 0;
+
+    while (path[length] != '\0')
+    {
+        if (path[length] == '/')
+            last_slash = length;
+        length++;
+    }
+
+    if (last_slash < 0)
+        return 0;
+
+    int dir_length = (last_slash == 0) ? 1 : last_slash;
+
+    if (dir_length >= dir_capacity)
+        return 0;
+
+    if (last_slash == 0)
+    {
+        dir_out[0] = '/';
+    }
+    else
+    {
+        for (int i = 0; i < dir_length; i++)
+            dir_out[i] = path[i];
+    }
+
+    dir_out[dir_length] = '\0';
+
+    const char* leaf = path + last_slash + 1;
+    int leaf_length = 0;
+
+    while (leaf[leaf_length] != '\0')
+    {
+        if (leaf_length >= MAX_FILENAME - 1)
+            return 0;
+        leaf_out[leaf_length] = leaf[leaf_length];
+        leaf_length++;
+    }
+
+    leaf_out[leaf_length] = '\0';
+    return leaf_length > 0;
+}
+
+int fs_path_is_file(const char* path)
+{
+    char dir_path[256];
+    char leaf[MAX_FILENAME];
+    uint16_t saved_dir;
+    int parent;
+    int index;
+
+    if (!fs_split_file_path(path, dir_path, sizeof(dir_path), leaf))
+        return 0;
+
+    parent = fs_resolve_dir_path(dir_path);
+    if (parent < 0)
+        return 0;
+
+    saved_dir = current_dir;
+    current_dir = (uint16_t)parent;
+    index = fs_find(leaf);
+    current_dir = saved_dir;
+
+    return index >= 0 && directory[index].type == FS_TYPE_FILE;
+}
+
+int fs_write_binary_path(const char* path, const unsigned char* data,
+                         unsigned int size)
+{
+    char leaf[MAX_FILENAME];
+    uint16_t saved_dir;
+    int parent;
+    int result;
+
+    if (path == 0)
+        return 0;
+
+    parent = fs_prepare_rootfs_path(path, leaf);
+    if (parent < 0)
+        return 0;
+
+    saved_dir = current_dir;
+    current_dir = (uint16_t)parent;
+    result = fs_write_binary(leaf, data, size);
+    current_dir = saved_dir;
+
+    return result;
+}
+
+int fs_delete_file_path(const char* path)
+{
+    char dir_path[256];
+    char leaf[MAX_FILENAME];
+    uint16_t saved_dir;
+    int parent;
+    int index;
+
+    if (!fs_split_file_path(path, dir_path, sizeof(dir_path), leaf))
+        return 0;
+
+    parent = fs_resolve_dir_path(dir_path);
+    if (parent < 0)
+        return 0;
+
+    saved_dir = current_dir;
+    current_dir = (uint16_t)parent;
+    index = fs_find(leaf);
+
+    if (index < 0 || directory[index].type != FS_TYPE_FILE)
+    {
+        current_dir = saved_dir;
+        return 0;
+    }
+
+    directory[index].used = 0;
+    directory[index].name[0] = '\0';
+    directory[index].size = 0;
+    fs_save_directory();
+    current_dir = saved_dir;
+
+    return 1;
+}
+
+int fs_run_nwo_path(const char* path)
+{
+    char dir_path[256];
+    char leaf[MAX_FILENAME];
+    uint16_t saved_dir;
+    int parent;
+    int index;
+
+    if (!fs_split_file_path(path, dir_path, sizeof(dir_path), leaf))
+        return 0;
+
+    parent = fs_resolve_dir_path(dir_path);
+    if (parent < 0)
+        return 0;
+
+    saved_dir = current_dir;
+    current_dir = (uint16_t)parent;
+    index = fs_find(leaf);
+
+    if (index < 0 || directory[index].type != FS_TYPE_FILE)
+    {
+        current_dir = saved_dir;
+        return 0;
+    }
+
+    nwo_run(leaf);
+    current_dir = saved_dir;
+
     return 1;
 }
 
@@ -4984,8 +5357,7 @@ void fs_create(const char* name) {
             unsigned char empty[512];
             for (int k = 0; k < 512; k++) empty[k] = 0;
             for (int s = 0; s < FS_FILE_SECTORS; s++)
-                ata_write_sector_d(
-                    fs_current_drive,
+                fs_write_lba(
                     FS_DATA_LBA + i * FS_FILE_SECTORS + s,
                     empty);
 
@@ -5442,7 +5814,7 @@ void death_screen(void) {
     unsigned char zero[512];
     for (int k = 0; k < 512; k++) zero[k] = 0;
     for (int i = 0; i < MAX_FILES * FS_FILE_SECTORS; i++) {
-        ata_write_sector_d(fs_current_drive, FS_DATA_LBA + i, zero);
+        fs_write_lba(FS_DATA_LBA + i, zero);
     }
     
     directory[1].used = 1;
@@ -5455,7 +5827,7 @@ void death_screen(void) {
     unsigned char sector[512];
     for (int k = 0; k < 512; k++) sector[k] = 0;
     for (int k = 0; msg[k] != '\0' && k < 511; k++) sector[k] = msg[k];
-    ata_write_sector_d(fs_current_drive, FS_DATA_LBA + 1 * FS_FILE_SECTORS, sector);
+    fs_write_lba(FS_DATA_LBA + 1 * FS_FILE_SECTORS, sector);
     
     fs_save_directory();
     
@@ -5494,6 +5866,7 @@ static const Command commands[] =
     CMD_ARG("bash",        cmd_bash,        "bash <file.sh> - run NwSH script"),
     CMD_ARG("bat",         cmd_bat,         "bat <file.bat> - run NwBAT script"),
     CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> -o <file.nwo> - compile NwC source"),
+    CMD_ARG("nw",          package_handler, "nw list|install|remove|update|run - local package manager"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
     CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
@@ -6693,6 +7066,9 @@ static int execute_single_command(char* command)
         }
     }
 
+    if (package_run_command(command))
+        return 1;
+
     print_error("Unknown command. Type 'help'.\n");
     return 0;
 }
@@ -7400,8 +7776,12 @@ void installer(void) {
     print("  +======================================+\n\n");
     set_color(base_color);
     
-    print("  Welcome! No " OS_NAME " filesystem was found.\n\n");
-    
+    print("  Welcome to the " OS_NAME " installer.\n");
+    print("  Detected disks are listed below. Nothing is written until\n");
+    print("  you explicitly confirm formatting.\n\n");
+
+    ata_init();
+
     int n = ata_drive_count();
 
     if (n == 0)
@@ -7419,10 +7799,9 @@ void installer(void) {
     }
 
     print_title("\n  Disk configuration:\n");
-    print("    Mode: existing NwFS raw-disk layout\n");
-    print("    Target disk: selected below\n");
-    print("    GPT/MBR partitioning: not implemented yet\n");
-    print("    Warning: use a disposable QEMU test disk\n\n");
+    print("    Automatic : MBR + one partition starting at LBA 2048\n");
+    print("    Legacy    : whole disk, raw NwFS starting at LBA 0\n");
+    print("    Nothing is written before the final confirmation.\n\n");
 
     print_title("  Detected disks:\n");
     installer_print_disks(-1);
@@ -7475,24 +7854,35 @@ void installer(void) {
         return;
     }
 
-    if (target->sectors < (unsigned int)(1 + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS))
-    {
-        print_error("\n  Disk is too small for " OS_NAME ".\n");
-        print("  Required: ");
-        print_size_bytes(install_disk_usage());
-        print(", available: ");
-        print_size_bytes((unsigned long long)target->sectors * 512ULL);
-        print("\n");
-        installer_cancelled = 1;
-        return;
-    }
-
     print("\n  Target disk:\n");
     installer_print_disks(sel - 1);
 
     if (fs_drive_has_fs(sel - 1))
     {
         print_error("\n  WARNING: this disk already contains an " OS_NAME " installation.\n");
+    }
+
+    print("\n  Target layout:\n");
+    print("    1) Automatic MBR partition (recommended)\n");
+    print("    2) Whole disk, raw NwFS (legacy)\n");
+    print("  Choice [1]: ");
+
+    read_line(buf, 32);
+
+    int use_mbr = !(buf[0] == '2');
+    unsigned int start_lba = use_mbr ? FS_PART_START_LBA : 0u;
+    unsigned int needed_sectors = start_lba + fs_layout_sectors();
+
+    if (target->sectors < needed_sectors)
+    {
+        print_error("\n  Disk is too small for " OS_NAME ".\n");
+        print("  Required: ");
+        print_size_bytes((unsigned long long)needed_sectors * 512ULL);
+        print(", available: ");
+        print_size_bytes((unsigned long long)target->sectors * 512ULL);
+        print("\n");
+        installer_cancelled = 1;
+        return;
     }
 
     print("Require a password at startup? [Y/n]: ");
@@ -7507,23 +7897,46 @@ void installer(void) {
 
     cfg_setup_complete = 1;
 
-    print("\n  ALL data on ");
+    print("\n  This will FORMAT disk ");
     putchar_os(target->letter);
-    print(": will be erased!\n  Continue? (y/n): ");
+    print(": and erase every partition and file on it.\n");
+    print("  Layout: ");
+    print(use_mbr ? "MBR + partition at LBA 2048" : "raw NwFS from LBA 0");
+    print("\n  Type 'yes' to format and install: ");
 
     read_line(buf, 32);
-    
-    if (buf[0] != 'y' && buf[0] != 'Y') {
+
+    if (strcmp(buf, "yes") != 0)
+    {
         print_error("\n  Cancelled. Nothing was changed.\n");
         installer_cancelled = 1;
         return;
     }
-    
+
     print_success("\n\n  Installing to ");
     putchar_os(target->letter);
     print(": ...\n");
     sleep(500);
 
+    fs_ram_mode = 0;
+    fs_part_lba = 0;
+
+    if (use_mbr)
+    {
+        print("  Writing MBR partition table...\n");
+
+        if (fs_write_mbr_partition(sel - 1, FS_PART_START_LBA,
+                                   target->sectors) != 0)
+        {
+            print_error("  Could not write the partition table.\n");
+            installer_cancelled = 1;
+            return;
+        }
+
+        fs_part_lba = FS_PART_START_LBA;
+    }
+
+    fs_set_drive(sel - 1);
     fs_format_disk(sel - 1);
     
     print_success("\n  Installation complete!\n");
@@ -7537,14 +7950,12 @@ void installer(void) {
     print("\n    Disk usage:  ");
     print_size_bytes(install_disk_usage());
     print("\n");
-    for (int i = 0; i < 3; i++) {
-        if (i == 1) {
-            print("Reboot in 3 seconds...\n");
-        } else if (i == 2) {
-            print("Reboot in 2 seconds...\n");
-        } else if (i == 3) {
-            print("Reboot in 1 seconds...\n");
-        }
+    print("  Boot from the " OS_NAME " ISO/USB again; the installed disk\n");
+    print("  is detected automatically and appears in the boot menu.\n\n");
+    for (int s = 3; s > 0; s--) {
+        print("Reboot in ");
+        print_int(s);
+        print(" seconds...\n");
         sleep(1000);
     }
     reboot();
@@ -7588,50 +7999,57 @@ static int login_prompt(void)
     }
 }
 
-void kernel_main(void) {
-    fb_init();
-    
-    if (!fb_is_available()) {
-        volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
-        
-        for (int i = 0; i < 80 * 25; i++) vga[i] = 0x4F20;
+#define BOOT_ACTION_SYSTEM 0
+#define BOOT_ACTION_LIVE   1
+#define BOOT_ACTION_SETUP  2
 
-        const char* msg1 = " FATAL ERROR: Framebuffer not found! ";
-        for (int i = 0; msg1[i]; i++) vga[2 * 80 + 10 + i] = (uint16_t)msg1[i] | (0x4F << 8);
-
-        const char* msg2 = " Check limine framebuffer configuration. ";
-        for (int i = 0; msg2[i]; i++) vga[4 * 80 + 5 + i] = (uint16_t)msg2[i] | (0x4F << 8);
-        
-        const char* msg3 = " If booting from HDD, try NwOS.iso instead. ";
-        for (int i = 0; msg3[i]; i++) vga[6 * 80 + 5 + i] = (uint16_t)msg3[i] | (0x4F << 8);
-
-        while (1) __asm__ volatile ("hlt");
-    }
-
-    ata_init();
-
-    if (ata_drive_count() == 0) {
-        clear();
-        print_error("\n\nNo ATA disks detected!\n\n");
-        print("Add one to QEMU: -drive file=disk.img,format=raw,if=ide,index=0\n");
-        while(1) __asm__ volatile("hlt");
-    }
+static int boot_menu(int has_installed)
+{
+    char input[16];
 
     clear();
+    fb_init();
 
-    int status = fs_load_status();
+    set_color(COLOR_CYAN);
+    print("\n");
+    print("  +==========================================+\n");
+    print("  |          " OS_NAME " " OS_VERSION_STR " Boot Menu          |\n");
+    print("  +==========================================+\n\n");
+    set_color(base_color);
 
-    if (status == 0) {
-        installer();
-
-        while(1) __asm__ volatile("hlt");
-        return;
+    if (has_installed)
+    {
+        print("  1) Boot installed " OS_NAME "\n");
+        print("  2) Live mode (runs in RAM, disks are not modified)\n");
+        print("  3) Installer (detect, partition and format a disk)\n\n");
+        print("  Selection [1]: ");
     }
-    
-    if (status == 2) {
-        dead_boot();
+    else
+    {
+        print("  No installed " OS_NAME " filesystem was found.\n\n");
+        print("  1) Live mode (runs in RAM, disks are not modified)\n");
+        print("  2) Installer (detect, partition and format a disk)\n\n");
+        print("  Selection [1]: ");
     }
 
+    read_line(input, sizeof(input));
+
+    int value = (input[0] == '\0') ? 1 : atoi_simple(input);
+
+    if (has_installed)
+    {
+        if (value == 2) return BOOT_ACTION_LIVE;
+        if (value == 3) return BOOT_ACTION_SETUP;
+        return BOOT_ACTION_SYSTEM;
+    }
+
+    if (value == 2) return BOOT_ACTION_SETUP;
+
+    return BOOT_ACTION_LIVE;
+}
+
+static void boot_system(void)
+{
     print("CLEARING...\n");
     startingNWOS();
     settings_load();
@@ -7674,5 +8092,79 @@ void kernel_main(void) {
     while (1)
     {
         __asm__ volatile ("hlt");
+    }
+}
+
+void kernel_main(void) {
+    fb_init();
+    
+    if (!fb_is_available()) {
+        volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
+        
+        for (int i = 0; i < 80 * 25; i++) vga[i] = 0x4F20;
+
+        const char* msg1 = " FATAL ERROR: Framebuffer not found! ";
+        for (int i = 0; msg1[i]; i++) vga[2 * 80 + 10 + i] = (uint16_t)msg1[i] | (0x4F << 8);
+
+        const char* msg2 = " Check limine framebuffer configuration. ";
+        for (int i = 0; msg2[i]; i++) vga[4 * 80 + 5 + i] = (uint16_t)msg2[i] | (0x4F << 8);
+        
+        const char* msg3 = " If booting from HDD, try NwOS.iso instead. ";
+        for (int i = 0; msg3[i]; i++) vga[6 * 80 + 5 + i] = (uint16_t)msg3[i] | (0x4F << 8);
+
+        while (1) __asm__ volatile ("hlt");
+    }
+
+    ata_init();
+
+    int status = fs_load_status();
+
+    if (status == 2)
+        dead_boot();
+
+    int has_installed = (status == 1);
+
+    while (1)
+    {
+        int action = boot_menu(has_installed);
+
+        if (action == BOOT_ACTION_LIVE)
+        {
+            clear();
+            print("Preparing " OS_NAME " live environment in RAM...\n");
+            fs_live_init();
+            boot_system();
+        }
+
+        if (action == BOOT_ACTION_SETUP)
+        {
+            installer_cancelled = 0;
+            installer();
+
+            if (installer_cancelled)
+            {
+                print("\nInstaller cancelled. Returning to boot menu...\n");
+                sleep(1500);
+            }
+
+            continue;
+        }
+
+        ata_init();
+
+        int status = fs_load_status();
+
+        if (status == 2)
+            dead_boot();
+
+        if (status == 1)
+        {
+            has_installed = 1;
+            boot_system();
+        }
+
+        has_installed = 0;
+        print_error("No installed " OS_NAME " found. Choose live mode or the installer.\n");
+        sleep(2000);
     }
 }

@@ -83,7 +83,7 @@ SOURCES=(
 
 mkdir -p "$BUILD" "$ROOT/img"
 
-STEPS=$(( ${#SOURCES[@]} + 6 ))
+STEPS=$(( ${#SOURCES[@]} + 9 ))
 N=0
 
 step() {
@@ -150,6 +150,10 @@ cat > "$BUILD/video_config.h" <<EOF
 EOF
 
 python3 tools/gen_wallpaper.py || fail
+
+step "Generating local package repository..."
+
+python3 tools/gen_packages.py || fail
 
 step "Preparing Limine bootloader..."
 
@@ -298,7 +302,8 @@ if [[ ! -s "$ROOT/NwOS.iso" ]]; then
     fail
 fi
 
-"$LIMINE_HOST" bios-install "$ROOT/NwOS.iso" || fail
+# The ISO is already a hybrid image: El Torito BIOS + UEFI. Running
+# `limine bios-install` here is only needed for raw HDD images, not ISOs.
 
 echo
 echo "============================"

@@ -1,6 +1,15 @@
 #ifndef NWO_LOADER_H
 #define NWO_LOADER_H
 
+#define NWO_MAX_SHELL_EXPORTS 16
+#define NWO_SHELL_NAME_MAX     32
+
+typedef struct
+{
+    char name[NWO_SHELL_NAME_MAX];
+    char func[NWO_SHELL_NAME_MAX];
+} NwoShellExport;
+
 typedef struct
 {
     unsigned char version;
@@ -15,6 +24,8 @@ typedef struct
 
     unsigned int total_size;
 
+    NwoShellExport exports[NWO_MAX_SHELL_EXPORTS];
+    int export_count;
 } NwoProgram;
 
 int nwo_load(const char* filename, NwoProgram* program);

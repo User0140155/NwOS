@@ -1,0 +1,6 @@
+#include <nwc.h>
+
+1A main() {
+    nw::out << "Hello from the local NwOS package!\n" << nw::endl;
+    return 0;
+}

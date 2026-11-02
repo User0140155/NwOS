@@ -1518,8 +1518,11 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
     Codegen cg;
     FILE* f;
     FILE* code_tmp;
+    char shell_exports[1024];
+    int shell_export_count = 0;
 
     (void)flags;
+    shell_exports[0] = '\0';
 
     if (ast == NULL || path == NULL)
     {

@@ -1,0 +1,228 @@
+import os
+import re
+import sys
+
+LOCAL_DIR = "local"
+OUTPUT_FILE = "sys/kernel/packages_data.h"
+MAX_SOURCE_SIZE = 16384
+NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def fail(message):
+    print(f"Package repository error: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read_config(path):
+    values = {}
+
+    if not os.path.isfile(path):
+        return values
+
+    with open(path, "r", encoding="utf-8") as config:
+        for line_number, raw_line in enumerate(config, 1):
+            line = raw_line.strip()
+
+            if not line or line.startswith("#"):
+                continue
+
+            if "=" not in line:
+                fail(f"{path}:{line_number}: expected KEY=VALUE")
+
+            key, value = line.split("=", 1)
+            key = key.strip().upper()
+            value = value.strip().strip('"').strip("'")
+
+            if not key:
+                fail(f"{path}:{line_number}: empty key")
+
+            values[key] = value
+
+    return values
+
+
+def find_source(package_dir, name, config):
+    configured = config.get("SOURCE", "")
+
+    if configured:
+        source = os.path.join(package_dir, configured)
+        if not os.path.isfile(source):
+            fail(f"{package_dir}: SOURCE file not found: {configured}")
+        return source
+
+    candidates = [
+        os.path.join(package_dir, f"{name}.nw"),
+        os.path.join(package_dir, "main.nw"),
+        os.path.join(package_dir, "package.nw"),
+    ]
+
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    sources = sorted(
+        os.path.join(package_dir, entry)
+        for entry in os.listdir(package_dir)
+        if entry.lower().endswith(".nw")
+        and os.path.isfile(os.path.join(package_dir, entry))
+    )
+
+    if len(sources) == 1:
+        return sources[0]
+
+    if not sources:
+        fail(f"{package_dir}: no .nw source found")
+
+    fail(f"{package_dir}: multiple .nw files found; set SOURCE= in package.conf")
+
+
+def package_from_dir(path):
+    dirname = os.path.basename(os.path.normpath(path))
+    config = read_config(os.path.join(path, "package.conf"))
+
+    name = config.get("NAME", dirname)
+    version = config.get("VERSION", "1.0")
+    description = config.get("DESCRIPTION", config.get("DESC", "Local NwC package"))
+    command = config.get("COMMAND", name)
+    source = find_source(path, name, config)
+
+    return {
+        "name": name,
+        "version": version,
+        "description": description,
+        "command": command,
+        "source": source,
+    }
+
+
+def package_from_file(path):
+    filename = os.path.basename(path)
+    name = os.path.splitext(filename)[0]
+    config_path = os.path.join(os.path.dirname(path), f"{name}.conf")
+    config = read_config(config_path)
+
+    return {
+        "name": config.get("NAME", name),
+        "version": config.get("VERSION", "1.0"),
+        "description": config.get("DESCRIPTION", config.get("DESC", "Local NwC package")),
+        "command": config.get("COMMAND", config.get("NAME", name)),
+        "source": path,
+    }
+
+
+def collect_packages():
+    if not os.path.isdir(LOCAL_DIR):
+        return []
+
+    packages = []
+
+    for entry in sorted(os.listdir(LOCAL_DIR)):
+        path = os.path.join(LOCAL_DIR, entry)
+
+        if os.path.isdir(path):
+            if entry.startswith("."):
+                continue
+            packages.append(package_from_dir(path))
+        elif os.path.isfile(path) and entry.lower().endswith(".nw"):
+            packages.append(package_from_file(path))
+
+    packages.sort(key=lambda package: package["name"].lower())
+
+    seen = set()
+
+    for package in packages:
+        name = package["name"]
+
+        if not NAME_PATTERN.match(name):
+            fail(
+                f"invalid package name '{name}': use letters, digits, '-' or '_' only"
+            )
+
+        if len(name) > 31:
+            fail(f"package name too long (max 31): {name}")
+
+        if name in seen:
+            fail(f"duplicate package name: {name}")
+
+        seen.add(name)
+
+    return packages
+
+
+def c_string(value):
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def main():
+    packages = collect_packages()
+    entries = []
+
+    for package in packages:
+        source_path = package["source"]
+
+        with open(source_path, "rb") as source_file:
+            source = source_file.read()
+
+        if len(source) > MAX_SOURCE_SIZE:
+            fail(
+                f"{source_path}: source is {len(source)} bytes; "
+                f"NwC limit is {MAX_SOURCE_SIZE} bytes"
+            )
+
+        if not source:
+            fail(f"{source_path}: source file is empty")
+
+        package["data"] = source
+        entries.append(package)
+
+    output_dir = os.path.dirname(OUTPUT_FILE)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as out:
+        out.write("/* AUTO-GENERATED BY tools/gen_packages.py. DO NOT EDIT. */\n")
+        out.write("#ifndef PACKAGES_DATA_H\n#define PACKAGES_DATA_H\n\n")
+        out.write("typedef struct {\n")
+        out.write("    const char* name;\n")
+        out.write("    const char* version;\n")
+        out.write("    const char* description;\n")
+        out.write("    const char* command;\n")
+        out.write("    const char* source;\n")
+        out.write("    unsigned int source_size;\n")
+        out.write("} nw_package_t;\n\n")
+
+        for index, package in enumerate(entries):
+            hex_array = ", ".join(f"0x{byte:02X}" for byte in package["data"])
+            out.write(
+                f"static const unsigned char nw_package_source_{index}[] = "
+                f"{{ {hex_array} }};\n"
+            )
+
+        out.write("\nstatic const nw_package_t nw_packages[] = {\n")
+
+        for index, package in enumerate(entries):
+            out.write(
+                "    { "
+                f"{c_string(package['name'])}, "
+                f"{c_string(package['version'])}, "
+                f"{c_string(package['description'])}, "
+                f"{c_string(package['command'])}, "
+                f"(const char*)nw_package_source_{index}, "
+                f"{len(package['data'])} "
+                "},\n"
+            )
+
+        if not entries:
+            out.write("    { 0, 0, 0, 0, 0, 0 },\n")
+
+        out.write("};\n\n")
+        out.write(f"#define NW_PACKAGE_COUNT {len(entries)}\n\n")
+        out.write("#endif\n")
+
+    names = ", ".join(package["name"] for package in entries)
+    print(f"Generated {OUTPUT_FILE} with {len(entries)} package(s): {names}")
+
+
+if __name__ == "__main__":
+    main()

@@ -18,6 +18,11 @@ void ata_read_sector_d(
 #define NWO_MAGIC_2          'O'
 #define NWO_MAGIC_3          'B'
 
+#define NWO_SHELL_MAGIC_0    'N'
+#define NWO_SHELL_MAGIC_1    'W'
+#define NWO_SHELL_MAGIC_2    'S'
+#define NWO_SHELL_MAGIC_3    'C'
+
 #define NWO_VERSION_1        1
 #define NWO_VERSION_2        2
 
@@ -108,6 +113,7 @@ int nwo_load(
     program->code       = 0;
     program->data       = 0;
     program->total_size = 0;
+    program->export_count = 0;
 
     index = fs_find(filename);
 
@@ -165,6 +171,50 @@ int nwo_load(
     program->entry      = entry;
     program->total_size = file_size;
 
+    if (file_size + 7 < NWO_MAX_FILE_SIZE &&
+        nwo_file_buffer[file_size] == NWO_SHELL_MAGIC_0 &&
+        nwo_file_buffer[file_size + 1] == NWO_SHELL_MAGIC_1 &&
+        nwo_file_buffer[file_size + 2] == NWO_SHELL_MAGIC_2 &&
+        nwo_file_buffer[file_size + 3] == NWO_SHELL_MAGIC_3)
+    {
+        unsigned int off = file_size + 4;
+        unsigned int count = (unsigned int)nwo_file_buffer[off++];
+        program->export_count = 0;
+
+        for (unsigned int i = 0;
+             i < count && i < NWO_MAX_SHELL_EXPORTS && off < file_size + 1024;
+             i++)
+        {
+            unsigned int nlen = (unsigned int)nwo_file_buffer[off++];
+            unsigned int flen = (unsigned int)nwo_file_buffer[off++];
+
+            if (off + nlen + flen > NWO_MAX_FILE_SIZE)
+                break;
+
+            for (unsigned int j = 0;
+                 j < nlen && j < NWO_SHELL_NAME_MAX - 1;
+                 j++)
+                program->exports[i].name[j] =
+                    (char)nwo_file_buffer[off + j];
+            program->exports[i].name[nlen < NWO_SHELL_NAME_MAX - 1
+                                          ? nlen
+                                          : NWO_SHELL_NAME_MAX - 1] = '\0';
+            off += nlen;
+
+            for (unsigned int j = 0;
+                 j < flen && j < NWO_SHELL_NAME_MAX - 1;
+                 j++)
+                program->exports[i].func[j] =
+                    (char)nwo_file_buffer[off + j];
+            program->exports[i].func[flen < NWO_SHELL_NAME_MAX - 1
+                                         ? flen
+                                         : NWO_SHELL_NAME_MAX - 1] = '\0';
+            off += flen;
+
+            program->export_count++;
+        }
+    }
+
     return 1;
 }
 
@@ -182,4 +232,5 @@ void nwo_unload(
     program->code       = 0;
     program->data       = 0;
     program->total_size = 0;
+    program->export_count = 0;
 }
