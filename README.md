@@ -10,8 +10,7 @@
 
 <img width="718" height="402" alt="sys" src="https://github.com/user-attachments/assets/c5d27037-071e-4448-bf87-04b05b9481ad" />
 
-A small x86 operating system written in C and NASM.
-(Unsupports real hardware, use qemu)
+A small x86_64 operating system written in C and NASM
 
 ## Features
 
@@ -66,6 +65,10 @@ learn NwC (tutorial file: NWCTutorial)
 - 9.Tic Tac Toe
 
 ## Build and run
+
+For real hardware check 'REALPC_READ.txt'
+
+For qemu:
 
 download iso from releases,
 or use this:
