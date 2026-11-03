@@ -1,7 +1,7 @@
 ENTRY(_start)
 SECTIONS
 {
-    . = 1M;
+    . = 16M;
 
     .multiboot_header : ALIGN(8)
     {

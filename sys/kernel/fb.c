@@ -139,7 +139,10 @@ static uint32_t vga_to_rgb(uint8_t color) {
     return pal[color & 0x0F];
 }
 
+static int fb_initialized = 0;
+
 void fb_init(void) {
+    if (fb_initialized) return;
     if (!multiboot_info_ptr) return;
     uint8_t* ptr = (uint8_t*)(uintptr_t)multiboot_info_ptr;
     uint32_t total_size = *(uint32_t*)ptr;
@@ -162,6 +165,9 @@ void fb_init(void) {
         }
         tag += (size + 7) & ~7;
     }
+
+    if (fb_addr && fb_width && fb_height)
+        fb_initialized = 1;
 }
 
 static void fb_outw(unsigned short port, unsigned short value)
@@ -194,6 +200,9 @@ int fb_set_mode(uint32_t width, uint32_t height)
 {
     if (!fb_addr || width == 0 || height == 0)
         return 0;
+
+    if (width == fb_width && height == fb_height && fb_bpp == 32)
+        return 1;
 
     unsigned short id = fb_dispi_read(0x00);
 
@@ -289,6 +298,62 @@ void fb_draw_char_transparent(int x, int y, char c, uint8_t color) {
 
             uint32_t* pixel = (uint32_t*)((uint8_t*)fb_addr + py * fb_pitch + px * 4);
             *pixel = fg_rgb;
+        }
+    }
+}
+
+static void fb_fill_rect(int x0, int y0, int x1, int y1, uint32_t rgb) {
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > (int)fb_width) x1 = (int)fb_width;
+    if (y1 > (int)fb_height) y1 = (int)fb_height;
+
+    for (int y = y0; y < y1; y++) {
+        uint32_t* row = (uint32_t*)((uint8_t*)fb_addr + y * fb_pitch);
+        for (int x = x0; x < x1; x++)
+            row[x] = rgb;
+    }
+}
+
+void fb_draw_char_box(int x0, int y0, int x1, int y1, char c, uint8_t color) {
+    if (!fb_addr || x1 <= x0 || y1 <= y0) return;
+
+    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
+    uint32_t bg_rgb = vga_to_rgb((color >> 4) & 0x0F);
+
+    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
+    int w = x1 - x0;
+    int h = y1 - y0;
+
+    for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+            int ax0 = x0 + col * w / 8;
+            int ax1 = x0 + (col + 1) * w / 8;
+            int ay0 = y0 + row * h / 8;
+            int ay1 = y0 + (row + 1) * h / 8;
+            uint32_t rgb = ((glyph[row] >> col) & 1) ? fg_rgb : bg_rgb;
+            fb_fill_rect(ax0, ay0, ax1, ay1, rgb);
+        }
+    }
+}
+
+void fb_draw_char_box_transparent(int x0, int y0, int x1, int y1, char c, uint8_t color) {
+    if (!fb_addr || x1 <= x0 || y1 <= y0) return;
+
+    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
+
+    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
+    int w = x1 - x0;
+    int h = y1 - y0;
+
+    for (int row = 0; row < 8; row++) {
+        for (int col = 0; col < 8; col++) {
+            if (!((glyph[row] >> col) & 1)) continue;
+            int ax0 = x0 + col * w / 8;
+            int ax1 = x0 + (col + 1) * w / 8;
+            int ay0 = y0 + row * h / 8;
+            int ay1 = y0 + (row + 1) * h / 8;
+            fb_fill_rect(ax0, ay0, ax1, ay1, fg_rgb);
         }
     }
 }

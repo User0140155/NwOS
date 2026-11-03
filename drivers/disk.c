@@ -1,4 +1,5 @@
 #include "disk.h"
+#include "ahci.h"
 #include "../include/kernelpanic.h"
 
 #define ATA_TIMEOUT 100000
@@ -109,8 +110,10 @@ static void probe(int ch, int master, char letter) {
 
     ata_drive_t* d = &drives[drive_count];
     d->exists  = 1;
+    d->type    = DISK_TYPE_ATA_PIO;
     d->channel = ch;
     d->master  = master;
+    d->ahci_port = -1;
     d->letter  = letter;
     d->sectors = ((unsigned int)id[61] << 16) | id[60];
 
@@ -129,6 +132,38 @@ void ata_init(void) {
     for (int i = 0; i < MAX_DRIVES; i++) drives[i].exists = 0;
 
     char letters[4] = { 'C', 'D', 'E', 'F' };
+
+    int ahci_count = ahci_init();
+
+    if (ahci_count > 0)
+    {
+        for (int i = 0; i < ahci_count && drive_count < MAX_DRIVES; i++)
+        {
+            ahci_drive_t* a = ahci_get_drive(i);
+
+            if (!a || !a->exists)
+                continue;
+
+            ata_drive_t* d = &drives[drive_count];
+            d->exists    = 1;
+            d->type      = DISK_TYPE_AHCI;
+            d->channel   = -1;
+            d->master    = 0;
+            d->ahci_port = i;
+            d->sectors   = a->sectors;
+            d->letter    = letters[drive_count];
+
+            for (int j = 0; j < 40 && a->model[j]; j++)
+                d->model[j] = a->model[j];
+            d->model[40] = '\0';
+
+            drive_count++;
+        }
+
+        if (drive_count > 0)
+            return;
+    }
+
     probe(0, 1, letters[0]);    /* primary master    */
     probe(0, 0, letters[1]);    /* primary slave     */
     probe(1, 1, letters[2]);    /* secondary master  */
@@ -145,6 +180,10 @@ ata_drive_t* ata_get_drive(int index) {
 int ata_read_sector_d(int idx, unsigned int lba, unsigned char* buf) {
     if (idx < 0 || idx >= drive_count) return -1;
     ata_drive_t* d = &drives[idx];
+
+    if (d->type == DISK_TYPE_AHCI)
+        return ahci_read_sector(d->ahci_port, lba, buf);
+
     unsigned short base = base_port(d->channel);
 
     if (ata_wait(d->channel, ATA_SR_BSY, 0) != 0) return -1;
@@ -171,6 +210,10 @@ int ata_read_sector_d(int idx, unsigned int lba, unsigned char* buf) {
 int ata_write_sector_d(int idx, unsigned int lba, const unsigned char* buf) {
     if (idx < 0 || idx >= drive_count) return -1;
     ata_drive_t* d = &drives[idx];
+
+    if (d->type == DISK_TYPE_AHCI)
+        return ahci_write_sector(d->ahci_port, lba, buf);
+
     unsigned short base = base_port(d->channel);
 
     if (ata_wait(d->channel, ATA_SR_BSY, 0) != 0) return -1;

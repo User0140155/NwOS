@@ -3,10 +3,15 @@
 
 #define MAX_DRIVES 4
 
+#define DISK_TYPE_ATA_PIO 0
+#define DISK_TYPE_AHCI    1
+
 typedef struct {
     int exists;
+    int type;
     int channel;
     int master;
+    int ahci_port;
     unsigned int sectors;
     char model[41];
     char letter;

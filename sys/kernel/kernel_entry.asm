@@ -10,8 +10,8 @@ header_start:
     dw 5
     dw 0
     dd 24
-    dd 640
-    dd 400
+    dd 1280
+    dd 720
     dd 32
 
     align 8
@@ -31,13 +31,13 @@ PDE_2M_RW       equ 0x83
 PDE_UNCACHED    equ 0x10
 MMIO_FIRST_PDE  equ 1536
 
-section .text.start progbits alloc exec nowrite align=16
-
-bits 32
-
 section .data
 global multiboot_info_ptr
 multiboot_info_ptr: dd 0
+
+section .text.start progbits alloc exec nowrite align=16
+
+bits 32
 
 _start:
     mov [multiboot_info_ptr], ebx

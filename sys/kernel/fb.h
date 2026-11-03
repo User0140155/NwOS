@@ -7,6 +7,8 @@ void fb_init(void);
 int fb_set_mode(uint32_t width, uint32_t height);
 void fb_draw_char(int x, int y, char c, uint8_t color);
 void fb_draw_char_transparent(int x, int y, char c, uint8_t color);
+void fb_draw_char_box(int x0, int y0, int x1, int y1, char c, uint8_t color);
+void fb_draw_char_box_transparent(int x0, int y0, int x1, int y1, char c, uint8_t color);
 int  fb_is_available(void);
 uint32_t fb_get_width(void);
 uint32_t fb_get_height(void);

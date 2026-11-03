@@ -107,6 +107,9 @@ void mouse_init(void)
     mouse_button_state = 0;
     mouse_set_bounds((int)width, (int)height);
 
+    while (ps2_inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT)
+        (void)ps2_inb(PS2_DATA_PORT);
+
     ps2_wait_input();
     ps2_outb(PS2_COMMAND_PORT, PS2_CMD_ENABLE_AUX);
 
@@ -119,11 +122,16 @@ void mouse_init(void)
     config = ps2_inb(PS2_DATA_PORT);
     config &= (unsigned char)~0x02;
     config &= (unsigned char)~PS2_STATUS_AUX;
+    config &= (unsigned char)~0x10;
+    config |= 0x40;
 
     ps2_wait_input();
     ps2_outb(PS2_COMMAND_PORT, PS2_CMD_WRITE_CONFIG);
     ps2_wait_input();
     ps2_outb(PS2_DATA_PORT, config);
+
+    ps2_wait_input();
+    ps2_outb(PS2_COMMAND_PORT, 0xAE);
 
     mouse_write(PS2_MOUSE_DEFAULTS);
     mouse_read_ack();

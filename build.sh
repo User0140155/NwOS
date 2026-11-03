@@ -20,8 +20,10 @@ LIMINE_DIR="$ROOT/tools/limine"
 
 TARGET="x86_64-unknown-none-elf"
 
-BOOT_WIDTH=680
+BOOT_WIDTH=640
 BOOT_HEIGHT=480
+GUEST_WIDTH=1280
+GUEST_HEIGHT=720
 GUI_WIDTH=1280
 GUI_HEIGHT=720
 
@@ -61,6 +63,7 @@ SOURCES=(
     drivers/keyboard.c
     drivers/mouse.c
     drivers/disk.c
+    drivers/ahci.c
     sys/kernel/network/e1000.c
     sys/kernel/network/pci.c
     sys/kernel/network/timer.c
@@ -274,11 +277,8 @@ timeout: 0
 /NwOS
     protocol: multiboot2
     path: boot():/boot/kernel.elf
-    resolution: 640x400x32
+    resolution: ${GUEST_WIDTH}x${GUEST_HEIGHT}x32
 EOF
-# 640 = BOOT_WIDTH
-# 400 = BOOT_HEIGHT
-# resolution: ${BOOT_WIDTH}x${BOOT_HEIGHT}x32
 
 step "Building bootable ISO..."
 

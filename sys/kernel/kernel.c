@@ -163,7 +163,7 @@ void reboot(void);
 typedef unsigned short uint16_t;
 
 #define WIDTH 80
-#define HEIGHT 50
+#define HEIGHT 60
 
 #define MAX_FILES 64
 #define MAX_FILENAME 32
@@ -310,6 +310,30 @@ char* strcpy(char* dest, const char* src) {
     *d = '\0';
     return dest;
 }
+static void term_draw_cell(int cx, int cy, char c, unsigned char color)
+{
+    int w = (int)fb_get_width();
+    int h = (int)fb_get_height();
+
+    if (w <= 0 || h <= 0) return;
+
+    fb_draw_char_box(cx * w / WIDTH, cy * h / HEIGHT,
+                     (cx + 1) * w / WIDTH, (cy + 1) * h / HEIGHT,
+                     c, color);
+}
+
+static void term_draw_cell_transparent(int cx, int cy, char c, unsigned char color)
+{
+    int w = (int)fb_get_width();
+    int h = (int)fb_get_height();
+
+    if (w <= 0 || h <= 0) return;
+
+    fb_draw_char_box_transparent(cx * w / WIDTH, cy * h / HEIGHT,
+                                 (cx + 1) * w / WIDTH, (cy + 1) * h / HEIGHT,
+                                 c, color);
+}
+
 void render_view(void)
 {
     if (!fb_is_available()) return;
@@ -332,7 +356,7 @@ void render_view(void)
     {
         for (int row = 0; row < pad; row++)
             for (int x = 0; x < WIDTH; x++)
-                fb_draw_char(x, row, ' ', COLOR_LIGHT_GRAY);
+                term_draw_cell(x, row, ' ', COLOR_LIGHT_GRAY);
     }
 
     for (int i = 0; i < shown; i++)
@@ -342,18 +366,18 @@ void render_view(void)
         {
             uint16_t cell = line_buffer[idx][x];
             if (fb_graphics_mode)
-                fb_draw_char_transparent(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
+                term_draw_cell_transparent(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
             else
-                fb_draw_char(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
+                term_draw_cell(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
         }
     }
     
     int cy = pad + shown - 1;
     if (cy >= 0 && cy < HEIGHT) {
         if (fb_graphics_mode)
-            fb_draw_char_transparent(cursor_col, cy, '_', COLOR_WHITE);
+            term_draw_cell_transparent(cursor_col, cy, '_', COLOR_WHITE);
         else
-            fb_draw_char(cursor_col, cy, '_', COLOR_WHITE);
+            term_draw_cell(cursor_col, cy, '_', COLOR_WHITE);
     }
 }
 static void cmd_mem(void)
@@ -600,8 +624,8 @@ void putchar_os(char c)
             
             // Стираем символ на экране (быстро, без render_view)
             if (fb_is_available()) {
-                fb_draw_char(cursor_col, HEIGHT - 1, ' ', text_color);
-                fb_draw_char(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
+                term_draw_cell(cursor_col, HEIGHT - 1, ' ', text_color);
+                term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
             }
         }
         return;
@@ -620,8 +644,8 @@ void putchar_os(char c)
 
     // Рисуем только новую букву (мгновенно)
     if (fb_is_available()) {
-        fb_draw_char(old_col, HEIGHT - 1, c, text_color);
-        fb_draw_char(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
+        term_draw_cell(old_col, HEIGHT - 1, c, text_color);
+        term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
     }
 }
 void print(const char* text)
@@ -2794,6 +2818,8 @@ static int fs_drive_has_fs(int idx)
 
 static const char* disk_position_name(ata_drive_t* d)
 {
+    if (d->type == DISK_TYPE_AHCI) return "SATA AHCI";
+
     if (d->channel == 0 && d->master) return "primary master";
     if (d->channel == 0)               return "primary slave";
     if (d->master)                     return "secondary master";
@@ -8097,7 +8123,8 @@ static void boot_system(void)
 
 void kernel_main(void) {
     fb_init();
-    
+    fb_set_mode(NWOS_BOOT_WIDTH, NWOS_BOOT_HEIGHT);
+
     if (!fb_is_available()) {
         volatile uint16_t* vga = (volatile uint16_t*)0xB8000;
         
