@@ -1,0 +1,26 @@
+To run this OS on a real PC, you need a flash drive and an
+ISO file from the GitHub releases
+
+UEFI:
+
+You need to put ISO to the flash drive 
+(Rufus or ventoy), then put it into PC,
+And run OS (check also safe boot if needed),
+Warning: Dont use format disk or raw NwFS
+It gonna clear all data on disk, use live boot,
+Also: It not tested, it tested only on virtual box
+with UEFI support
+
+LEGACY BIOS:
+
+Not tested (maybe not work) do all like with UEFI
+
+Debug:
+
+You can sent screenshots of OS on real PC,
+contant with developer in tiktok: @csplayer421
+https://www.tiktok.com/@csplayer421
+
+So if you get something not working, contact
+developer, sent him reason, screenshots, and
+what happend.

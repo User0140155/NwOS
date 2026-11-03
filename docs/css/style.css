@@ -1,0 +1,816 @@
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    margin: 0;
+    color: aliceblue;
+    font-family: 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif;
+    font-size: medium;
+    text-align: center;
+    background-color: rgb(5, 5, 5);
+}
+
+::selection {
+    color: rgb(17, 17, 17);
+    background-color: aqua;
+}
+
+::-webkit-scrollbar {
+    width: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background-color: rgb(10, 10, 10);
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: rgb(45, 45, 45);
+    border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: rgb(70, 70, 70);
+}
+
+:focus-visible {
+    outline: 2px solid aqua;
+    outline-offset: 2px;
+}
+
+.site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background-color: transparent;
+    padding: 12px 22px;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+}
+
+.site-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: aliceblue;
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+
+.site-brand img {
+    border-radius: 6px;
+    display: block;
+}
+
+.site-nav {
+    display: flex;
+    gap: 22px;
+}
+
+.site-nav a {
+    color: rgb(200, 200, 200);
+    text-decoration: none;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+}
+
+.site-nav a:hover {
+    color: aqua;
+}
+
+.site-nav a.active {
+    color: aqua;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.header-github {
+    display: inline-flex;
+    padding: 6px;
+    border-radius: 8px;
+}
+
+.header-github:hover {
+    background-color: rgb(25, 25, 25);
+}
+
+.btn-install {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: rgb(17, 17, 17);
+    background-color: aqua;
+    padding: 9px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: background-color 0.15s ease;
+}
+
+.btn-install:hover {
+    background-color: aquamarine;
+}
+
+.pixelhero {
+    position: relative;
+    overflow: hidden;
+}
+
+.pixel-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+.hero-content {
+    position: relative;
+    z-index: 1;
+    padding: 56px 16px 130px;
+}
+
+.pixel-fade {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 120px;
+    background: linear-gradient(to bottom, rgba(5, 5, 5, 0), rgb(5, 5, 5));
+    pointer-events: none;
+}
+
+.hero-logo {
+    display: block;
+    margin: 0 auto 22px;
+    border-radius: 20px;
+}
+
+.hero-subtitle {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    margin: 0 0 26px;
+}
+
+.hero-actions {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.btn-hero {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: rgb(17, 17, 17);
+    background-color: aqua;
+    padding: 10px 26px;
+    border-radius: 8px;
+    text-decoration: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-hero:hover {
+    background-color: aquamarine;
+}
+
+.btn-hero.ghost {
+    color: aqua;
+    background-color: rgb(25, 25, 25);
+    border: 1px solid rgb(55, 55, 55);
+}
+
+.btn-hero.ghost:hover {
+    color: aqua;
+    background-color: rgb(35, 35, 35);
+    border-color: aqua;
+}
+
+.section {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 34px 20px;
+}
+
+.section-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 30px;
+    margin: 0 0 10px;
+}
+
+.section-lead {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    color: rgb(190, 190, 190);
+    margin: 0 0 26px;
+}
+
+.feature-grid {
+    display: flex;
+    gap: 16px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.feature-card {
+    flex: 1 1 240px;
+    max-width: 320px;
+    background-color: rgb(20, 20, 20);
+    border: 1px solid rgb(45, 45, 45);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+}
+
+.feature-card h3 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 17px;
+    color: aquamarine;
+    margin: 0 0 8px;
+}
+
+.feature-card p {
+    font-weight: normal;
+    color: rgb(180, 180, 180);
+    font-size: 15px;
+    margin: 0;
+}
+
+.githublink {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+    color: rgb(17, 17, 17);
+    background-color: aqua;
+    padding: 10px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    margin: 0;
+    transition: background-color 0.15s ease;
+}
+
+.githublink:hover {
+    background-color: aquamarine;
+}
+
+.githubicon {
+    width: 28px;
+    height: 28px;
+    filter: brightness(0);
+}
+
+.madeby {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: rgb(140, 140, 140);
+    margin: 16px 0 0;
+}
+
+.versionss {
+    display: flex;
+    flex-direction: column;
+    margin: 0 auto;
+    max-width: 600px;
+    background-color: rgb(25, 25, 25);
+    border-radius: 16px;
+    padding: 8px 10px;
+}
+
+.version-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    color: aliceblue;
+    padding: 10px 14px;
+    margin-bottom: 2px;
+    border-radius: 10px;
+    text-decoration: none;
+    cursor: pointer;
+    max-height: 64px;
+    opacity: 1;
+    overflow: hidden;
+    transition: background-color 0.15s ease, color 0.15s ease,
+                max-height 0.3s ease, opacity 0.25s ease, padding 0.3s ease, margin 0.3s ease;
+}
+
+.version-row:last-child {
+    margin-bottom: 0;
+}
+
+.version-row:hover {
+    background-color: rgb(38, 38, 38);
+    color: aquamarine;
+}
+
+.version-row.extra-collapsed {
+    max-height: 0;
+    opacity: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+    pointer-events: none;
+}
+
+.btn-versions {
+    display: block;
+    margin: 16px auto 0;
+    width: fit-content;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: aqua;
+    background-color: rgb(25, 25, 25);
+    border: 1px solid rgb(55, 55, 55);
+    padding: 9px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-versions:hover {
+    background-color: rgb(35, 35, 35);
+    border-color: aqua;
+}
+
+.releases-link {
+    display: block;
+    width: fit-content;
+    margin: 12px auto 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    color: rgb(170, 170, 170);
+    text-decoration: none;
+}
+
+.releases-link:hover {
+    color: aqua;
+}
+
+.version-num {
+    color: aquamarine;
+    font-size: 15px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.lastv,
+.prev,
+.old {
+    display: inline-block;
+    color: rgb(17, 17, 17);
+    background-color: rgb(255, 0, 0);
+    padding: 4px 0;
+    border-radius: 5px;
+    text-align: center;
+    min-width: 110px;
+    font-size: 13px;
+    font-family: 'JetBrains Mono', monospace;
+}
+
+.lastv {
+    color: rgb(230, 230, 230);
+    background-color: rgb(12, 199, 43);
+}
+
+.prev {
+    background-color: rgb(255, 255, 0);
+}
+
+.old {
+    background-color: rgb(255, 0, 0);
+}
+
+.carousel {
+    position: relative;
+    max-width: 720px;
+    margin: 0 auto;
+}
+
+.car-viewport {
+    margin: 0;
+}
+
+.gallery-slide {
+    display: none;
+    margin: 0;
+    text-align: center;
+}
+
+.gallery-slide.active {
+    display: block;
+}
+
+.gallery-slide img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 460px;
+    object-fit: contain;
+    background-color: rgb(15, 15, 15);
+    border-radius: 12px;
+    border: 1px solid rgb(45, 45, 45);
+    animation: carfade 0.25s ease;
+}
+
+@keyframes carfade {
+    from { opacity: 0.2; }
+    to   { opacity: 1; }
+}
+
+.car-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid rgb(55, 55, 55);
+    background-color: rgb(20, 20, 20);
+    color: aqua;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.car-arrow:hover {
+    background-color: rgb(35, 35, 35);
+    border-color: aqua;
+}
+
+.car-prev { left: -21px; }
+.car-next { right: -21px; }
+
+.car-caption {
+    font-family: 'JetBrains Mono', monospace;
+    margin-top: 16px;
+}
+
+.car-counter {
+    display: inline-block;
+    color: rgb(17, 17, 17);
+    background-color: rgb(12, 199, 43);
+    font-size: 13px;
+    padding: 3px 0;
+    min-width: 64px;
+    border-radius: 5px;
+}
+
+.car-title {
+    color: aquamarine;
+    font-size: 18px;
+    margin: 10px 0 4px;
+}
+
+.car-desc {
+    color: rgb(170, 170, 170);
+    font-size: 14px;
+    margin: 0;
+}
+
+.footer {
+    border-top: 1px solid rgb(30, 30, 30);
+    margin-top: 26px;
+    padding: 26px 0 40px;
+    color: rgb(120, 120, 120);
+    font-size: 14px;
+}
+
+.footer p {
+    margin: 0;
+    font-size: 13px;
+}
+
+.footer-links {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 10px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+}
+
+.footer-links a {
+    color: rgb(200, 200, 200);
+    text-decoration: none;
+}
+
+.footer-links a:hover {
+    color: aqua;
+}
+
+@media (max-width: 700px) {
+    .header-left {
+        gap: 14px;
+    }
+
+    .site-nav {
+        gap: 12px;
+    }
+
+    .site-nav a {
+        font-size: 13px;
+    }
+
+    .hero-logo {
+        height: 160px;
+    }
+
+    .hero-content {
+        padding: 40px 12px 96px;
+    }
+
+    .pixel-fade {
+        height: 90px;
+    }
+
+    .hero-subtitle {
+        font-size: 16px;
+    }
+
+    .section-title {
+        font-size: 24px;
+    }
+
+    .btn-install {
+        padding: 8px 14px;
+        font-size: 13px;
+    }
+
+    .githublink {
+        font-size: 14px;
+        padding: 9px 16px;
+        gap: 8px;
+    }
+
+    .githubicon {
+        width: 22px;
+        height: 22px;
+    }
+
+    .car-arrow {
+        width: 34px;
+        height: 34px;
+        font-size: 15px;
+    }
+
+    .car-prev { left: -8px; }
+    .car-next { right: -8px; }
+}
+
+@media (max-width: 480px) {
+    .site-header {
+        padding: 10px 10px;
+    }
+
+    .site-nav {
+        gap: 10px;
+    }
+
+    .site-brand span {
+        display: none;
+    }
+
+    .site-brand img {
+        width: 24px;
+        height: 24px;
+    }
+
+    .hero-content {
+        padding: 28px 10px 80px;
+    }
+
+    .hero-logo {
+        height: 130px;
+        border-radius: 14px;
+    }
+
+    .hero-subtitle {
+        font-size: 14px;
+        margin-bottom: 20px;
+    }
+
+    .hero-actions {
+        gap: 10px;
+    }
+
+    .btn-hero {
+        font-size: 13px;
+        padding: 9px 18px;
+    }
+
+    .section {
+        padding: 20px 14px;
+    }
+
+    .section-title {
+        font-size: 21px;
+    }
+
+    .feature-card {
+        padding: 16px 12px;
+    }
+
+    .versionss {
+        padding: 6px 6px;
+    }
+
+    .version-row {
+        padding: 9px 10px;
+    }
+
+    .lastv,
+    .prev,
+    .old {
+        min-width: 82px;
+        font-size: 12px;
+        padding: 3px 0;
+    }
+
+    .githublink {
+        font-size: 13px;
+        padding: 8px 14px;
+    }
+
+    .githubicon {
+        width: 20px;
+        height: 20px;
+    }
+
+    .btn-install {
+        font-size: 12px;
+        padding: 8px 14px;
+    }
+
+    .footer-links {
+        font-size: 13px;
+        gap: 8px;
+    }
+}
+
+.nwc-section {
+    border-top: 1px solid rgb(30, 30, 30);
+    padding-top: 48px;
+}
+
+.nwc-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    margin-bottom: 32px;
+    flex-wrap: wrap;
+}
+
+.nwc-logo {
+    border-radius: 14px;
+    flex-shrink: 0;
+}
+
+.nwc-header-text {
+    text-align: left;
+}
+
+.nwc-header-text .section-title {
+    margin-bottom: 6px;
+}
+
+.nwc-header-text .section-lead {
+    margin-bottom: 0;
+}
+
+.nwc-showcase {
+    max-width: 480px;
+    margin: 0 auto 32px;
+}
+
+.nwc-code-block {
+    background-color: rgb(20, 20, 20);
+    border: 1px solid rgb(45, 45, 45);
+    border-radius: 14px;
+    overflow: hidden;
+}
+
+.nwc-code-header {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 12px 16px;
+    background-color: rgb(15, 15, 15);
+    border-bottom: 1px solid rgb(35, 35, 35);
+}
+
+.nwc-code-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background-color: rgb(55, 55, 55);
+}
+
+.nwc-code-dot:first-child {
+    background-color: rgb(255, 95, 87);
+}
+
+.nwc-code-dot:nth-child(2) {
+    background-color: rgb(255, 189, 46);
+}
+
+.nwc-code-dot:nth-child(3) {
+    background-color: rgb(39, 201, 63);
+}
+
+.nwc-code-filename {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: rgb(140, 140, 140);
+    margin-left: 8px;
+}
+
+.nwc-code {
+    margin: 0;
+    padding: 20px 22px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    color: rgb(200, 200, 200);
+    text-align: left;
+    overflow-x: auto;
+}
+
+.nwc-code code {
+    font-family: inherit;
+}
+
+.nwc-kw {
+    color: aqua;
+    font-weight: 700;
+}
+
+.nwc-fn {
+    color: aquamarine;
+}
+
+.nwc-str {
+    color: rgb(160, 230, 160);
+}
+
+.nwc-pp {
+    color: rgb(180, 140, 255);
+}
+
+.nwc-num {
+    color: rgb(255, 180, 100);
+}
+
+@media (max-width: 700px) {
+    .nwc-header {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .nwc-header-text {
+        text-align: center;
+    }
+
+    .nwc-logo {
+        width: 72px;
+        height: 72px;
+    }
+
+    .nwc-code {
+        font-size: 13px;
+        padding: 16px 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .nwc-logo {
+        width: 60px;
+        height: 60px;
+    }
+
+    .nwc-code {
+        font-size: 12px;
+        padding: 14px 12px;
+    }
+}

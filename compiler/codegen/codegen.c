@@ -11,7 +11,7 @@
      version           1 byte
      reserve           3 byte
      code size      4 byte  (LE, uint32)
-     data size    4 byets  (LE, uint32)
+     data size    4 bytes  (LE, uint32)
      point     4 bytes  (LE, uint32)
    o====================================o */
 

@@ -622,7 +622,6 @@ void putchar_os(char c)
             cursor_col--;
             terminal_set_cell(cursor_col, ' ');
             
-            // Стираем символ на экране (быстро, без render_view)
             if (fb_is_available()) {
                 term_draw_cell(cursor_col, HEIGHT - 1, ' ', text_color);
                 term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
@@ -642,7 +641,6 @@ void putchar_os(char c)
         return;
     }
 
-    // Рисуем только новую букву (мгновенно)
     if (fb_is_available()) {
         term_draw_cell(old_col, HEIGHT - 1, c, text_color);
         term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
@@ -3641,11 +3639,6 @@ static unsigned int fs_layout_sectors(void)
 {
     return 1u + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS;
 }
-
-/*
- * Live boot: build the complete NwFS tree inside RAM. No sector of any
- * real disk is written while the system is running in this mode.
- */
 static void fs_live_init(void)
 {
     fs_ram_mode = 1;
@@ -3665,11 +3658,6 @@ static void fs_live_init(void)
     current_dir = 0;
 }
 
-/*
- * Write a minimal MBR with one Linux-type partition. The NwFS area is
- * placed at FS_PART_START_LBA, leaving the first megabyte for a future
- * bootloader/ESP without changing the filesystem itself.
- */
 static int fs_write_mbr_partition(int drive_idx, unsigned int start_lba,
                                   unsigned int total_sectors)
 {
@@ -4029,7 +4017,7 @@ void app_hexview(const char* filename)
     print("OFFSET   00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  | ASCII\n");
     print("-------  -----------------------------------------------  | ----------------\n");
 
-    for (int offset = 0; offset < 512; offset += 16)
+    for (int offset = 0; offset < 700; offset += 16) //512
     {
         print_hex_byte((offset >> 8) & 0xFF);
         print_hex_byte(offset & 0xFF);

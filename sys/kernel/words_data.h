@@ -667,6 +667,11 @@ static const char* const nw_words[] =
     "+",
     "ago",
     "later"
+    "help",
+    "pwd",
+    "cmd",
+    "commanded",
+    "command"
 };
 
 #define NWOS_WORD_COUNT \

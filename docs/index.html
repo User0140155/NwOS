@@ -4,59 +4,174 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NwOS</title>
-    <link rel="stylesheet" href="style.css">
+    <meta name="description" content="NwOS is an 64-bit operating system made from scratch, with its own compiler writen on C + nasm.">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="NwOS">
+    <meta property="og:title" content="NwOS">
+    <meta property="og:description" content="NwOS is an 64-bit operating system made from scratch, with its own compiler writen on C + nasm.">
+    <meta property="og:url" content="https://user0140155.github.io/NwOS/">
+    <meta property="og:image" content="https://user0140155.github.io/NwOS/img/LogoNwOS.png">
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="NwOS">
+    <meta name="twitter:description" content="NwOS is an 64-bit operating system made from scratch, with its own compiler writen on C + nasm.">
+    <meta name="twitter:image" content="https://user0140155.github.io/NwOS/img/LogoNwOS.png">
+    <link rel="icon" type="image/png" href="img/LogoNwOS.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="image1">
-        <img src="LogoNwOS.png" height="256" alt="NwOS image">
-    </div>
-    <div class="Mainsr">
-        <h1>NwOS: About</h1>
-        <div class="Aboutsr">
-            <h2>An 64-bit operating system made from scratch</h2>
-            <h3>Has it own compiler, writen on C + nasm</h3>
+    <header class="site-header">
+        <div class="header-left">
+            <a class="site-brand" href="index.html">
+                <img src="img/LogoNwOS.png" alt="NwOS logo" width="28" height="28">
+                <span>NwOS</span>
+            </a>
+            <nav class="site-nav">
+                <a href="#about">About</a>
+                <a href="#nwc">NwC</a>
+                <a href="gallery.html">Gallery</a>
+                <a href="#versions">Versions</a>
+            </nav>
         </div>
-        <div class="Aboutsr2">
-            <h2>It was hobby project that becomed into Big operating system</h2>
-            <h2>Can compile .nw files and run .nwo files inside on OS</h2>
+        <div class="header-right">
+            <a href="https://github.com/User0140155/NwOS/" class="header-github" aria-label="NwOS on GitHub">
+                <img src="img/github.svg" alt="GitHub icon" width="22" height="22">
+            </a>
+            <a href="#versions" class="btn-install">Install</a>
         </div>
-    </div>
-    <div class="Githubabout">
-        <h1>Github</h1>
-        <h2>It has source code on github</h2>
-        <a href="https://github.com/User0140155/NwOS/" class="githublink">Github (Source code)</a>
-        <h2 class=".githubmade">Made by User0140155</h2>
-    </div>
-    <div class="Archivesv">
-        <h1>Archives of version</h1>
+    </header>
+
+    <section class="pixelhero">
+        <canvas id="pixelCanvas" class="pixel-canvas"></canvas>
+        <div class="pixel-fade"></div>
+        <div class="hero-content">
+            <img class="hero-logo" src="img/LogoNwOS.png" height="220" alt="NwOS image">
+            <p class="hero-subtitle">An 64-bit operating system made from scratch</p>
+            <div class="hero-actions">
+                <a href="https://github.com/User0140155/NwOS/" class="btn-hero">Source code</a>
+                <a href="#versions" class="btn-hero ghost">Versions</a>
+            </div>
+        </div>
+    </section>
+
+    <section id="about" class="section">
+        <h2 class="section-title">NwOS: About</h2>
+        <p class="section-lead">It was hobby project that becomed into Big operating system</p>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <h3>An 64-bit operating system</h3>
+                <p>Made from scratch</p>
+            </div>
+            <div class="feature-card">
+                <h3>Has its own compiler</h3>
+                <p>Writen on C + nasm</p>
+            </div>
+            <div class="feature-card">
+                <h3>Compile .nw files</h3>
+                <p>And run .nwo files inside on OS</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="nwc" class="section nwc-section">
+        <div class="nwc-header">
+            <img src="img/nwc-logo.svg" alt="NwC logo" class="nwc-logo" width="96" height="96">
+            <div class="nwc-header-text">
+                <h2 class="section-title">NwC Language</h2>
+                <p class="section-lead">Our own programming language, built for NwOS</p>
+            </div>
+        </div>
+
+        <div class="nwc-showcase">
+            <div class="nwc-code-block">
+                <div class="nwc-code-header">
+                    <span class="nwc-code-dot"></span>
+                    <span class="nwc-code-dot"></span>
+                    <span class="nwc-code-dot"></span>
+                    <span class="nwc-code-filename">hello.nw</span>
+                </div>
+<pre class="nwc-code"><code><span class="nwc-pp">#include</span> <span class="nwc-pp">&lt;nwc.h&gt;</span>
+<span class="nwc-kw">1A</span> <span class="nwc-fn">main</span>() {
+     nw::<span class="nwc-fn">out</span> &lt;&lt; <span class="nwc-str">"Hello, NwOS!\n"</span>;
+     <span class="nwc-kw">return</span> <span class="nwc-num">0</span>;
+}</code></pre>
+            </div>
+        </div>
+
+        <div class="feature-grid">
+            <div class="feature-card">
+                <h3>.nw source files</h3>
+                <p>Write programs in a clean, C-like syntax designed specifically for NwOS</p>
+            </div>
+            <div class="feature-card">
+                <h3>Compiles to .nwo</h3>
+                <p>The NwC compiler produces native .nwo binaries that run directly on the OS</p>
+            </div>
+            <div class="feature-card">
+                <h3>Built-in compiler</h3>
+                <p>Written in C + nasm — compiles and runs right inside NwOS</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="github" class="section">
+        <h2 class="section-title">Github</h2>
+        <p class="section-lead">It has source code on github</p>
+        <a href="https://github.com/User0140155/NwOS/" class="githublink">
+            <img src="img/github.svg" alt="GitHub icon" width="28" height="28" class="githubicon">
+            Github (Source code)
+        </a>
+        <p class="madeby">Made by User0140155</p>
+    </section>
+
+    <section id="versions" class="section">
+        <h2 class="section-title">Archives of version</h2>
+        <p class="section-lead" id="versionsLead">All releases on GitHub</p>
         <div class="versionss">
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.3/" class="versionss">1.5.3</a> <a class="lastv">Last</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.2/" class="versionss">1.5.2</a> <a class="prev">Previous</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.1/" class="versionss">1.5.1</a> <a class="prev">Previous</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.0/" class="versionss">1.5.0</a> <a class="prev">Previous</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.9/" class="versionss">1.4.9</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.8/" class="versionss">1.4.8</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.7/" class="versionss">1.4.7</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.6/" class="versionss">1.4.6</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.5/" class="versionss">1.4.5</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.4/" class="versionss">1.4.4</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.3/" class="versionss">1.4.3</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.2/" class="versionss">1.4.2</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.1/" class="versionss">1.4.1</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.0/" class="versionss">1.4.0</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.8/" class="versionss">1.3.8</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.7/" class="versionss">1.3.7</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.6/" class="versionss">1.3.6</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.5/" class="versionss">1.3.5</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.4/" class="versionss">1.3.4</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.3/" class="versionss">1.3.3</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.2/" class="versionss">1.3.2</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.1/" class="versionss">1.3.1</a> <a class="old">Old</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3/" class="versionss">1.3.0</a> <a class="old">First versions</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.2/" class="versionss">1.2.0</a> <a class="old">First versions</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/v1.1/" class="versionss">1.1.0</a> <a class="old">First versions</a> <p></p>
-            <a href="https://github.com/User014015/NwOS/releases/tag/1.0/" class="versionss">1.0</a> <a class="old">First version</a> <p></p>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.3/" class="version-row"><span class="version-num">1.5.3</span><span class="lastv">Last</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.2/" class="version-row"><span class="version-num">1.5.2</span><span class="prev">Previous</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.1/" class="version-row"><span class="version-num">1.5.1</span><span class="prev">Previous</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.5.0/" class="version-row"><span class="version-num">1.5.0</span><span class="prev">Previous</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.9/" class="version-row"><span class="version-num">1.4.9</span><span class="old">Old</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.8/" class="version-row extra"><span class="version-num">1.4.8</span><span class="old">Old</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.7/" class="version-row extra"><span class="version-num">1.4.7</span><span class="old">Old</span></a>
+            <a href="https://github.com/User0140155/NwOS/releases/tag/v1.4.6/" class="version-row extra"><span class="version-num">1.4.6</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.5/" class="version-row extra"><span class="version-num">1.4.5</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.4/" class="version-row extra"><span class="version-num">1.4.4</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.3/" class="version-row extra"><span class="version-num">1.4.3</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.2/" class="version-row extra"><span class="version-num">1.4.2</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.1/" class="version-row extra"><span class="version-num">1.4.1</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.4.0/" class="version-row extra"><span class="version-num">1.4.0</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.8/" class="version-row extra"><span class="version-num">1.3.8</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.7/" class="version-row extra"><span class="version-num">1.3.7</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.6/" class="version-row extra"><span class="version-num">1.3.6</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.5/" class="version-row extra"><span class="version-num">1.3.5</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.4/" class="version-row extra"><span class="version-num">1.3.4</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.3/" class="version-row extra"><span class="version-num">1.3.3</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.2/" class="version-row extra"><span class="version-num">1.3.2</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3.1/" class="version-row extra"><span class="version-num">1.3.1</span><span class="old">Old</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.3/" class="version-row extra"><span class="version-num">1.3.0</span><span class="old">First versions</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.2/" class="version-row extra"><span class="version-num">1.2.0</span><span class="old">First versions</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/v1.1/" class="version-row extra"><span class="version-num">1.1.0</span><span class="old">First versions</span></a>
+            <a href="https://github.com/User014015/NwOS/releases/tag/1.0/" class="version-row extra"><span class="version-num">1.0</span><span class="old">First version</span></a>
         </div>
-    </div>
+        <button id="versionsToggle" class="btn-versions" type="button">Show all versions</button>
+        <a href="https://github.com/User0140155/NwOS/releases" class="releases-link">All releases page &#8594;</a>
+    </section>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="https://github.com/User0140155/NwOS/">GitHub</a>
+            <span>&middot;</span>
+            <a href="gallery.html">Gallery</a>
+            <span>&middot;</span>
+            <a href="#versions">Versions</a>
+        </div>
+        <p>NwOS &middot; Made by User0140155</p>
+    </footer>
+    <script src="js/script.js"></script>
+    <script src="js/versions.js"></script>
 </body>
 </html>

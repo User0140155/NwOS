@@ -1,0 +1,6 @@
+#include <nwc.h>
+
+1A main() {
+    nw::draw!CUBE << auto::func::connect << COLOR=BLUE;
+    return 0;
+}
