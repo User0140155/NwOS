@@ -887,13 +887,13 @@ void net_lspci(void)
     {
         print_hex(list[i].bus, 2);
         putchar_os(':');
-        print_hex(list[i].dev, 2);
+        print_hex(list[i].slot, 2);
         putchar_os('.');
         print_hex(list[i].func, 1);
         print("  ");
-        print_hex(list[i].vendor, 4);
+        print_hex(list[i].vendor_id, 4);
         putchar_os(':');
-        print_hex(list[i].device, 4);
+        print_hex(list[i].device_id, 4);
         print("  ");
 
         switch (list[i].class_code)

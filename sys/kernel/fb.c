@@ -9,6 +9,10 @@ static uint32_t fb_width = 0;
 static uint32_t fb_height = 0;
 static uint32_t fb_pitch = 0;
 static int fb_bpp = 0;
+static uint8_t fb_type = 0;
+static uint8_t fb_red_pos = 16, fb_red_size = 8;
+static uint8_t fb_green_pos = 8, fb_green_size = 8;
+static uint8_t fb_blue_pos = 0, fb_blue_size = 8;
 
 #define FB_BACKBUFFER_WIDTH  1280
 #define FB_BACKBUFFER_HEIGHT 720
@@ -141,111 +145,129 @@ static uint32_t vga_to_rgb(uint8_t color) {
 
 static int fb_initialized = 0;
 
-void fb_init(void) {
-    if (fb_initialized) return;
-    if (!multiboot_info_ptr) return;
+/* Convert OS colors in 0x00RRGGBB form to the RGB layout supplied by GRUB/GOP. */
+static uint32_t fb_pack_rgb(uint32_t rgb)
+{
+    /* NWOS_FB_PHYSICAL_FAST_V1: avoid three divides for the common 8:8:8 GOP. */
+    uint32_t r = (rgb >> 16) & 0xFFu;
+    uint32_t g = (rgb >> 8) & 0xFFu;
+    uint32_t b = rgb & 0xFFu;
+
+    if (fb_red_size == 8 && fb_green_size == 8 && fb_blue_size == 8)
+        return (r << fb_red_pos) | (g << fb_green_pos) | (b << fb_blue_pos);
+
+    {
+        uint32_t rmax = (1u << fb_red_size) - 1u;
+        uint32_t gmax = (1u << fb_green_size) - 1u;
+        uint32_t bmax = (1u << fb_blue_size) - 1u;
+        r = (r * rmax + 127u) / 255u;
+        g = (g * gmax + 127u) / 255u;
+        b = (b * bmax + 127u) / 255u;
+    }
+    return (r << fb_red_pos) | (g << fb_green_pos) | (b << fb_blue_pos);
+}
+
+void fb_init(void)
+{
+    if (fb_initialized || !multiboot_info_ptr)
+        return;
+
     uint8_t* ptr = (uint8_t*)(uintptr_t)multiboot_info_ptr;
     uint32_t total_size = *(uint32_t*)ptr;
+    if (total_size < 16)
+        return;
+
+    uint8_t* end = ptr + total_size;
     uint8_t* tag = ptr + 8;
-    
-    while (tag < ptr + total_size) {
+
+    while (tag + 8 <= end) {
         uint32_t type = *(uint32_t*)tag;
         uint32_t size = *(uint32_t*)(tag + 4);
-        
-        if (type == 0) break;
-        
-        if (type == 8) {
-            uint64_t addr = *(uint64_t*)(tag + 8);
-            fb_addr   = (uint32_t*)(uintptr_t)addr;
-            fb_pitch  = *(uint32_t*)(tag + 16);
-            fb_width  = *(uint32_t*)(tag + 20);
-            fb_height = *(uint32_t*)(tag + 24);
-            fb_bpp    = *(uint8_t*)(tag + 28);
+
+        if (size < 8 || size > (uint32_t)(end - tag))
             break;
+        if (type == 0)
+            break;
+
+        /* RGB framebuffer tag: common 32 bytes + six RGB mask bytes. */
+        if (type == 8 && size >= 38) {
+            uint64_t addr = *(uint64_t*)(tag + 8);
+            uint32_t pitch = *(uint32_t*)(tag + 16);
+            uint32_t width = *(uint32_t*)(tag + 20);
+            uint32_t height = *(uint32_t*)(tag + 24);
+            uint8_t bpp = tag[28];
+            uint8_t kind = tag[29];
+            uint8_t red_pos = tag[32], red_size = tag[33];
+            uint8_t green_pos = tag[34], green_size = tag[35];
+            uint8_t blue_pos = tag[36], blue_size = tag[37];
+
+            uint64_t bytes = (uint64_t)pitch * height;
+            uint64_t row_bytes = (uint64_t)width * 4u;
+
+            /* kernel_entry.asm identity-maps physical addresses below 4 GiB. */
+            int address_mapped = addr != 0 && addr < 0x100000000ULL &&
+                bytes != 0 && bytes <= 0x100000000ULL - addr;
+            int masks_valid = red_size && red_size <= 8 &&
+                green_size && green_size <= 8 &&
+                blue_size && blue_size <= 8 &&
+                red_pos + red_size <= 32 &&
+                green_pos + green_size <= 32 &&
+                blue_pos + blue_size <= 32;
+
+            if (kind == 1 && bpp == 32 && width && height &&
+                pitch >= row_bytes && address_mapped && masks_valid) {
+                fb_addr = (uint32_t*)(uintptr_t)addr;
+                fb_pitch = pitch; /* Keep the firmware's actual stride. */
+                fb_width = width;
+                fb_height = height;
+                fb_bpp = bpp;
+                fb_type = kind;
+                fb_red_pos = red_pos;
+                fb_red_size = red_size;
+                fb_green_pos = green_pos;
+                fb_green_size = green_size;
+                fb_blue_pos = blue_pos;
+                fb_blue_size = blue_size;
+                fb_initialized = 1;
+                return;
+            }
         }
-        tag += (size + 7) & ~7;
+
+        tag += (size + 7u) & ~7u;
     }
-
-    if (fb_addr && fb_width && fb_height)
-        fb_initialized = 1;
 }
 
-static void fb_outw(unsigned short port, unsigned short value)
-{
-    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
-}
-
-static unsigned short fb_inw(unsigned short port)
-{
-    unsigned short value;
-
-    __asm__ volatile ("inw %1, %0" : "=a"(value) : "Nd"(port));
-
-    return value;
-}
-
-static void fb_dispi_write(unsigned short index, unsigned short value)
-{
-    fb_outw(0x1CE, index);
-    fb_outw(0x1CF, value);
-}
-
-static unsigned short fb_dispi_read(unsigned short index)
-{
-    fb_outw(0x1CE, index);
-    return fb_inw(0x1CF);
-}
-
+/* UEFI GOP mode is owned by the bootloader. Do not probe Bochs DISPI ports
+ * or overwrite the real width/height/pitch on physical hardware. */
 int fb_set_mode(uint32_t width, uint32_t height)
 {
-    if (!fb_addr || width == 0 || height == 0)
+    if (!fb_is_available() || !width || !height)
         return 0;
 
-    if (width == fb_width && height == fb_height && fb_bpp == 32)
-        return 1;
-
-    unsigned short id = fb_dispi_read(0x00);
-
-    if (id < 0xB0C0)
-        return 0;
-
-    fb_dispi_write(0x04, 0x00);
-    fb_dispi_write(0x01, (unsigned short)width);
-    fb_dispi_write(0x02, (unsigned short)height);
-    fb_dispi_write(0x03, 32);
-    fb_dispi_write(0x06, (unsigned short)width);
-    fb_dispi_write(0x07, (unsigned short)height);
-    fb_dispi_write(0x04, 0x41);
-
-    fb_backbuffer_end();
-
-    fb_width  = width;
-    fb_height = height;
-    fb_pitch  = width * 4;
-    fb_bpp    = 32;
-
-    fb_physical = fb_addr;
-    fb_physical_pitch = fb_pitch;
-
-    fb_clear(0x000000);
-
-    return 1;
+    return fb_width == width && fb_height == height;
 }
 
-int fb_is_available(void) {
-    return fb_addr != 0 && fb_bpp == 32;
+int fb_is_available(void)
+{
+    return fb_addr != 0 && fb_bpp == 32 && fb_type == 1 &&
+           fb_width != 0 && fb_height != 0 &&
+           fb_pitch >= fb_width * 4u;
 }
 
-uint32_t fb_get_width(void) {
+uint32_t fb_get_width(void)
+{
     return fb_width;
 }
 
-uint32_t fb_get_height(void) {
+uint32_t fb_get_height(void)
+{
     return fb_height;
 }
 
 void fb_clear(uint32_t color) {
     if (!fb_addr) return;
+
+    color = fb_pack_rgb(color);
 
     for (uint32_t y = 0; y < fb_height; y++) {
         uint32_t* row = (uint32_t*)((uint8_t*)fb_addr + y * fb_pitch);
@@ -260,8 +282,8 @@ void fb_draw_char(int x, int y, char c, uint8_t color) {
     int px_start = x * 8;
     int py_start = y * 8;
     
-    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
-    uint32_t bg_rgb = vga_to_rgb((color >> 4) & 0x0F);
+    uint32_t fg_rgb = fb_pack_rgb(vga_to_rgb(color & 0x0F));
+    uint32_t bg_rgb = fb_pack_rgb(vga_to_rgb((color >> 4) & 0x0F));
     
     const uint8_t* glyph = fb_glyph_for((uint8_t)c);
     
@@ -284,7 +306,7 @@ void fb_draw_char_transparent(int x, int y, char c, uint8_t color) {
     int px_start = x * 8;
     int py_start = y * 8;
 
-    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
+    uint32_t fg_rgb = fb_pack_rgb(vga_to_rgb(color & 0x0F));
 
     const uint8_t* glyph = fb_glyph_for((uint8_t)c);
 
@@ -308,114 +330,151 @@ static void fb_fill_rect(int x0, int y0, int x1, int y1, uint32_t rgb) {
     if (x1 > (int)fb_width) x1 = (int)fb_width;
     if (y1 > (int)fb_height) y1 = (int)fb_height;
 
+    rgb = fb_pack_rgb(rgb);
+
     for (int y = y0; y < y1; y++) {
         uint32_t* row = (uint32_t*)((uint8_t*)fb_addr + y * fb_pitch);
         for (int x = x0; x < x1; x++)
             row[x] = rgb;
     }
 }
+/* Fast scaled 8x8 glyph renderer.
+ * Colors are packed once and each destination pixel is visited once.
+ * The x mapping uses an integer error accumulator, avoiding division
+ * in the inner pixel loop. */
+static void fb_draw_char_box_fast_impl(
+    int x0, int y0, int x1, int y1,
+    char c, uint8_t color, int transparent)
+{
+    if (!fb_addr || x1 <= x0 || y1 <= y0)
+        return;
 
-void fb_draw_char_box(int x0, int y0, int x1, int y1, char c, uint8_t color) {
-    if (!fb_addr || x1 <= x0 || y1 <= y0) return;
+    const int w = x1 - x0;
+    const int h = y1 - y0;
 
-    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
-    uint32_t bg_rgb = vga_to_rgb((color >> 4) & 0x0F);
+    int clip_x0 = x0 < 0 ? 0 : x0;
+    int clip_y0 = y0 < 0 ? 0 : y0;
+    int clip_x1 = x1 > (int)fb_width ? (int)fb_width : x1;
+    int clip_y1 = y1 > (int)fb_height ? (int)fb_height : y1;
 
-    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
-    int w = x1 - x0;
-    int h = y1 - y0;
+    if (clip_x0 >= clip_x1 || clip_y0 >= clip_y1)
+        return;
 
-    for (int row = 0; row < 8; row++) {
-        for (int col = 0; col < 8; col++) {
-            int ax0 = x0 + col * w / 8;
-            int ax1 = x0 + (col + 1) * w / 8;
-            int ay0 = y0 + row * h / 8;
-            int ay1 = y0 + (row + 1) * h / 8;
-            uint32_t rgb = ((glyph[row] >> col) & 1) ? fg_rgb : bg_rgb;
-            fb_fill_rect(ax0, ay0, ax1, ay1, rgb);
+    const uint32_t fg = fb_pack_rgb(vga_to_rgb(color & 0x0F));
+    const uint32_t bg = fb_pack_rgb(vga_to_rgb((color >> 4) & 0x0F));
+    const uint8_t *glyph = fb_glyph_for((uint8_t)c);
+
+    /* Start the source-x scaler at the first visible destination pixel. */
+    uint64_t x_acc_start = (uint64_t)(clip_x0 - x0) * 8u;
+    unsigned int sx_start = (unsigned int)(x_acc_start / (unsigned int)w);
+    x_acc_start %= (unsigned int)w;
+
+    for (int y = clip_y0; y < clip_y1; ++y) {
+        const unsigned int sy =
+            (unsigned int)(((uint64_t)(y - y0) * 8u) / (unsigned int)h);
+        const uint8_t glyph_row = glyph[sy < 8u ? sy : 7u];
+        uint32_t *dst = (uint32_t *)((uint8_t *)fb_addr + (uint64_t)y * fb_pitch);
+
+        unsigned int sx = sx_start;
+        uint64_t x_acc = x_acc_start;
+
+        for (int x = clip_x0; x < clip_x1; ++x) {
+            const int set = (glyph_row >> (sx < 8u ? sx : 7u)) & 1u;
+            if (set)
+                dst[x] = fg;
+            else if (!transparent)
+                dst[x] = bg;
+
+            x_acc += 8u;
+            while (x_acc >= (unsigned int)w) {
+                x_acc -= (unsigned int)w;
+                if (sx < 7u)
+                    ++sx;
+            }
         }
     }
 }
 
-void fb_draw_char_box_transparent(int x0, int y0, int x1, int y1, char c, uint8_t color) {
-    if (!fb_addr || x1 <= x0 || y1 <= y0) return;
-
-    uint32_t fg_rgb = vga_to_rgb(color & 0x0F);
-
-    const uint8_t* glyph = fb_glyph_for((uint8_t)c);
-    int w = x1 - x0;
-    int h = y1 - y0;
-
-    for (int row = 0; row < 8; row++) {
-        for (int col = 0; col < 8; col++) {
-            if (!((glyph[row] >> col) & 1)) continue;
-            int ax0 = x0 + col * w / 8;
-            int ax1 = x0 + (col + 1) * w / 8;
-            int ay0 = y0 + row * h / 8;
-            int ay1 = y0 + (row + 1) * h / 8;
-            fb_fill_rect(ax0, ay0, ax1, ay1, fg_rgb);
-        }
-    }
+void fb_draw_char_box(int x0, int y0, int x1, int y1, char c, uint8_t color)
+{
+    fb_draw_char_box_fast_impl(x0, y0, x1, y1, c, color, 0);
+}
+void fb_draw_char_box_transparent(int x0, int y0, int x1, int y1, char c, uint8_t color)
+{
+    fb_draw_char_box_fast_impl(x0, y0, x1, y1, c, color, 1);
 }
 
 void fb_draw_image(int x, int y, const uint16_t* data, int width, int height) {
-    if (!fb_addr) return;
+    if (!fb_addr || !data || width <= 0 || height <= 0)
+        return;
 
-    for (int j = 0; j < height; j++) {
-        for (int i = 0; i < width; i++) {
+    for (int j = 0; j < height; ++j) {
+        int py = y + j;
+        if (py < 0 || py >= (int)fb_height)
+            continue;
+
+        const uint16_t *src_row = data + (uint64_t)(unsigned int)j * (unsigned int)width;
+        uint32_t *dst_row = (uint32_t *)((uint8_t *)fb_addr + (uint64_t)(unsigned int)py * fb_pitch);
+
+        for (int i = 0; i < width; ++i) {
             int px = x + i;
-            int py = y + j;
-            if (px >= (int)fb_width || py >= (int)fb_height || px < 0 || py < 0) continue;
+            if (px < 0 || px >= (int)fb_width)
+                continue;
 
-            uint16_t rgb565 = data[j * width + i];
-            
-            uint8_t r = (rgb565 >> 11) & 0x1F;
-            uint8_t g = (rgb565 >> 5)  & 0x3F;
-            uint8_t b =  rgb565        & 0x1F;
-
-            uint8_t r8 = (r * 255) / 31;
-            uint8_t g8 = (g * 255) / 63;
-            uint8_t b8 = (b * 255) / 31;
-
-            uint32_t color = (r8 << 16) | (g8 << 8) | b8;
-
-            uint32_t* pixel = (uint32_t*)((uint8_t*)fb_addr + py * fb_pitch + px * 4);
-            *pixel = color;
+            uint16_t p = src_row[i];
+            uint32_t r = (p >> 11) & 0x1Fu;
+            uint32_t g = (p >> 5) & 0x3Fu;
+            uint32_t b = p & 0x1Fu;
+            /* Exact 5/6/5 -> 8/8/8 bit replication; no integer division. */
+            uint32_t rgb = (((r << 3) | (r >> 2)) << 16) |
+                           (((g << 2) | (g >> 4)) << 8) |
+                           ((b << 3) | (b >> 2));
+            dst_row[px] = fb_pack_rgb(rgb);
         }
     }
 }
 
 void fb_draw_wallpaper(void) {
 #if WALLPAPER_PRESENT
-    if (!fb_addr) return;
+    if (!fb_addr || !fb_width || !fb_height || !WALLPAPER_WIDTH || !WALLPAPER_HEIGHT)
+        return;
 
-    if (WALLPAPER_WIDTH == (int)fb_width &&
-        WALLPAPER_HEIGHT == (int)fb_height)
-    {
-        fb_draw_image(0, 0, wallpaper_pixels,
-                      WALLPAPER_WIDTH, WALLPAPER_HEIGHT);
+    if (WALLPAPER_WIDTH == (int)fb_width && WALLPAPER_HEIGHT == (int)fb_height) {
+        fb_draw_image(0, 0, wallpaper_pixels, WALLPAPER_WIDTH, WALLPAPER_HEIGHT);
         return;
     }
 
-    for (uint32_t y = 0; y < fb_height; y++)
-    {
-        uint32_t sy = (uint32_t)((uint64_t)y * WALLPAPER_HEIGHT / fb_height);
+    /* Nearest-neighbour scaler using error accumulators: no per-pixel divide. */
+    uint32_t sy = 0;
+    uint64_t y_rem = 0;
 
-        for (uint32_t x = 0; x < fb_width; x++)
-        {
-            uint32_t sx = (uint32_t)((uint64_t)x * WALLPAPER_WIDTH / fb_width);
-            uint16_t rgb565 = wallpaper_pixels[sy * WALLPAPER_WIDTH + sx];
+    for (uint32_t y = 0; y < fb_height; ++y) {
+        uint32_t *dst_row = (uint32_t *)((uint8_t *)fb_addr + (uint64_t)y * fb_pitch);
+        const uint16_t *src_row = wallpaper_pixels + (uint64_t)sy * WALLPAPER_WIDTH;
+        uint32_t sx = 0;
+        uint64_t x_rem = 0;
 
-            uint8_t r = (rgb565 >> 11) & 0x1F;
-            uint8_t g = (rgb565 >> 5)  & 0x3F;
-            uint8_t b =  rgb565        & 0x1F;
+        for (uint32_t x = 0; x < fb_width; ++x) {
+            uint16_t p = src_row[sx];
+            uint32_t r = (p >> 11) & 0x1Fu;
+            uint32_t g = (p >> 5) & 0x3Fu;
+            uint32_t b = p & 0x1Fu;
+            uint32_t rgb = (((r << 3) | (r >> 2)) << 16) |
+                           (((g << 2) | (g >> 4)) << 8) |
+                           ((b << 3) | (b >> 2));
+            dst_row[x] = fb_pack_rgb(rgb);
 
-            uint8_t r8 = (r * 255) / 31;
-            uint8_t g8 = (g * 255) / 63;
-            uint8_t b8 = (b * 255) / 31;
+            x_rem += WALLPAPER_WIDTH;
+            while (x_rem >= fb_width) {
+                x_rem -= fb_width;
+                ++sx;
+            }
+        }
 
-            uint32_t* pixel = (uint32_t*)((uint8_t*)fb_addr + y * fb_pitch + x * 4);
-            *pixel = (r8 << 16) | (g8 << 8) | b8;
+        y_rem += WALLPAPER_HEIGHT;
+        while (y_rem >= fb_height) {
+            y_rem -= fb_height;
+            ++sy;
         }
     }
 #endif
@@ -544,6 +603,7 @@ void fb_draw_int(int x, int y, int value, uint32_t color) {
 
 void fb_draw_rect(int x, int y, int w, int h, uint32_t color) {
     if (!fb_addr) return;
+    color = fb_pack_rgb(color);
     for (int j = 0; j < h; j++) {
         for (int i = 0; i < w; i++) {
             int px = x + i;
@@ -559,7 +619,7 @@ static void fb_put_pixel(int x, int y, uint32_t color) {
     if (!fb_addr) return;
     if (x < 0 || y < 0 || x >= (int)fb_width || y >= (int)fb_height) return;
     uint32_t* pixel = (uint32_t*)((uint8_t*)fb_addr + y * fb_pitch + x * 4);
-    *pixel = color;
+    *pixel = fb_pack_rgb(color);
 }
 
 static int fb_abs(int v) {
@@ -643,6 +703,8 @@ void fb_draw_cube_default(uint32_t color) {
 }
 void fb_draw_text(int x, int y, const char* text, uint32_t color) {
     if (text == 0) return;
+
+    color = fb_pack_rgb(color);
 
     int cx = x;
     for (int i = 0; text[i] != '\0'; i++) {

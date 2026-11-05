@@ -1,92 +1,279 @@
 #include "pci.h"
-#include "portio.h"
 
-#define PCI_ADDR 0xCF8
-#define PCI_DATA 0xCFC
-
-static unsigned int cfg_addr(unsigned char bus, unsigned char dev,
-                             unsigned char func, unsigned char off)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#if !defined(_MSC_VER) || defined(__clang__)
+static inline uint32_t pci_io_inl(uint16_t port)
 {
-    return 0x80000000u
-         | ((unsigned int)bus  << 16)
-         | ((unsigned int)dev  << 11)
-         | ((unsigned int)func << 8)
-         | (unsigned int)(off & 0xFC);
+    uint32_t val;
+    __asm__ volatile ("inl %1, %0" : "=a"(val) : "Nd"(port));
+    return val;
+}
+static inline void pci_io_outl(uint16_t port, uint32_t val)
+{
+    __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+static inline uint16_t pci_io_inw(uint16_t port)
+{
+    uint16_t val;
+    __asm__ volatile ("inw %1, %0" : "=a"(val) : "Nd"(port));
+    return val;
+}
+static inline void pci_io_outw(uint16_t port, uint16_t val)
+{
+    __asm__ volatile ("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+#endif
+#endif
+
+#ifndef TEST_MOCK_HARDWARE
+
+static uint32_t pci_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
+    uint32_t address = 0x80000000u |
+                       ((uint32_t)bus << 16) |
+                       ((uint32_t)slot << 11) |
+                       ((uint32_t)func << 8) |
+                       (offset & 0xFCu);
+    pci_io_outl(0xCF8u, address);
+    return pci_io_inl(0xCFCu);
 }
 
-unsigned int pci_read32(unsigned char bus, unsigned char dev,
-                        unsigned char func, unsigned char offset)
+static void pci_write_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
 {
-    pio_outl(PCI_ADDR, cfg_addr(bus, dev, func, offset));
-    return pio_inl(PCI_DATA);
+    uint32_t address = 0x80000000u |
+                       ((uint32_t)bus << 16) |
+                       ((uint32_t)slot << 11) |
+                       ((uint32_t)func << 8) |
+                       (offset & 0xFCu);
+    pci_io_outl(0xCF8u, address);
+    pci_io_outl(0xCFCu, value);
 }
 
-void pci_write32(unsigned char bus, unsigned char dev,
-                 unsigned char func, unsigned char offset, unsigned int value)
+static uint16_t pci_read_word(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 {
-    pio_outl(PCI_ADDR, cfg_addr(bus, dev, func, offset));
-    pio_outl(PCI_DATA, value);
+    uint32_t address = 0x80000000u |
+                       ((uint32_t)bus << 16) |
+                       ((uint32_t)slot << 11) |
+                       ((uint32_t)func << 8) |
+                       (offset & 0xFCu);
+    pci_io_outl(0xCF8u, address);
+    return (uint16_t)((pci_io_inl(0xCFCu) >> ((offset & 2u) * 8u)) & 0xFFFFu);
 }
 
-int pci_scan(pci_dev_t* list, int max)
+static void pci_write_word(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value)
+{
+    uint32_t address = 0x80000000u |
+                       ((uint32_t)bus << 16) |
+                       ((uint32_t)slot << 11) |
+                       ((uint32_t)func << 8) |
+                       (offset & 0xFCu);
+    pci_io_outl(0xCF8u, address);
+    pci_io_outw((uint16_t)(0xCFCu + (offset & 2u)), value);
+}
+
+uint32_t pci_read32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
+{
+    return pci_read_dword(bus, slot, func, offset);
+}
+
+void pci_write32(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint32_t value)
+{
+    pci_write_dword(bus, slot, func, offset, value);
+}
+
+static void pci_fill_device(pci_dev_t *out, uint8_t bus, uint8_t slot, uint8_t func,
+                            uint32_t id, uint32_t class_dw)
+{
+    out->bus = bus;
+    out->slot = slot;
+    out->func = func;
+    out->vendor_id = (uint16_t)(id & 0xFFFFu);
+    out->device_id = (uint16_t)(id >> 16);
+    out->class_code = (uint8_t)(class_dw >> 24);
+    out->subclass = (uint8_t)((class_dw >> 16) & 0xFFu);
+    out->prog_if = (uint8_t)((class_dw >> 8) & 0xFFu);
+}
+
+int pci_scan(pci_dev_t *list, int max_devices)
 {
     int count = 0;
 
-    for (int bus = 0; bus < 256; bus++)
-    {
-        for (int dev = 0; dev < 32; dev++)
-        {
-            unsigned int id0 = pci_read32((unsigned char)bus, (unsigned char)dev, 0, 0x00);
+    if (!list || max_devices <= 0) return 0;
 
-            if ((id0 & 0xFFFF) == 0xFFFF)
-                continue;
+    for (uint32_t bus = 0; bus < 256; ++bus) {
+        for (uint32_t slot = 0; slot < 32; ++slot) {
+            uint32_t id = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x00);
+            uint16_t vendor = (uint16_t)(id & 0xFFFFu);
+            if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
 
-            unsigned int header = pci_read32((unsigned char)bus, (unsigned char)dev, 0, 0x0C);
-            int funcs = ((header >> 16) & 0x80) ? 8 : 1;
+            uint32_t hdr_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
+            uint8_t header_type = (uint8_t)((hdr_dw >> 16) & 0xFFu);
+            int num_funcs = (header_type & 0x80u) ? 8 : 1;
 
-            for (int fn = 0; fn < funcs; fn++)
-            {
-                unsigned int id = pci_read32((unsigned char)bus, (unsigned char)dev,
-                                             (unsigned char)fn, 0x00);
+            for (uint32_t func = 0; func < (uint32_t)num_funcs; ++func) {
+                id = pci_read_dword((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x00);
+                vendor = (uint16_t)(id & 0xFFFFu);
+                if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
 
-                if ((id & 0xFFFF) == 0xFFFF)
-                    continue;
-
-                if (count < max)
-                {
-                    unsigned int cls = pci_read32((unsigned char)bus, (unsigned char)dev,
-                                                  (unsigned char)fn, 0x08);
-
-                    list[count].bus        = (unsigned char)bus;
-                    list[count].dev        = (unsigned char)dev;
-                    list[count].func       = (unsigned char)fn;
-                    list[count].vendor     = (unsigned short)(id & 0xFFFF);
-                    list[count].device     = (unsigned short)(id >> 16);
-                    list[count].class_code = (unsigned char)(cls >> 24);
-                    list[count].subclass   = (unsigned char)(cls >> 16);
-                }
-
-                count++;
+                uint32_t class_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot,
+                                                   (uint8_t)func, 0x08);
+                pci_fill_device(&list[count], (uint8_t)bus, (uint8_t)slot,
+                                (uint8_t)func, id, class_dw);
+                if (++count >= max_devices) return count;
             }
         }
     }
 
-    return count > max ? max : count;
+    return count;
 }
 
-int pci_find(unsigned short vendor, unsigned short device, pci_dev_t* out)
+int pci_find(uint16_t vendor_id, uint16_t device_id, pci_dev_t *out)
 {
-    pci_dev_t list[32];
-    int n = pci_scan(list, 32);
+    if (!out) return 0;
 
-    for (int i = 0; i < n; i++)
-    {
-        if (list[i].vendor == vendor && list[i].device == device)
-        {
-            *out = list[i];
-            return 1;
+    for (uint32_t bus = 0; bus < 256; ++bus) {
+        for (uint32_t slot = 0; slot < 32; ++slot) {
+            uint32_t id = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x00);
+            uint16_t vendor = (uint16_t)(id & 0xFFFFu);
+            if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
+
+            uint32_t hdr_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
+            uint8_t header_type = (uint8_t)((hdr_dw >> 16) & 0xFFu);
+            int num_funcs = (header_type & 0x80u) ? 8 : 1;
+
+            for (uint32_t func = 0; func < (uint32_t)num_funcs; ++func) {
+                id = pci_read_dword((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x00);
+                if ((uint16_t)(id & 0xFFFFu) != vendor_id ||
+                    (uint16_t)(id >> 16) != device_id)
+                    continue;
+
+                uint32_t class_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot,
+                                                   (uint8_t)func, 0x08);
+                pci_fill_device(out, (uint8_t)bus, (uint8_t)slot, (uint8_t)func,
+                                id, class_dw);
+                return 1;
+            }
         }
     }
 
     return 0;
 }
+
+int pci_find_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if,
+                   pci_dev_t *out)
+{
+    if (!out) return 0;
+
+    for (uint32_t bus = 0; bus < 256; ++bus) {
+        for (uint32_t slot = 0; slot < 32; ++slot) {
+            uint32_t id = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x00);
+            uint16_t vendor = (uint16_t)(id & 0xFFFFu);
+            if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
+
+            uint32_t hdr_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
+            uint8_t header_type = (uint8_t)((hdr_dw >> 16) & 0xFFu);
+            int num_funcs = (header_type & 0x80u) ? 8 : 1;
+
+            for (uint32_t func = 0; func < (uint32_t)num_funcs; ++func) {
+                id = pci_read_dword((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x00);
+                if ((uint16_t)(id & 0xFFFFu) == 0xFFFFu ||
+                    (uint16_t)(id & 0xFFFFu) == 0x0000u)
+                    continue;
+
+                uint32_t class_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot,
+                                                   (uint8_t)func, 0x08);
+                uint8_t cc = (uint8_t)(class_dw >> 24);
+                uint8_t sc = (uint8_t)((class_dw >> 16) & 0xFFu);
+                uint8_t pi = (uint8_t)((class_dw >> 8) & 0xFFu);
+
+                if (cc != class_code || sc != subclass ||
+                    (prog_if != 0xFFu && pi != prog_if))
+                    continue;
+
+                pci_fill_device(out, (uint8_t)bus, (uint8_t)slot, (uint8_t)func,
+                                id, class_dw);
+                return 1;
+            }
+        }
+    }
+
+    return 0;
+}
+
+int pci_scan_xhci(pci_dev_t *controllers, int max_controllers)
+{
+    int count = 0;
+    if (!controllers || max_controllers <= 0) return 0;
+
+    for (uint32_t bus = 0; bus < 256; ++bus) {
+        for (uint32_t slot = 0; slot < 32; ++slot) {
+            uint32_t id = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x00);
+            uint16_t vendor = (uint16_t)(id & 0xFFFFu);
+            if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
+
+            uint32_t hdr_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot, 0, 0x0C);
+            uint8_t header_type = (uint8_t)((hdr_dw >> 16) & 0xFFu);
+            int num_funcs = (header_type & 0x80u) ? 8 : 1;
+
+            for (uint32_t func = 0; func < (uint32_t)num_funcs; ++func) {
+                id = pci_read_dword((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x00);
+                vendor = (uint16_t)(id & 0xFFFFu);
+                if (vendor == 0xFFFFu || vendor == 0x0000u) continue;
+
+                uint32_t class_dw = pci_read_dword((uint8_t)bus, (uint8_t)slot, (uint8_t)func, 0x08);
+                uint8_t class_code = (uint8_t)(class_dw >> 24);
+                uint8_t subclass = (uint8_t)((class_dw >> 16) & 0xFFu);
+                uint8_t prog_if = (uint8_t)((class_dw >> 8) & 0xFFu);
+
+                /* Class 0x0C = Serial Bus, Subclass 0x03 = USB, Prog-IF 0x30 = xHCI */
+                if (class_code == 0x0Cu && subclass == 0x03u && prog_if == 0x30u) {
+                    controllers[count].bus = (uint8_t)bus;
+                    controllers[count].slot = (uint8_t)slot;
+                    controllers[count].func = (uint8_t)func;
+                    controllers[count].vendor_id = vendor;
+                    controllers[count].device_id = (uint16_t)(id >> 16);
+                    controllers[count].class_code = class_code;
+                    controllers[count].subclass = subclass;
+                    controllers[count].prog_if = prog_if;
+                    if (++count >= max_controllers) return count;
+                }
+            }
+        }
+    }
+    return count;
+}
+
+int pci_enable_mem_busmaster(const pci_dev_t *dev)
+{
+    if (!dev) return 0;
+    uint16_t cmd = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
+    cmd |= (1u << 1) | (1u << 2); /* Bit 1: Memory Space, Bit 2: Bus Master */
+    pci_write_word(dev->bus, dev->slot, dev->func, 0x04, cmd);
+    return 1;
+}
+
+int pci_get_mmio_bar(const pci_dev_t *dev, unsigned int bar_idx, uint64_t *bar_out, int *is_64_out)
+{
+    if (!dev || bar_idx >= 6u || !bar_out || !is_64_out) return 0;
+    uint8_t offset = (uint8_t)(0x10u + bar_idx * 4u);
+    uint32_t bar_low = pci_read_dword(dev->bus, dev->slot, dev->func, offset);
+
+    /* Bit 0 must be 0 for Memory Space indicator */
+    if (bar_low & 1u) return 0;
+
+    uint8_t bar_type = (uint8_t)((bar_low >> 1) & 3u);
+    if (bar_type == 0x02u) { /* 64-bit BAR */
+        if (bar_idx >= 5u) return 0;
+        uint32_t bar_high = pci_read_dword(dev->bus, dev->slot, dev->func, offset + 4u);
+        *bar_out = ((uint64_t)bar_high << 32) | (bar_low & ~0x0Fu);
+        *is_64_out = 1;
+        return 1;
+    } else if (bar_type == 0x00u) { /* 32-bit BAR */
+        *bar_out = (uint64_t)(bar_low & ~0x0Fu);
+        *is_64_out = 0;
+        return 1;
+    }
+    return 0;
+}
+
+#endif

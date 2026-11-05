@@ -13,8 +13,9 @@
 #include "Apps/Games/snake.h"
 #include "kernel.h"
 #include "../../compiler/nwc_kernel.h"
-
+#include "memory/pmm.h"
 #include "Apps/fileStats/filestats.h"
+#include "../../drivers/usb/xhci.h"
 #include "Apps/baseconverter/baseconverter.h"
 #include "rootfs_data.h"
 
@@ -40,9 +41,14 @@
 
 #include <stdint.h>
 
+extern uint32_t multiboot_info_ptr;
+
 void disk_death(void);
 void game_snake(void);
 
+void mouse_init(void);
+int mouse_is_touchpad(void);
+const char* mouse_device_name(void);
 
 
 /*
@@ -203,6 +209,8 @@ static uint16_t current_dir = 0;
 
 static int fb_graphics_mode = 0;
 
+static int nwos_safe_load = 0;
+
 static unsigned char text_color = COLOR_LIGHT_GRAY;
 static unsigned char base_color = COLOR_LIGHT_GRAY;
 static unsigned char prompt_color = COLOR_CYAN;
@@ -333,52 +341,150 @@ static void term_draw_cell_transparent(int cx, int cy, char c, unsigned char col
                                  (cx + 1) * w / WIDTH, (cy + 1) * h / HEIGHT,
                                  c, color);
 }
+/* NWOS_INCREMENTAL_TERMINAL_V1
+ * Draw terminal rows from the scrollback model. Normal output updates only
+ * the cell/row that changed; render_view() is reserved for view changes and
+ * the occasional full-screen scroll once the visible 60 rows are full.
+ */
+static int terminal_display_initialized = 0;
+
+static int terminal_cursor_row(void)
+{
+    if (line_count <= 1)
+        return 0;
+
+    int row = line_count - 1;
+    if (row >= HEIGHT)
+        row = HEIGHT - 1;
+    return row;
+}
+
+static int terminal_current_line_index(void)
+{
+    if (line_count <= 0)
+        return -1;
+
+    return (line_start + line_count - 1) % SCROLLBACK_LINES;
+}
+
+static void term_draw_cell_mode(int cx, int cy, char c, unsigned char color)
+{
+    if (fb_graphics_mode)
+        term_draw_cell_transparent(cx, cy, c, color);
+    else
+        term_draw_cell(cx, cy, c, color);
+}
+
+static void terminal_draw_stored_cell(int physical_line, int col, int screen_row)
+{
+    if (!fb_is_available() || physical_line < 0 || col < 0 || col >= WIDTH)
+        return;
+
+    uint16_t cell = line_buffer[physical_line][col];
+    term_draw_cell_mode(col, screen_row, (char)(cell & 0xFFu),
+                        (unsigned char)(cell >> 8));
+}
+
+static void terminal_draw_row(int logical_line, int screen_row)
+{
+    if (!fb_is_available() || logical_line < 0 ||
+        logical_line >= line_count || screen_row < 0 || screen_row >= HEIGHT)
+        return;
+
+    int idx = (line_start + logical_line) % SCROLLBACK_LINES;
+    for (int x = 0; x < WIDTH; ++x)
+    {
+        uint16_t cell = line_buffer[idx][x];
+        term_draw_cell_mode(x, screen_row, (char)(cell & 0xFFu),
+                            (unsigned char)(cell >> 8));
+    }
+}
+
+static void terminal_draw_blank_row(int screen_row)
+{
+    if (!fb_is_available() || screen_row < 0 || screen_row >= HEIGHT)
+        return;
+
+    for (int x = 0; x < WIDTH; ++x)
+        term_draw_cell(x, screen_row, ' ', COLOR_LIGHT_GRAY);
+}
+
+static void terminal_draw_cursor(void)
+{
+    if (!fb_is_available() || view_offset != 0 || cursor_col < 0 || cursor_col >= WIDTH)
+        return;
+
+    term_draw_cell_mode(cursor_col, terminal_cursor_row(), '_', COLOR_WHITE);
+}
+
+void render_view(void);
+
+static void terminal_prepare_output(void)
+{
+    int had_lines = (line_count > 0);
+
+    if (line_count <= 0)
+        terminal_new_line();
+
+    /* The first console output must replace the bootloader's old framebuffer. */
+    if (fb_is_available() && !terminal_display_initialized)
+    {
+        if (!fb_graphics_mode)
+            fb_clear(0x000000);
+        terminal_display_initialized = 1;
+
+        /* A fresh terminal is already blank after fb_clear(): draw only cursor. */
+        if (had_lines)
+            render_view();
+        else
+            terminal_draw_cursor();
+    }
+}
 
 void render_view(void)
 {
-    if (!fb_is_available()) return;
+    if (!fb_is_available())
+        return;
 
-    int shown = 0;
-    int pad = HEIGHT;
-    int first = 0;
-
-    if (line_count > 0)
+    if (line_count <= 0)
     {
-        int last = (line_count - 1) - view_offset;
-        if (last < 0) last = 0;
-        first = last - (HEIGHT - 1);
-        if (first < 0) first = 0;
-        shown = last - first + 1;
-        pad = HEIGHT - shown;
+        if (!fb_graphics_mode)
+            for (int row = 0; row < HEIGHT; ++row)
+                terminal_draw_blank_row(row);
+        terminal_display_initialized = 1;
+        return;
     }
 
+    int last = (line_count - 1) - view_offset;
+    if (last < 0) last = 0;
+    if (last >= line_count) last = line_count - 1;
+
+    int first = last - (HEIGHT - 1);
+    if (first < 0) first = 0;
+
+    int shown = last - first + 1;
+    if (shown > HEIGHT) shown = HEIGHT;
+
+    /* Top-origin layout: short output starts at row 0, like a normal terminal. */
+    for (int row = 0; row < shown; ++row)
+        terminal_draw_row(first + row, row);
+
+    /* Clear unused rows when rendering the normal opaque console. */
     if (!fb_graphics_mode)
     {
-        for (int row = 0; row < pad; row++)
-            for (int x = 0; x < WIDTH; x++)
-                term_draw_cell(x, row, ' ', COLOR_LIGHT_GRAY);
+        for (int row = shown; row < HEIGHT; ++row)
+            terminal_draw_blank_row(row);
     }
 
-    for (int i = 0; i < shown; i++)
+    /* A historical view has no live input cursor. */
+    if (view_offset == 0 && shown > 0)
     {
-        int idx = (line_start + first + i) % SCROLLBACK_LINES;
-        for (int x = 0; x < WIDTH; x++)
-        {
-            uint16_t cell = line_buffer[idx][x];
-            if (fb_graphics_mode)
-                term_draw_cell_transparent(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
-            else
-                term_draw_cell(x, pad + i, cell & 0xFF, (cell >> 8) & 0xFF);
-        }
+        int cy = shown - 1;
+        if (cy >= 0 && cy < HEIGHT && cursor_col < WIDTH)
+            term_draw_cell_mode(cursor_col, cy, '_', COLOR_WHITE);
     }
-    
-    int cy = pad + shown - 1;
-    if (cy >= 0 && cy < HEIGHT) {
-        if (fb_graphics_mode)
-            term_draw_cell_transparent(cursor_col, cy, '_', COLOR_WHITE);
-        else
-            term_draw_cell(cursor_col, cy, '_', COLOR_WHITE);
-    }
+
+    terminal_display_initialized = 1;
 }
 static void cmd_mem(void)
 {
@@ -529,7 +635,6 @@ static void cmd_time_cmd(void)
         print("  (Custom date active)\n");
     putchar_os('\n');
 }
-
 void graphics_begin(void)
 {
     if (fb_graphics_mode)
@@ -545,8 +650,8 @@ void graphics_begin(void)
     cursor_col = 0;
 
     terminal_new_line();
+    terminal_display_initialized = fb_is_available();
 }
-
 void graphics_end(void)
 {
     if (!fb_graphics_mode)
@@ -562,9 +667,9 @@ void graphics_end(void)
     cursor_col = 0;
 
     terminal_new_line();
-    render_view();
+    terminal_display_initialized = fb_is_available();
+    terminal_draw_cursor();
 }
-
 void clear(void)
 {
     fb_graphics_mode = 0;
@@ -575,9 +680,10 @@ void clear(void)
     cursor_col = 0;
 
     fb_clear(0x000000);
-
     terminal_new_line();
-    render_view();
+
+    terminal_display_initialized = fb_is_available();
+    terminal_draw_cursor();
 }
 void scroll_view_up(void)
 {
@@ -599,19 +705,55 @@ void scroll_view_down(void)
 }
 void putchar_os(char c)
 {
+    terminal_prepare_output();
+
+    /* If the user was viewing history, output returns to the live tail. */
+    int force_render = (view_offset != 0);
+    int old_line = terminal_current_line_index();
     view_offset = 0;
+    int row = terminal_cursor_row();
 
     if (c == '\n')
     {
+        int old_count = line_count;
+        int old_col = cursor_col;
+
+        /* Remove the visual cursor from the line being closed. */
+        if (!force_render && fb_is_available() && old_col < WIDTH)
+            terminal_draw_stored_cell(old_line, old_col, row);
+
         terminal_new_line();
-        render_view();
+
+        if (fb_is_available())
+        {
+            if (force_render || old_count >= HEIGHT)
+            {
+                /* A full viewport shift is only needed when the screen fills. */
+                render_view();
+            }
+            else
+            {
+                terminal_draw_row(old_count, old_count);
+                terminal_draw_cursor();
+            }
+        }
         return;
     }
 
     if (c == '\r')
     {
+        int old_col = cursor_col;
+        if (!force_render && fb_is_available() && old_col < WIDTH)
+            terminal_draw_stored_cell(old_line, old_col, row);
+
         cursor_col = 0;
-        render_view();
+        if (fb_is_available())
+        {
+            if (force_render)
+                render_view();
+            else
+                terminal_draw_cursor();
+        }
         return;
     }
 
@@ -621,29 +763,73 @@ void putchar_os(char c)
         {
             cursor_col--;
             terminal_set_cell(cursor_col, ' ');
-            
-            if (fb_is_available()) {
-                term_draw_cell(cursor_col, HEIGHT - 1, ' ', text_color);
-                term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
+
+            if (fb_is_available())
+            {
+                if (force_render)
+                    render_view();
+                else
+                {
+                    term_draw_cell_mode(cursor_col, row, ' ', text_color);
+                    terminal_draw_cursor();
+                }
+            }
+        }
+        else if (force_render && fb_is_available())
+        {
+            render_view();
+        }
+        return;
+    }
+
+    if (cursor_col >= WIDTH)
+    {
+        int old_count = line_count;
+        terminal_new_line();
+        if (fb_is_available())
+        {
+            if (old_count >= HEIGHT)
+                render_view();
+            else
+            {
+                terminal_draw_row(old_count, old_count);
+                terminal_draw_cursor();
+            }
+        }
+        row = terminal_cursor_row();
+    }
+
+    int old_col = cursor_col;
+    terminal_set_cell(old_col, c);
+    cursor_col++;
+
+    if (cursor_col >= WIDTH)
+    {
+        int old_count = line_count;
+        terminal_new_line();
+
+        if (fb_is_available())
+        {
+            if (force_render || old_count >= HEIGHT)
+                render_view();
+            else
+            {
+                terminal_draw_row(old_count, old_count);
+                terminal_draw_cursor();
             }
         }
         return;
     }
 
-    terminal_set_cell(cursor_col, c);
-    int old_col = cursor_col;
-    cursor_col++;
-
-    if (cursor_col >= WIDTH)
+    if (fb_is_available())
     {
-        terminal_new_line();
-        render_view();
-        return;
-    }
-
-    if (fb_is_available()) {
-        term_draw_cell(old_col, HEIGHT - 1, c, text_color);
-        term_draw_cell(cursor_col, HEIGHT - 1, '_', COLOR_WHITE);
+        if (force_render)
+            render_view();
+        else
+        {
+            term_draw_cell_mode(old_col, row, c, text_color);
+            terminal_draw_cursor();
+        }
     }
 }
 void print(const char* text)
@@ -2225,6 +2411,405 @@ static unsigned char port_inb(unsigned short port) {
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
+static unsigned short port_inw(unsigned short port) {
+    unsigned short ret;
+    __asm__ volatile ("inw %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+static unsigned int acpi_u32(const unsigned char *p)
+{
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8) |
+           ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+static unsigned long long acpi_u64(const unsigned char *p)
+{
+    return (unsigned long long)acpi_u32(p) |
+           ((unsigned long long)acpi_u32(p + 4) << 32);
+}
+
+static int acpi_checksum_valid(const unsigned char *p, unsigned int length)
+{
+    unsigned char sum = 0;
+    if (!p || !length || length > 0x100000u)
+        return 0;
+    for (unsigned int i = 0; i < length; ++i)
+        sum = (unsigned char)(sum + p[i]);
+    return sum == 0;
+}
+
+static int acpi_rsdp_valid(const unsigned char *rsdp, unsigned int size)
+{
+    if (!rsdp || size < 20u ||
+        rsdp[0] != 'R' || rsdp[1] != 'S' || rsdp[2] != 'D' ||
+        rsdp[3] != ' ' || rsdp[4] != 'P' || rsdp[5] != 'T' ||
+        rsdp[6] != 'R' || rsdp[7] != ' ' ||
+        !acpi_checksum_valid(rsdp, 20u))
+        return 0;
+
+    if (rsdp[15] >= 2u) {
+        unsigned int extended_length;
+        if (size < 36u)
+            return 0;
+        extended_length = acpi_u32(rsdp + 20u);
+        if (extended_length < 36u || extended_length > size ||
+            !acpi_checksum_valid(rsdp, extended_length))
+            return 0;
+    }
+    return 1;
+}
+
+static unsigned char *acpi_phys_ptr(unsigned long long address,
+                                    unsigned int minimum_length)
+{
+    if (!address || address >= 0x100000000ull ||
+        (unsigned long long)minimum_length > 0x100000000ull - address)
+        return 0;
+    /* The current x86-64 bootstrap keeps physical memory below 4 GiB
+       identity-mapped; PMM and the DMA driver rely on the same mapping. */
+    return (unsigned char *)(unsigned long)address;
+}
+
+static unsigned char *acpi_find_fadt(void)
+{
+    unsigned char *mbi;
+    unsigned int total_size;
+    unsigned int offset;
+    unsigned char *rsdp = 0;
+    unsigned int rsdp_size = 0;
+    unsigned char *rsdp_old = 0;
+    unsigned int rsdp_old_size = 0;
+    unsigned char *root;
+    unsigned long long root_address = 0;
+
+    if (!multiboot_info_ptr)
+        return 0;
+    mbi = (unsigned char *)(unsigned long)multiboot_info_ptr;
+    total_size = acpi_u32(mbi);
+    if (total_size < 16u || total_size > 16u * 1024u * 1024u)
+        return 0;
+
+    for (offset = 8u; offset + 8u <= total_size; ) {
+        unsigned int type = acpi_u32(mbi + offset);
+        unsigned int size = acpi_u32(mbi + offset + 4u);
+        unsigned int data_size;
+        if (size < 8u || size > total_size - offset)
+            break;
+        data_size = size - 8u;
+        if (type == 15u && data_size >= 36u) {
+            rsdp = mbi + offset + 8u;
+            rsdp_size = data_size;
+        } else if (type == 14u && data_size >= 20u) {
+            rsdp_old = mbi + offset + 8u;
+            rsdp_old_size = data_size;
+        }
+        offset += (size + 7u) & ~7u;
+    }
+
+    if (!acpi_rsdp_valid(rsdp, rsdp_size)) {
+        rsdp = rsdp_old;
+        rsdp_size = rsdp_old_size;
+    }
+    if (!acpi_rsdp_valid(rsdp, rsdp_size))
+        return 0;
+
+    if (rsdp[15] >= 2u && rsdp_size >= 36u) {
+        unsigned int extended_length = acpi_u32(rsdp + 20u);
+        if (extended_length >= 36u && extended_length <= rsdp_size &&
+            acpi_checksum_valid(rsdp, extended_length))
+            root_address = acpi_u64(rsdp + 24u);
+    }
+    if (root_address) {
+        root = acpi_phys_ptr(root_address, 36u);
+        if (root && root[0] == 'X' && root[1] == 'S' &&
+            root[2] == 'D' && root[3] == 'T') {
+            unsigned int length = acpi_u32(root + 4u);
+            if (length >= 36u && length <= 0x100000u &&
+                acpi_checksum_valid(root, length)) {
+                for (unsigned int pos = 36u; pos + 8u <= length; pos += 8u) {
+                    unsigned long long address = acpi_u64(root + pos);
+                    unsigned char *table = acpi_phys_ptr(address, 36u);
+                    if (table && table[0] == 'F' && table[1] == 'A' &&
+                        table[2] == 'C' && table[3] == 'P') {
+                        unsigned int table_length = acpi_u32(table + 4u);
+                        if (table_length >= 116u && table_length <= 0x100000u &&
+                            acpi_checksum_valid(table, table_length))
+                            return table;
+                    }
+                }
+            }
+        }
+    }
+
+    root_address = acpi_u32(rsdp + 16u);
+    root = acpi_phys_ptr(root_address, 36u);
+    if (!root || root[0] != 'R' || root[1] != 'S' ||
+        root[2] != 'D' || root[3] != 'T')
+        return 0;
+    {
+        unsigned int length = acpi_u32(root + 4u);
+        if (length < 36u || length > 0x100000u ||
+            !acpi_checksum_valid(root, length))
+            return 0;
+        for (unsigned int pos = 36u; pos + 4u <= length; pos += 4u) {
+            unsigned long long address = acpi_u32(root + pos);
+            unsigned char *table = acpi_phys_ptr(address, 36u);
+            if (table && table[0] == 'F' && table[1] == 'A' &&
+                table[2] == 'C' && table[3] == 'P') {
+                unsigned int table_length = acpi_u32(table + 4u);
+                if (table_length >= 116u && table_length <= 0x100000u &&
+                    acpi_checksum_valid(table, table_length))
+                    return table;
+            }
+        }
+    }
+    return 0;
+}
+
+static int acpi_aml_integer(const unsigned char *aml, unsigned int limit,
+                            unsigned int *position, unsigned long long *value)
+{
+    unsigned char opcode;
+    unsigned int pos = *position;
+    if (pos >= limit)
+        return 0;
+    opcode = aml[pos++];
+    if (opcode == 0x00u) {
+        *value = 0;
+    } else if (opcode == 0x01u) {
+        *value = 1;
+    } else if (opcode == 0xFFu) {
+        *value = ~0ull;
+    } else if (opcode == 0x0Au) {
+        if (pos + 1u > limit) return 0;
+        *value = aml[pos++];
+    } else if (opcode == 0x0Bu) {
+        if (pos + 2u > limit) return 0;
+        *value = (unsigned long long)aml[pos] |
+                 ((unsigned long long)aml[pos + 1u] << 8);
+        pos += 2u;
+    } else if (opcode == 0x0Cu) {
+        if (pos + 4u > limit) return 0;
+        *value = acpi_u32(aml + pos);
+        pos += 4u;
+    } else if (opcode == 0x0Eu) {
+        if (pos + 8u > limit) return 0;
+        *value = acpi_u64(aml + pos);
+        pos += 8u;
+    } else {
+        return 0;
+    }
+    *position = pos;
+    return 1;
+}
+
+static int acpi_find_s5(unsigned char *dsdt, unsigned int length,
+                        unsigned char *sleep_a, unsigned char *sleep_b)
+{
+    for (unsigned int i = 2u; i + 7u < length; ++i) {
+        unsigned int name_pos;
+        unsigned int package_pos;
+        unsigned int body_pos;
+        unsigned int package_length;
+        unsigned int package_end;
+        unsigned int follow;
+        unsigned char first;
+        unsigned long long a, b;
+
+        if (dsdt[i] != '_' || dsdt[i + 1u] != 'S' ||
+            dsdt[i + 2u] != '5' || dsdt[i + 3u] != '_')
+            continue;
+        name_pos = i;
+        if (name_pos && dsdt[name_pos - 1u] == 0x5Cu)
+            --name_pos;
+        if (!name_pos || dsdt[name_pos - 1u] != 0x08u)
+            continue; /* NameOp */
+        package_pos = i + 4u;
+        if (package_pos >= length || dsdt[package_pos] != 0x12u)
+            continue; /* PackageOp */
+        ++package_pos;
+        if (package_pos >= length)
+            continue;
+        first = dsdt[package_pos];
+        follow = (unsigned int)(first >> 6);
+        if (follow > 3u || package_pos + 1u + follow > length)
+            continue;
+        if (!follow) {
+            package_length = first & 0x3Fu;
+            body_pos = package_pos + 1u;
+        } else {
+            package_length = first & 0x0Fu;
+            for (unsigned int n = 0; n < follow; ++n)
+                package_length |= (unsigned int)dsdt[package_pos + 1u + n]
+                                  << (4u + 8u * n);
+            body_pos = package_pos + 1u + follow;
+        }
+        package_end = package_pos + package_length;
+        if (!package_length || package_end > length ||
+            body_pos >= package_end)
+            continue;
+        if (dsdt[body_pos++] < 2u)
+            continue;
+        if (!acpi_aml_integer(dsdt, package_end, &body_pos, &a) ||
+            !acpi_aml_integer(dsdt, package_end, &body_pos, &b))
+            continue;
+        *sleep_a = (unsigned char)(a & 7u);
+        *sleep_b = (unsigned char)(b & 7u);
+        return 1;
+    }
+    return 0;
+}
+
+static unsigned short acpi_gas_read16(const unsigned char *gas)
+{
+    unsigned long long address = acpi_u64(gas + 4u);
+    if (gas[2] != 0u || gas[1] < 16u)
+        return 0;
+    if (gas[0] == 1u && address <= 0xFFFFu)
+        return port_inw((unsigned short)address);
+    if (gas[0] == 0u && address < 0x100000000ull)
+        return *(volatile unsigned short *)(unsigned long)address;
+    return 0;
+}
+
+static int acpi_gas_write16(const unsigned char *gas, unsigned short value)
+{
+    unsigned long long address = acpi_u64(gas + 4u);
+    if (gas[2] != 0u || gas[1] < 16u)
+        return 0;
+    if (gas[0] == 1u && address <= 0xFFFFu) {
+        port_outw((unsigned short)address, value);
+        return 1;
+    }
+    if (gas[0] == 0u && address < 0x100000000ull) {
+        *(volatile unsigned short *)(unsigned long)address = value;
+        return 1;
+    }
+    return 0;
+}
+
+static int acpi_gas_write8(const unsigned char *gas, unsigned char value)
+{
+    unsigned long long address = acpi_u64(gas + 4u);
+    if (gas[2] != 0u || gas[1] < 8u)
+        return 0;
+    if (gas[0] == 1u && address <= 0xFFFFu) {
+        port_outb((unsigned short)address, value);
+        return 1;
+    }
+    if (gas[0] == 0u && address < 0x100000000ull) {
+        *(volatile unsigned char *)(unsigned long)address = value;
+        return 1;
+    }
+    return 0;
+}
+
+static int acpi_shutdown_from_tables(void)
+{
+    unsigned char *fadt = acpi_find_fadt();
+    unsigned int fadt_length;
+    unsigned int flags;
+    unsigned char *dsdt;
+    unsigned long long dsdt_address;
+    unsigned char sleep_a, sleep_b;
+
+    if (!fadt)
+        return 0;
+    fadt_length = acpi_u32(fadt + 4u);
+    if (fadt_length < 116u)
+        return 0;
+
+    dsdt_address = acpi_u32(fadt + 40u);
+    if (fadt_length >= 148u && acpi_u64(fadt + 140u))
+        dsdt_address = acpi_u64(fadt + 140u);
+    dsdt = acpi_phys_ptr(dsdt_address, 36u);
+    if (!dsdt)
+        return 0;
+    {
+        unsigned int dsdt_length = acpi_u32(dsdt + 4u);
+        if (dsdt_length < 36u || dsdt_length > 0x100000u ||
+            !acpi_checksum_valid(dsdt, dsdt_length) ||
+            !acpi_find_s5(dsdt, dsdt_length, &sleep_a, &sleep_b))
+            return 0;
+    }
+
+    flags = acpi_u32(fadt + 112u);
+    if (flags & (1u << 20)) {
+        /* FADT HW_REDUCED_ACPI is bit 20 (bit 10 is RESET_REG_SUP).
+           SLP_TYP is bits 2..4, SLP_EN is bit 5. */
+        if (fadt_length >= 256u && acpi_u64(fadt + 244u)) {
+            unsigned char value = (unsigned char)((sleep_a << 2) | (1u << 5));
+            return acpi_gas_write8(fadt + 244u, value);
+        }
+        return 0;
+    }
+
+    {
+        unsigned int pm1a_legacy = acpi_u32(fadt + 64u);
+        unsigned int pm1b_legacy = acpi_u32(fadt + 68u);
+        unsigned char *pm1a_gas = (fadt_length >= 184u) ? fadt + 172u : 0;
+        unsigned char *pm1b_gas = (fadt_length >= 196u) ? fadt + 184u : 0;
+        unsigned short current_a = 0;
+        unsigned short current_b = 0;
+        unsigned short value_a;
+        unsigned short value_b;
+        int use_a_gas = pm1a_gas && acpi_u64(pm1a_gas + 4u) != 0 &&
+                        (pm1a_gas[0] <= 1u) && pm1a_gas[1] >= 16u &&
+                        pm1a_gas[2] == 0u;
+        int use_b_gas = pm1b_gas && acpi_u64(pm1b_gas + 4u) != 0 &&
+                        (pm1b_gas[0] <= 1u) && pm1b_gas[1] >= 16u &&
+                        pm1b_gas[2] == 0u;
+
+        if (use_a_gas)
+            current_a = acpi_gas_read16(pm1a_gas);
+        else if (pm1a_legacy && pm1a_legacy <= 0xFFFFu)
+            current_a = port_inw((unsigned short)pm1a_legacy);
+        else
+            return 0;
+
+        /* Ask firmware to enter ACPI mode if SCI_EN is not already set. */
+        if (!(current_a & 1u) && acpi_u32(fadt + 48u) <= 0xFFFFu &&
+            acpi_u32(fadt + 48u) != 0u && fadt[52u] != 0u) {
+            port_outb((unsigned short)acpi_u32(fadt + 48u), fadt[52u]);
+            for (unsigned int wait = 0; wait < 1000000u; ++wait) {
+                current_a = use_a_gas ? acpi_gas_read16(pm1a_gas) :
+                    port_inw((unsigned short)pm1a_legacy);
+                if (current_a & 1u)
+                    break;
+                __asm__ volatile ("pause");
+            }
+        }
+        if (!(current_a & 1u))
+            return 0; /* ACPI mode is not active; do not write PM1 as ACPI. */
+
+        value_a = (unsigned short)((current_a & ~(7u << 10)) |
+                                   ((unsigned short)sleep_a << 10) |
+                                   (1u << 13));
+        if (use_a_gas) {
+            if (!acpi_gas_write16(pm1a_gas, value_a))
+                return 0;
+        } else {
+            port_outw((unsigned short)pm1a_legacy, value_a);
+        }
+
+        if (use_b_gas) {
+            current_b = acpi_gas_read16(pm1b_gas);
+            value_b = (unsigned short)((current_b & ~(7u << 10)) |
+                                       ((unsigned short)sleep_b << 10) |
+                                       (1u << 13));
+            (void)acpi_gas_write16(pm1b_gas, value_b);
+        } else if (pm1b_legacy && pm1b_legacy <= 0xFFFFu) {
+            current_b = port_inw((unsigned short)pm1b_legacy);
+            value_b = (unsigned short)((current_b & ~(7u << 10)) |
+                                       ((unsigned short)sleep_b << 10) |
+                                       (1u << 13));
+            port_outw((unsigned short)pm1b_legacy, value_b);
+        }
+    }
+    return 1;
+}
+
 unsigned char rtc_read(unsigned char reg) {
     port_outb(0x70, reg);
     return port_inb(0x71);
@@ -2610,6 +3195,15 @@ void reboot(void)
 void poweroff(void)
 {
     __asm__ volatile ("cli");
+
+    /* Prefer the platform's ACPI _S5_ sleep type and PM1 control registers.
+       Fixed ports below are retained for common emulators/legacy chipsets. */
+    if (acpi_shutdown_from_tables()) {
+        /* Normally power is removed before this delay expires. If firmware
+           ignored the request, try the legacy emulator/chipset ports. */
+        for (volatile unsigned int delay = 0; delay < 2000000u; ++delay)
+            __asm__ volatile ("pause");
+    }
 
     port_outw(0x604, 0x2000);
     port_outw(0x604, 0x3400);
@@ -4754,6 +5348,35 @@ int fs_read_text(
     return 1;
 }
 
+void init_print(const char *str)
+{
+    set_color(COLOR_GREEN);
+    print("[OK] ");
+    set_color(base_color);
+    print(str);
+}
+
+void pre_boot_init() {
+    /* PS/2/i8042 polling can take several seconds on modern PCs without a
+       native legacy controller. Print this before entering the bounded waits,
+       so the user knows the apparent pause is hardware probing, not a hang. */
+    print_error("[WARN] PS/2 keyboard detection may take several seconds; please wait.\n");
+    print("[BOOT] Initializing keyboard (PS/2 probe)...\n");
+    keyboard_init();
+
+    print("[PS/2] Controller/channel responded during init: ");
+    print_int(keyboard_ps2_init_responded());
+    putchar_os('\n');
+    print("[PS/2] Key scan data received: ");
+    print_int(keyboard_ps2_seen());
+    putchar_os('\n');
+    print("[XHCI] ");
+    print(xhci_status_string());
+    putchar_os('\n');
+    print("Loading boot menu..\n");
+    sleep(150);
+}
+
 void startingNWOS() {
     fb_init();
     set_color(COLOR_GREEN);
@@ -4789,6 +5412,15 @@ void startingNWOS() {
     print("[OK] ");
     set_color(base_color);
     print("MOUSE\n");
+    if (mouse_is_touchpad())
+    {
+        set_color(COLOR_GREEN);
+        print("[OK] ");
+        set_color(base_color);
+        print("TOUCHPAD (");
+        print(mouse_device_name());
+        print(")\n");
+    }
     set_color(COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
@@ -7561,6 +8193,129 @@ static const char* shell_prompt_text(void)
     return invite_user;
 }
 
+static void keyboard_input_test(void)
+{
+    unsigned long long end = timer_ms() + 5000;
+    unsigned long long next_dot = 0;
+    int received = 0;
+
+    print("Testing keyboard availablity\nIf keyboard not working check PS/2 or xhci\n");
+
+    print("\n[TEST] Press any key for 5 seconds (PS/2/legacy path): ");
+
+    while (timer_ms() < end)
+    {
+        int key = keyboard_pollkey();
+        unsigned long long now = timer_ms();
+
+        if (key != KEY_NONE)
+        {
+            print("\nKEY = ");
+            print_int(key);
+
+            if (key >= 32 && key <= 126)
+            {
+                print(" ('");
+                putchar_os((char)key);
+                print("')");
+            }
+
+            received = 1;
+        }
+
+        if (now >= next_dot)
+        {
+            putchar_os('.');
+            next_dot = now + 500;
+        }
+
+        __asm__ volatile ("pause");
+    }
+
+    if (received)
+        print("\n[INPUT] Keyboard events received!\n");
+    else
+        print("\n[INPUT] No keyboard events from the first input path.\n");
+
+    /* A PS/2/i8042 ACK alone can be a firmware compatibility response. If
+       the user pressed a key and no event arrived, try native xHCI even when
+       the PS/2 command itself was acknowledged. */
+    if (!received && !xhci_keyboard_ready())
+    {
+        print("\n[USB] No key events yet; trying native xHCI fallback...\n");
+        (void)xhci_init();
+        print("[XHCI] Status: ");
+        print(xhci_status_string());
+        putchar_os('\n');
+        print("[XHCI] Keyboard ready: ");
+        print_int(xhci_keyboard_ready());
+        putchar_os('\n');
+
+        if (xhci_keyboard_ready())
+        {
+            unsigned long long usb_end = timer_ms() + 5000;
+            unsigned long long usb_next_dot = 0;
+            int usb_received = 0;
+            print("[TEST] Press any key for 5 seconds (USB xHCI): ");
+            while (timer_ms() < usb_end)
+            {
+                int key = keyboard_pollkey();
+                unsigned long long now = timer_ms();
+                if (key != KEY_NONE)
+                {
+                    print("\nKEY = ");
+                    print_int(key);
+                    if (key >= 32 && key <= 126)
+                    {
+                        print(" ('");
+                        putchar_os((char)key);
+                        print("')");
+                    }
+                    usb_received = 1;
+                }
+                if (now >= usb_next_dot)
+                {
+                    putchar_os('.');
+                    usb_next_dot = now + 500;
+                }
+                __asm__ volatile ("pause");
+            }
+            if (usb_received)
+            {
+                received = 1;
+                print("\n[INPUT] USB keyboard events received!\n");
+            }
+            else
+                print("\n[INPUT] xHCI is ready, but no USB key reports arrived.\n");
+        }
+    }
+
+    print("\n\n========== INPUT DEBUG ==========\n");
+
+    print("[XHCI] Status: ");
+    print(xhci_status_string());
+    putchar_os('\n');
+
+    print("[XHCI] Keyboard ready: ");
+    print_int(xhci_keyboard_ready());
+    putchar_os('\n');
+
+    print("[PS2] Controller/channel responded at init: ");
+    print_int(keyboard_ps2_init_responded());
+    putchar_os('\n');
+    print("[PS2] Key scan data received: ");
+    print_int(keyboard_ps2_seen());
+    putchar_os('\n');
+
+    print("================================\n");
+
+    print_error("If keyboard isnt working, check if connected\nOr check PS/2 / xhci availablity\n");
+
+    print("Getting ready to start NwOS...\n");
+
+    sleep(4000);
+}
+
 void cmd_settings(void)
 {
     print_title("\n=== SETTINGS ===\n\n");
@@ -8111,6 +8866,7 @@ static void boot_system(void)
 
 void kernel_main(void) {
     fb_init();
+    print("[BOOT] fb_init() returned.\n");
     fb_set_mode(NWOS_BOOT_WIDTH, NWOS_BOOT_HEIGHT);
 
     if (!fb_is_available()) {
@@ -8129,6 +8885,19 @@ void kernel_main(void) {
 
         while (1) __asm__ volatile ("hlt");
     }
+
+    print("[BOOT] Initializing physical memory manager...\n");
+    if (!pmm_init()) {
+        print_error(
+            "PMM initialization failed; USB DMA unavailable.\n"
+        );
+    } else {
+        print("[BOOT] PMM initialized.\n");
+    }
+
+    pre_boot_init();
+
+    keyboard_input_test();
 
     ata_init();
 

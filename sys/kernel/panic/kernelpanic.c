@@ -13,7 +13,7 @@ extern void putchar_os(char c);
 #define COLOR_LIGHT_RED  12
 #define COLOR_YELLOW     14
 #define COLOR_WHITE      15
-#define COLOR_CYAN       11
+//#define COLOR_CYAN       11
 
 #define PANIC_COLOR      0x1F 
 #define PANIC_BG         0x1F

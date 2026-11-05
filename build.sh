@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
 
-set -u
+
+# Unusable now,
+# Run 'make' for build
+
+
+set -Eeuo pipefail
+
+on_error() {
+    local status=$?
+    printf '\n[BUILD ERROR] command failed (exit %s) at line %s:\n  %s\n' \
+        "$status" "${BASH_LINENO[0]:-unknown}" "${BASH_COMMAND:-unknown}" >&2
+    exit "$status"
+}
+trap on_error ERR
 
 fail() {
-    echo
-    echo "============================"
-    echo "       BUILDING FAILED"
-    echo "============================"
-    read -rp "Press Enter to continue..." || true
+    printf '\n[BUILD FAILED] %s\n' "$*" >&2
     exit 1
 }
 
-cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
-ROOT="$PWD"
-
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+ROOT="$(pwd -P)"
 BUILD="$ROOT/build"
 ISO_ROOT="$BUILD/iso-root"
-LIMINE_DIR="$ROOT/tools/limine"
+ISO_OUT="$ROOT/NwOS.iso"
 
 TARGET="x86_64-unknown-none-elf"
 
@@ -26,6 +34,13 @@ GUEST_WIDTH=1280
 GUEST_HEIGHT=720
 GUI_WIDTH=1280
 GUI_HEIGHT=720
+
+LIMINE_VERSION="12.9.6"
+LIMINE_URL="https://github.com/Limine-Bootloader/Limine/releases/download/v${LIMINE_VERSION}/limine-binary.tar.gz"
+LIMINE_SHA256="b38aabb042b0c0f9f562b7741be3c1204838d7bbacfa78bb411c674bd5b984ee"
+LIMINE_ARCHIVE="$BUILD/limine-binary-v${LIMINE_VERSION}.tar.gz"
+LIMINE_DIR="$BUILD/limine-v${LIMINE_VERSION}"
+
 
 CFLAGS=(
     "--target=$TARGET"
@@ -48,6 +63,7 @@ CFLAGS=(
     -I "$BUILD"
 )
 
+# Keep this list in sync with the source files in the NwOS repository.
 SOURCES=(
     sys/kernel/kernel.c
     sys/kernel/nwo_loader.c
@@ -64,6 +80,9 @@ SOURCES=(
     drivers/mouse.c
     drivers/disk.c
     drivers/ahci.c
+    drivers/usb/xhci.c
+    sys/kernel/memory/pmm.c
+    sys/kernel/memory/mmu.c
     sys/kernel/network/e1000.c
     sys/kernel/network/pci.c
     sys/kernel/network/timer.c
@@ -84,205 +103,155 @@ SOURCES=(
     sys/kernel/package.c
 )
 
+# Optional driver: compile it when this checkout contains the local addition.
+if [[ -f drivers/touchpad.c ]]; then
+    SOURCES+=(drivers/touchpad.c)
+else
+    printf 'NOTE: drivers/touchpad.c not found; building without the optional touchpad driver.\n'
+fi
+
 mkdir -p "$BUILD" "$ROOT/img"
 
-STEPS=$(( ${#SOURCES[@]} + 9 ))
-N=0
-
-step() {
-    N=$((N + 1))
-    echo
-    echo "[$N/$STEPS] $1"
-}
-
-# Find Limine assets in common installation directories.
-find_limine_asset() {
-    local name="$1"
-    local dir
-    local found
-
-    local dirs=(
-        "$LIMINE_DIR"
-        "$BUILD/limine-binary"
-        "$ROOT/limine-binary"
-        /usr/share/limine
-        /usr/local/share/limine
-        /usr/share/limine-binary
-    )
-
-    for dir in "${dirs[@]}"; do
-        [[ -d "$dir" ]] || continue
-
-        found="$(find "$dir" -type f -iname "$name" \
-            -print -quit 2>/dev/null || true)"
-
-        if [[ -n "$found" ]]; then
-            printf '%s\n' "$found"
-            return 0
-        fi
-    done
-
-    return 1
-}
-
-echo "=== Building NwOS for x86-64 (Linux Mint) ==="
-
-step "Checking build tools..."
-
-for tool in clang ld.lld nasm xorriso python3 curl tar; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
-        echo "ERROR: missing tool: $tool"
-        echo "Install build dependencies with:"
-        echo "sudo apt install clang lld nasm xorriso python3 curl tar"
-        fail
-    fi
+need_tools=(clang ld.lld nasm xorriso python3 curl tar sha256sum make file)
+for tool in "${need_tools[@]}"; do
+    command -v "$tool" >/dev/null 2>&1 || fail "Missing tool '$tool'. Install build dependencies, e.g. sudo apt install clang lld nasm xorriso python3 curl tar coreutils make file."
 done
 
-step "Preparing video config and wallpaper..."
+printf '=== Building NwOS for x86_64 ===\n'
+printf 'Project: %s\n' "$ROOT"
+printf 'Limine:  v%s\n' "$LIMINE_VERSION"
 
-cat > "$BUILD/video_config.h" <<EOF
+# Generate build-time video settings.
+cat > "$BUILD/video_config.h" <<EOF2
 #ifndef NWOS_VIDEO_CONFIG_H
 #define NWOS_VIDEO_CONFIG_H
-
 #define NWOS_BOOT_WIDTH $BOOT_WIDTH
 #define NWOS_BOOT_HEIGHT $BOOT_HEIGHT
 #define NWOS_GUI_WIDTH $GUI_WIDTH
 #define NWOS_GUI_HEIGHT $GUI_HEIGHT
-
 #endif
-EOF
+EOF2
 
-python3 tools/gen_wallpaper.py || fail
+[[ -f tools/gen_wallpaper.py ]] || fail "tools/gen_wallpaper.py is missing"
+[[ -f tools/gen_packages.py ]] || fail "tools/gen_packages.py is missing"
+python3 tools/gen_wallpaper.py
+python3 tools/gen_packages.py
 
-step "Generating local package repository..."
-
-python3 tools/gen_packages.py || fail
-
-step "Preparing Limine bootloader..."
-
-LIMINE_BIOS_SYS="$(find_limine_asset limine-bios.sys || true)"
-LIMINE_BIOS_CD="$(find_limine_asset limine-bios-cd.bin || true)"
-LIMINE_UEFI_CD="$(find_limine_asset limine-uefi-cd.bin || true)"
-LIMINE_EFI64="$(find_limine_asset BOOTX64.EFI || true)"
-LIMINE_EFI32="$(find_limine_asset BOOTIA32.EFI || true)"
-
-# If assets are missing, download the official binary release.
-if [[ -z "$LIMINE_BIOS_SYS" ||
-      -z "$LIMINE_BIOS_CD" ||
-      -z "$LIMINE_UEFI_CD" ||
-      -z "$LIMINE_EFI64" ]]; then
-
-    echo "Limine assets not found. Downloading official binary release..."
-
-    mkdir -p "$BUILD/limine-binary"
-
-    curl -fL --retry 2 \
-        "https://github.com/Limine-Bootloader/Limine/releases/latest/download/limine-binary.tar.gz" \
-        -o "$BUILD/limine-binary.tar.gz" || {
-            echo "ERROR: could not download Limine."
-            echo "Check your internet connection."
-            fail
-        }
-
-    tar -xzf "$BUILD/limine-binary.tar.gz" \
-        -C "$BUILD/limine-binary" || fail
-
-    LIMINE_BIOS_SYS="$(find_limine_asset limine-bios.sys || true)"
-    LIMINE_BIOS_CD="$(find_limine_asset limine-bios-cd.bin || true)"
-    LIMINE_UEFI_CD="$(find_limine_asset limine-uefi-cd.bin || true)"
-    LIMINE_EFI64="$(find_limine_asset BOOTX64.EFI || true)"
-    LIMINE_EFI32="$(find_limine_asset BOOTIA32.EFI || true)"
+# Download and verify a single official Limine binary release.
+if [[ ! -f "$LIMINE_ARCHIVE" ]] || \
+   ! printf '%s  %s\n' "$LIMINE_SHA256" "$LIMINE_ARCHIVE" | sha256sum --check --status; then
+    rm -f "$LIMINE_ARCHIVE"
+    printf '\nDownloading Limine v%s...\n' "$LIMINE_VERSION"
+    curl --fail --location --retry 3 --output "$LIMINE_ARCHIVE" "$LIMINE_URL"
 fi
+printf '%s  %s\n' "$LIMINE_SHA256" "$LIMINE_ARCHIVE" | sha256sum --check -
 
-for asset in \
+rm -rf "$LIMINE_DIR"
+mkdir -p "$LIMINE_DIR"
+tar -xzf "$LIMINE_ARCHIVE" -C "$LIMINE_DIR"
+
+find_asset() {
+    local wanted="$1"
+    find "$LIMINE_DIR" -type f -iname "$wanted" -print -quit
+}
+
+LIMINE_BIOS_SYS="$(find_asset limine-bios.sys)"
+LIMINE_BIOS_CD="$(find_asset limine-bios-cd.bin)"
+LIMINE_UEFI_CD="$(find_asset limine-uefi-cd.bin)"
+LIMINE_EFI64="$(find_asset BOOTX64.EFI)"
+
+for spec in \
     "limine-bios.sys:$LIMINE_BIOS_SYS" \
     "limine-bios-cd.bin:$LIMINE_BIOS_CD" \
     "limine-uefi-cd.bin:$LIMINE_UEFI_CD" \
     "BOOTX64.EFI:$LIMINE_EFI64"; do
-
-    name="${asset%%:*}"
-    path="${asset#*:}"
-
-    if [[ -z "$path" || ! -f "$path" ]]; then
-        echo "ERROR: required Limine asset not found: $name"
-        fail
-    fi
+    name="${spec%%:*}"
+    path="${spec#*:}"
+    [[ -n "$path" && -f "$path" ]] || fail "Limine v${LIMINE_VERSION}: missing $name"
 done
 
-step "Assembling bootloader..."
+# Build the host-side `limine` utility from the binary release package.
+# The archive may have a top-level subdirectory; find its Makefile recursively.
+LIMINE_TOOL="$(find "$LIMINE_DIR" -type f -name limine -perm /111 -print -quit)"
+if [[ -z "$LIMINE_TOOL" ]]; then
+    LIMINE_MAKEFILE="$(find "$LIMINE_DIR" -type f \
+        \( -name Makefile -o -name makefile -o -name GNUmakefile \) \
+        -print -quit)"
+    [[ -n "$LIMINE_MAKEFILE" ]] || {
+        printf '\nERROR: no Makefile found in extracted Limine binary package.\n' >&2
+        printf 'Archive files (first 100):\n' >&2
+        find "$LIMINE_DIR" -maxdepth 5 -type f -printf '%P\n' | sort | head -100 >&2 || true
+        fail "Cannot build the Limine host utility; inspect the archive layout above"
+    }
 
-nasm -f bin sys/boot/boot.asm \
-    -o "$BUILD/boot.bin" || fail
+    LIMINE_MAKE_DIR="$(dirname "$LIMINE_MAKEFILE")"
+    printf '\nBuilding Limine host utility in: %s\n' "$LIMINE_MAKE_DIR"
+    make -C "$LIMINE_MAKE_DIR" CC=clang
+    LIMINE_TOOL="$(find "$LIMINE_DIR" -type f -name limine -perm /111 -print -quit)"
+fi
+[[ -n "$LIMINE_TOOL" && -x "$LIMINE_TOOL" ]] || fail "Could not find/build the Limine host utility (limine)"
 
-step "Assembling kernel entry..."
-
-nasm -f elf64 sys/kernel/kernel_entry.asm \
-    -o "$BUILD/kernel_entry.o" || fail
+# Assemble the project's auxiliary boot sector and kernel entry.
+nasm -f bin sys/boot/boot.asm -o "$BUILD/boot.bin"
+nasm -f elf64 sys/kernel/kernel_entry.asm -o "$BUILD/kernel_entry.o"
 
 OBJS=("$BUILD/kernel_entry.o")
-
-# Keep object filenames unique even when source basenames match.
 for src in "${SOURCES[@]}"; do
-    step "Compiling $src"
-
-    if [[ ! -f "$src" ]]; then
-        echo "ERROR: missing source file: $src"
-        fail
-    fi
-
+    [[ -f "$src" ]] || fail "Source file is missing: $src"
     obj_name="${src//\//_}"
     obj_name="${obj_name//./_}"
     obj="$BUILD/$obj_name.o"
 
     if [[ "$src" == compiler/*.c ]]; then
         clang "${CFLAGS[@]}" -DNWC_KERNEL \
-            -I "$ROOT/compiler/kernel_include" -I "$ROOT/compiler" \
-            -c "$src" -o "$obj" || fail
+            -I "$ROOT/compiler/kernel_include" \
+            -I "$ROOT/compiler" \
+            -c "$src" -o "$obj"
     else
-        clang "${CFLAGS[@]}" -c "$src" -o "$obj" || fail
+        clang "${CFLAGS[@]}" -c "$src" -o "$obj"
     fi
     OBJS+=("$obj")
 done
 
-step "Linking kernel..."
-
 ld.lld -m elf_x86_64 -nostdlib -z noexecstack \
-    --gc-sections -T linker.ld \
-    "${OBJS[@]}" -o "$BUILD/kernel.elf" || fail
+    --gc-sections -T "$ROOT/linker.ld" \
+    "${OBJS[@]}" -o "$BUILD/kernel.elf"
 
-step "Preparing ISO tree..."
+[[ -s "$BUILD/kernel.elf" ]] || fail "Kernel was not created"
+file "$BUILD/kernel.elf"
 
-# IMPORTANT: never delete the repository's existing ./iso directory.
-# All generated ISO contents live under ./build/iso-root.
-rm -rf "$ISO_ROOT"
-
-mkdir -p \
-    "$ISO_ROOT/boot/limine" \
-    "$ISO_ROOT/EFI/BOOT"
-
-cp "$BUILD/kernel.elf" "$ISO_ROOT/boot/kernel.elf" || fail
-
-cp "$LIMINE_BIOS_SYS" "$ISO_ROOT/boot/limine/" || fail
-cp "$LIMINE_BIOS_CD" "$ISO_ROOT/boot/limine/" || fail
-cp "$LIMINE_UEFI_CD" "$ISO_ROOT/boot/limine/" || fail
-cp "$LIMINE_EFI64" "$ISO_ROOT/EFI/BOOT/BOOTX64.EFI" || fail
-
-if [[ -n "$LIMINE_EFI32" && -f "$LIMINE_EFI32" ]]; then
-    cp "$LIMINE_EFI32" "$ISO_ROOT/EFI/BOOT/BOOTIA32.EFI" || fail
+# Verify the protocol header when grub-file is installed.
+if command -v grub-file >/dev/null 2>&1; then
+    grub-file --is-x86-multiboot2 "$BUILD/kernel.elf" || \
+        fail "kernel.elf does not contain a valid Multiboot2 header"
+    printf 'Multiboot2 header: OK\n'
+else
+    printf 'NOTE: grub-file not installed; skipped Multiboot2 header check.\n'
 fi
 
-cat > "$ISO_ROOT/boot/limine/limine.conf" <<EOF
-timeout: 0
+# Assemble the ISO tree. Do not touch the repository's ./iso directory.
+rm -rf "$ISO_ROOT"
+mkdir -p "$ISO_ROOT/boot/limine" "$ISO_ROOT/EFI/BOOT"
+
+install -m 0644 "$BUILD/kernel.elf" "$ISO_ROOT/boot/kernel.elf"
+install -m 0644 "$LIMINE_BIOS_SYS" "$ISO_ROOT/boot/limine/limine-bios.sys"
+install -m 0644 "$LIMINE_BIOS_CD" "$ISO_ROOT/boot/limine/limine-bios-cd.bin"
+install -m 0644 "$LIMINE_UEFI_CD" "$ISO_ROOT/boot/limine/limine-uefi-cd.bin"
+install -m 0644 "$LIMINE_EFI64" "$ISO_ROOT/EFI/BOOT/BOOTX64.EFI"
+
+cat > "$ISO_ROOT/boot/limine/limine.conf" <<EOF2
+timeout: 3
 
 /NwOS
     protocol: multiboot2
     path: boot():/boot/kernel.elf
     resolution: ${GUEST_WIDTH}x${GUEST_HEIGHT}x32
-EOF
+EOF2
 
-step "Building bootable ISO..."
-
-rm -f "$ROOT/NwOS.iso"
+# Official Limine hybrid ISO layout (BIOS El Torito + UEFI El Torito/ESP).
+# Create a BIOS/UEFI El Torito ISO for Ventoy.
+# Ventoy presents the ISO as a virtual CD-ROM.
+rm -f "$ISO_OUT"
 
 xorriso -as mkisofs \
     -R -r -J \
@@ -290,27 +259,34 @@ xorriso -as mkisofs \
     -no-emul-boot \
     -boot-load-size 4 \
     -boot-info-table \
+    -hfsplus \
+    -apm-block-size 2048 \
     --efi-boot boot/limine/limine-uefi-cd.bin \
     -efi-boot-part \
     --efi-boot-image \
     --protective-msdos-label \
     "$ISO_ROOT" \
-    -o "$ROOT/NwOS.iso" || fail
+    -o "$ISO_OUT"
 
-if [[ ! -s "$ROOT/NwOS.iso" ]]; then
-    echo "ERROR: ISO was not created."
-    fail
-fi
+[[ -s "$ISO_OUT" ]] || fail "ISO was not created"
 
-# The ISO is already a hybrid image: El Torito BIOS + UEFI. Running
-# `limine bios-install` here is only needed for raw HDD images, not ISOs.
+"$LIMINE_TOOL" bios-install "$ISO_OUT"
+# Limine's documented hybrid-ISO post-processing step (BIOS boot code).
+# This edits the ISO file only; it does not write to any physical disk.
 
-echo
-echo "============================"
-echo "       BUILD SUCCESS"
-echo "============================"
-echo
-ls -lh "$ROOT/NwOS.iso" "$BUILD/kernel.elf"
-echo
-echo "ISO root: $ISO_ROOT"
-echo "Repository ./iso directory was not deleted."
+printf '\n=== ISO verification ===\n'
+printf '\nEFI executable:\n'
+file "$ISO_ROOT/EFI/BOOT/BOOTX64.EFI"
+printf '\nISO boot catalog (must include an EFI/0xEF entry):\n'
+xorriso -indev "$ISO_OUT" -report_el_torito plain
+printf '\nISO file:\n'
+ls -lh "$ISO_OUT"
+sha256sum "$ISO_OUT"
+
+printf '\n============================\n'
+printf '       BUILD SUCCESS\n'
+printf '============================\n'
+printf 'ISO: %s\n' "$ISO_OUT"
+printf 'ISO tree: %s\n' "$ISO_ROOT"
+printf 'Limine: v%s\n' "$LIMINE_VERSION"
+

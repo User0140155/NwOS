@@ -27,3 +27,5 @@ refresh_nwc.sh
 tools/gen_sound.py
 NwC.md
 shortNwC.md
+make
+apply.py

@@ -125,10 +125,10 @@ int e1000_init(void)
         return E1000_ERR_NO_DEVICE;
     }
 
-    unsigned int cmd = pci_read32(dev.bus, dev.dev, dev.func, 0x04) & 0xFFFF;
-    pci_write32(dev.bus, dev.dev, dev.func, 0x04, cmd | 0x06);
+    unsigned int cmd = pci_read32(dev.bus, dev.slot, dev.func, 0x04) & 0xFFFF;
+    pci_write32(dev.bus, dev.slot, dev.func, 0x04, cmd | 0x06);
 
-    unsigned int bar0 = pci_read32(dev.bus, dev.dev, dev.func, 0x10);
+    unsigned int bar0 = pci_read32(dev.bus, dev.slot, dev.func, 0x10);
 
     if (bar0 & 1)
         return E1000_ERR_BAD_BAR;

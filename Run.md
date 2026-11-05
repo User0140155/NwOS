@@ -48,17 +48,14 @@ Download all this from official site:
 1. 12 MB RAM
 2. Any potato videocard
 3. Any potato CPU
-4. HDD 1.3 MB
+4. HDD/SSD 10+ MB
 
 ## Recommended
-1. 20 MB RAM
+1. 128 MB RAM (for UEFI)
 2. Any potato videocard
 3. Any potato CPU
-4. HDD 100 MB
+4. HDD/SSD 100+ MB
 
 ## Note
 
-Dont run it on real PC: it may not support:
-1. Keyboard
-2. Mouse driver
-3. Internet connection
+It can run on some PC with UEFI

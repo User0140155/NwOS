@@ -8,8 +8,8 @@ header_start:
 
     align 8
     dw 5
-    dw 0
-    dd 24
+    dw 1
+    dd 20
     dd 1280
     dd 720
     dd 32
@@ -32,11 +32,11 @@ PDE_UNCACHED    equ 0x10
 MMIO_FIRST_PDE  equ 1536
 
 section .data
+align 4
 global multiboot_info_ptr
 multiboot_info_ptr: dd 0
 
 section .text.start progbits alloc exec nowrite align=16
-
 bits 32
 
 _start:
@@ -76,7 +76,6 @@ _start:
     mov eax, pdpt
     or  eax, PTE_PRESENT_RW
     mov [pml4], eax
-
     xor ecx, ecx
 .fill_pdpt:
     mov eax, ecx
@@ -102,12 +101,12 @@ _start:
     cmp ecx, 2048
     jne .fill_pd
 
-    mov eax, pml4
-    mov cr3, eax
-
     mov eax, cr4
     or  eax, 1 << 5
     mov cr4, eax
+
+    mov eax, pml4
+    mov cr3, eax
 
     mov ecx, 0xC0000080
     rdmsr
@@ -169,14 +168,18 @@ long_mode_entry:
     lea rsp, [rel stack_top]
     cld
 
-    fninit
     mov rax, cr0
-    and ax, 0xFFFB
-    or  ax, 0x0002
+    and rax, ~(1 << 2)
+    and rax, ~(1 << 3)
+    or  rax, (1 << 1)
+    or  rax, (1 << 5)
     mov cr0, rax
+
     mov rax, cr4
-    or  ax, (1 << 9) | (1 << 10)
+    or  rax, (1 << 9) | (1 << 10)
     mov cr4, rax
+
+    fninit
 
     lea rdi, [rel __bss_start]
     lea rcx, [rel __bss_end]
@@ -191,6 +194,7 @@ long_mode_entry:
     cli
     hlt
     jmp .hang
+
 section .pagetables nobits alloc noexec write align=4096
 pml4:   resb 4096
 pdpt:   resb 4096
@@ -198,5 +202,5 @@ pd:     resb 4096 * 4
 
 section .stack nobits alloc noexec write align=16
 stack_bottom:
-        resb 128 * 1024
+    resb 128 * 1024
 stack_top:

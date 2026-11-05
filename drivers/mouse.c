@@ -1,4 +1,5 @@
 #include "mouse.h"
+#include "touchpad.h"
 
 unsigned int fb_get_width(void);
 unsigned int fb_get_height(void);
@@ -89,6 +90,29 @@ void mouse_set_bounds(int width, int height)
     mouse_pos_x = width / 2;
     mouse_pos_y = height / 2;
     mouse_cycle = 0;
+
+    touchpad_set_bounds(width, height);
+}
+
+void mouse_set_state(int x, int y, int buttons)
+{
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    if (x > mouse_max_x)
+        x = mouse_max_x;
+    if (y > mouse_max_y)
+        y = mouse_max_y;
+
+    mouse_pos_x = x;
+    mouse_pos_y = y;
+    mouse_button_state = buttons & 0x07;
+}
+
+void mouse_set_buttons(int buttons)
+{
+    mouse_button_state = buttons & 0x07;
 }
 
 void mouse_init(void)
@@ -133,6 +157,12 @@ void mouse_init(void)
     ps2_wait_input();
     ps2_outb(PS2_COMMAND_PORT, 0xAE);
 
+    if (touchpad_init((int)width, (int)height))
+    {
+        mouse_cycle = 0;
+        return;
+    }
+
     mouse_write(PS2_MOUSE_DEFAULTS);
     mouse_read_ack();
 
@@ -147,6 +177,12 @@ void mouse_init(void)
 
 void mouse_handle_byte(unsigned char byte)
 {
+    if (touchpad_active())
+    {
+        touchpad_handle_byte(byte);
+        return;
+    }
+
     if (mouse_cycle == 0 && !(byte & 0x08))
         return;
 
@@ -214,6 +250,24 @@ int mouse_y(void)
 
 int mouse_buttons(void)
 {
+    int buttons;
+
     mouse_poll();
-    return mouse_button_state;
+    buttons = mouse_button_state;
+    touchpad_clear_tap();
+
+    return buttons;
+}
+
+int mouse_is_touchpad(void)
+{
+    return touchpad_active();
+}
+
+const char* mouse_device_name(void)
+{
+    if (touchpad_active())
+        return "Synaptics touchpad";
+
+    return "PS/2 mouse";
 }
