@@ -8,9 +8,9 @@
 ```
 # NwOS
 
-<img width="718" height="402" alt="sys" src="https://github.com/user-attachments/assets/c5d27037-071e-4448-bf87-04b05b9481ad" />
+<img width="638" height="479" alt="nwfetch" src="https://github.com/user-attachments/assets/febfe88c-9a03-4a39-b7d3-1f21a3ac1d9c" />
 
-A small x86_64 operating system written in C and NASM
+x86_64 operating system written in C and NASM
 
 ## Features
 
@@ -27,7 +27,13 @@ A small x86_64 operating system written in C and NASM
 - Kernel panic Safe/Fatal
 - Compiler
 - Network
-
+- .nwo files inside of OS
+- UEFI/Legacy bios
+- e1000
+- xHCI
+- ahci
+- liveboot
+- 
 ## ⚠️ Official Developer Account Update
 
 I lost access to my previous GitHub account due to 2FA recovery issues.
