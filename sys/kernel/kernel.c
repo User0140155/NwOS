@@ -8195,13 +8195,11 @@ static const char* shell_prompt_text(void)
 
 static void keyboard_input_test(void)
 {
-    unsigned long long end = timer_ms() + 5000;
+    unsigned long long end = timer_ms() + 2500;
     unsigned long long next_dot = 0;
     int received = 0;
 
     print("Testing keyboard availablity\nIf keyboard not working check PS/2 or xhci\n");
-
-    print("\n[TEST] Press any key for 5 seconds (PS/2/legacy path): ");
 
     while (timer_ms() < end)
     {
@@ -8313,7 +8311,18 @@ static void keyboard_input_test(void)
 
     print("Getting ready to start NwOS...\n");
 
-    sleep(4000);
+    sleep(2500);
+
+    print("Kernel Starting..\n");
+    sleep(120);
+    print("Loading installer..\n");
+    print("STATUS: ");
+    print_success("[GOOD]\n");
+    sleep(300);
+    print("Warning: If your keyboard isnt working then:\n 1.Turn off PC\n 2.Launch OS inside of the VM\n (If you still want real-pc launch, wait until update of drivers\n)");
+    sleep(600);
+    print("Getting ready to boot menu...\n");
+    sleep(1200);
 }
 
 void cmd_settings(void)
