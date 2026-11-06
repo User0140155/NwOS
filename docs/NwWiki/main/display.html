@@ -1,0 +1,40 @@
+<div class="related">
+    <strong>Related articles</strong>
+    <ul>
+        <li><a href="#boot">Boot: Limine, UEFI and legacy</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ul>
+</div>
+
+<p>NwOS supports VGA text output and VBE graphics. Which one you get depends on how the system was booted.</p>
+
+<h2>VGA text mode</h2>
+<p>VGA text mode is the classic 80×25 character screen at physical address <code>0xB8000</code>. It needs almost no setup, which makes it useful for early boot messages and debugging.</p>
+
+<h2>VBE framebuffer</h2>
+<p>VBE (VESA BIOS Extensions) provides a linear framebuffer with a higher resolution and 32-bit colour. The bootloader sets the mode and gives the kernel the framebuffer address, pitch and resolution.</p>
+
+<table>
+    <tr><th></th><th>VGA text</th><th>VBE</th></tr>
+    <tr><td>Resolution</td><td>80×25 characters</td><td>Pixels, e.g. 1024×768</td></tr>
+    <tr><td>Colours</td><td>16</td><td>True colour</td></tr>
+    <tr><td>Drawing</td><td>Write characters</td><td>Write pixels</td></tr>
+</table>
+
+<h2>Choosing a resolution</h2>
+<p>The resolution is chosen by the bootloader. In Limine it is set per boot entry with the <code>resolution</code> option (see the Limine documentation).</p>
+<pre><code>resolution: 1024x768x32</code></pre>
+
+<div class="box note">
+    <span class="box-title">Note</span>
+    <p>If the requested mode is not available, Limine falls back to a mode the hardware supports.</p>
+</div>
+
+<h2>VirtualBox / QEMU</h2>
+<ul>
+    <li>QEMU: use <code>-vga std</code> for a VBE-capable adapter.</li>
+    <li>VirtualBox: pick the <em>VBoxVGA</em> or <em>VMSVGA</em> graphics controller.</li>
+</ul>
+
+<h2>Black screen</h2>
+<p>See <a href="#troubleshooting">Troubleshooting</a>.</p>

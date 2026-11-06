@@ -1,0 +1,108 @@
+<div class="related">
+    <strong>Related articles</strong>
+    <ul>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ul>
+</div>
+
+<p><strong>NwC</strong> is the programming language built for NwOS. Source files have the <code>.nw</code> extension, the compiler (written in C + nasm) produces <code>.nwo</code> binaries, and those run directly inside the OS. The compiler itself runs inside NwOS.</p>
+
+<h2>Hello, NwOS</h2>
+<p>Create a file <code>hello.nw</code>:</p>
+<pre><code>#include &lt;nwc.h&gt;
+1A main() {
+     nw::out &lt;&lt; "Hello, NwOS!\n";
+     return 0;
+}</code></pre>
+
+<h2>Compile and run</h2>
+<p>The compiler turns <code>hello.nw</code> into <code>hello.nwo</code>, which you then run in the OS.</p>
+<p>To compile press 'F5' inside of editor, or execute command:</p>
+<pre><code>nwc &lt;FILENAME&gt;.nw -o &lt;FILENAME&gt;.nwo</code></pre>
+<p>And then execute .nwo file with</p>
+<pre><code>run &lt;FILENAME&gt;.nwo</code></pre>
+
+<h2>Language basics</h2>
+<h3>Program structure</h3>
+<ul>
+    <li><code>#include &lt;nwc.h&gt;</code> brings in the standard NwC header.</li>
+    <li><code>1A main()</code> is the entry point of the program.</li>
+    <li><code>return 0;</code> ends the program successfully.</li>
+</ul>
+
+<h3>Output</h3>
+<p>Text is written with the stream <code>nw::out</code> and the <code>&lt;&lt;</code> operator:</p>
+<pre><code>nw::out &lt;&lt; "Text\n";</code></pre>
+
+<h2>File types</h2>
+<table>
+    <tr><th>Extension</th><th>Meaning</th></tr>
+    <tr><td><code>.nw</code></td><td>NwC source code</td></tr>
+    <tr><td><code>.nwo</code></td><td>Compiled program that runs inside NwOS</td></tr>
+    <tr><td><code>.lnw</code></td><td>Low level NwC (not released right now)</td></tr>
+</table>
+
+<h2>Shell program</h2>
+<p>Advanced NwC functions (input, rect ...)</p>
+<p>Lets code shell-program that allows input</p>
+
+<pre><code>#include &lt;nwc.h&gt;
+1A main() {
+    while (1) {
+        nw::out &lt;&lt; "Shell\n";
+        char buf[64];
+        nw::cin &gt;&gt; buf;
+        if (strcmp(buf, "help") == 0) {
+            nw::out &lt;&lt; "help, exit\n";
+        }
+        else if (strcmp(buf, "exit") == 0) {
+            break;
+        }
+    }
+    return 0;
+}
+</code></pre>
+
+<h3>Output</h3>
+<p>Shell</p>
+<p>Program wait until input, if input is 'help' then output 'help, exit'</p>
+<p>If user inputs 'exit' then program is leaving to OS</p>
+<p>This is like C++ syntax</p>
+
+<h2>Calculator</h2>
+<p>We made an calculator that executes with command 'calc' inside of OS!</p>
+<p>It placed at sys/apps/calculator.nwo</p>
+<p>Lets write it right now</p>
+
+<pre><code>#include &lt;nwc.h&gt;
+1A main() {
+    nw::out &lt;&lt; "Calculator\n";
+    nw::out &lt;&lt; "Enter first number: ";
+    1A first_num
+    1A second_num
+    nw::cin &gt;&gt; first_num;
+    nw::out &lt;&lt; "Enter second number: ";
+    nw::cin &gt;&gt; second_num;
+    nw::out &lt;&lt; "Enter operating: ";
+    char operation_calc[2];
+    nw::cin &gt;&gt; operation_calc;
+    if (strcmp(operation_calc, "+") == 0) {
+        nw::out &lt;&lt; "Result: " &lt;&lt; first_num + second_num;
+    } else if (strcmp(operation_calc, "-") == 0) {
+        nw::out &lt;&lt; "Result: " &lt;&lt; first_num - second_num;
+    } else if (strcmp(operation_calc, "*") == 0) {
+        nw::out &lt;&lt; "Result: " &lt;&lt; first_num * second_num;
+    } else if (strcmp(operation_calc, "/") == 0) {
+        nw::out &lt;&lt; "Result: " &lt;&lt; first_num / second_num;
+    }
+    return 0;
+}
+</code></pre>
+
+<h3>Output</h3>
+<p>Output is default calculator</p>
+<p>It asks for first num, second, and operating, checking char operation_calc, and outputs result</p>
+
+<h2>See also</h2>
+<p>The NwC section on the <a href="../index.html#nwc">main page</a> and the <a href="https://github.com/User0140155/NwOS/">source code on GitHub</a>.</p>

@@ -91,6 +91,7 @@ SOURCES_REL := \
     sys/kernel/network/net.c \
     sys/kernel/fb.c \
     sys/kernel/Apps/Games/snake.c \
+	sys/kernel/memory/mem.c \
     sys/kernel/apps_list.c \
     sys/kernel/dead_boot.c \
 	sys/kernel/memory/pmm.c \

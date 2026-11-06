@@ -14,6 +14,7 @@
 #include "kernel.h"
 #include "../../compiler/nwc_kernel.h"
 #include "memory/pmm.h"
+#include "memory/mem.h"
 #include "Apps/fileStats/filestats.h"
 #include "../../drivers/usb/xhci.h"
 #include "Apps/baseconverter/baseconverter.h"
@@ -69,7 +70,12 @@ const char* mouse_device_name(void);
 */
 
 void putchar_os(char c);
+unsigned int nwf_ram_mb(void);
 
+unsigned long nwf_ram_total_kb(void);
+unsigned long nwf_ram_used_kb(void);
+unsigned long nwf_ram_free_kb(void);
+int           nwf_ram_used_percent(void);
 void print(const char* text);
 void fs_mkdir(const char* name);
 void fs_rmdir(const char* name);
@@ -488,11 +494,27 @@ void render_view(void)
 }
 static void cmd_mem(void)
 {
-    unsigned int ram_mb = nwf_ram_mb();
+    unsigned int  ram_mb  = nwf_ram_mb();
+    unsigned long used_kb = nwf_ram_used_kb();
+    unsigned long free_kb = nwf_ram_free_kb();
+    int           percent = nwf_ram_used_percent();
+
     print_title("Memory Information:\n");
+
     print("  Total RAM: ");
     print_int((int)ram_mb);
     print(" MiB\n");
+
+    print("  Used:      ");
+    print_size_bytes((unsigned long long)used_kb * 1024ULL);
+    print("  (");
+    print_int(percent);
+    print("%)\n");
+
+    print("  Free:      ");
+    print_size_bytes((unsigned long long)free_kb * 1024ULL);
+    putchar_os('\n');
+
     print("  Memory model: 32-bit\n");
     putchar_os('\n');
 }
@@ -3126,7 +3148,12 @@ void nwfetch(void)
             case 10:
                 set_color(COLOR_CYAN);  print("Memory: ");
                 set_color(COLOR_WHITE);
-                print_int((int)ram_mb); print(" MiB");
+                print_int((int)(nwf_ram_used_kb() / 1024UL));
+                print(" / ");
+                print_int((int)ram_mb);
+                print(" MiB (");
+                print_int(nwf_ram_used_percent());
+                print("%)");
                 break;
 
             case 11:
@@ -5378,6 +5405,8 @@ void pre_boot_init() {
 }
 
 void startingNWOS() {
+    clear();
+    print("Cleared!\n");
     fb_init();
     set_color(COLOR_GREEN);
     print("[OK] ");
@@ -5403,6 +5432,7 @@ void startingNWOS() {
     print("[OK] ");
     set_color(base_color);
     print("FILESYSTEM\n");
+    sleep(100);
     mouse_init();
     set_color(COLOR_GREEN);
     print("[OK] ");
@@ -6440,6 +6470,32 @@ static void cmd_format(void)
     fs_format_disk(fs_current_drive);
 }
 
+unsigned long kernel_static_memory_kb(void)
+{
+    unsigned long long used = 0;
+
+    used += (unsigned long long)sizeof(line_buffer);
+    used += (unsigned long long)sizeof(cmd_history);
+    used += (unsigned long long)sizeof(directory);
+    used += (unsigned long long)sizeof(fs_removed);
+    used += (unsigned long long)sizeof(fs_scratch);
+
+    if (fs_ram_mode)
+    {
+        unsigned long long fs_used =
+            (unsigned long long)FS_DIR_SECTORS * 512ULL;
+
+        for (int i = 0; i < MAX_FILES; i++)
+        {
+            if (directory[i].used && directory[i].type == FS_TYPE_FILE)
+                fs_used += (unsigned long long)FS_FILE_SECTORS * 512ULL;
+        }
+
+        used += fs_used;
+    }
+
+    return (unsigned long)(used / 1024ULL);
+}
 
 void death_screen(void) {
     if (!authorize_sensitive_action(
@@ -6587,7 +6643,7 @@ static void cmd_help(void)
     {
         if (commands[i].help)
         {
-            if (lines_on_screen >= 50)
+            if (lines_on_screen >= 52)
             {
                 set_color(COLOR_YELLOW);
                 print("--- MORE --- (ENTER: line, SPACE: page, ESC: quit)\n");
@@ -8313,15 +8369,14 @@ static void keyboard_input_test(void)
 
     sleep(2500);
 
-    print("Kernel Starting..\n");
-    sleep(120);
     print("Loading installer..\n");
     print("STATUS: ");
     print_success("[GOOD]\n");
     sleep(300);
-    print("Warning: If your keyboard isnt working then:\n 1.Turn off PC\n 2.Launch OS inside of the VM\n (If you still want real-pc launch, wait until update of drivers\n)");
+    print("Warning: If your keyboard isnt working then:\n 1.Turn off PC\n 2.Launch OS inside of the VM\n (If you still want real-pc launch, wait until update of drivers)\n");
     sleep(600);
-    print("Getting ready to boot menu...\n");
+    print("Details\nNwOS Version: " OS_VERSION_STR "\nMade by: User0140155 (Old: User014015)\ncopyright (c) User0140155 2026\n");
+    print("Getting ready to launch boot menu...\n");
     sleep(1200);
 }
 
@@ -8851,6 +8906,7 @@ static void boot_system(void)
     print("copyright (c) User0140155 2026\n\n");
     set_color(COLOR_LIGHT_GRAY);
     print("Github: https://github.com/User0140155/NwOS"); print("\n");
+    print("Alt + R to shutdown\n");
     print("Type 'help' for commands.\n\n");
     set_color(COLOR_GREEN);
     print("================");

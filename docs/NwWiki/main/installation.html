@@ -1,0 +1,72 @@
+<div class="related">
+    <strong>Related articles</strong>
+    <ul>
+        <li><a href="#boot">Boot: Limine, UEFI and legacy</a></li>
+        <li><a href="#display">Display: VGA and VBE</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ul>
+</div>
+
+<p>This guide explains how to get NwOS running: first in a virtual machine (the safest way), then on real hardware.</p>
+
+<h2>Requirements</h2>
+<ul>
+    <li>An x86-64 CPU (the OS is 64-bit; 32-bit-only CPUs are not supported).</li>
+    <li>If you want 32-bit support, check old versions (Note: they not supporting, legacy-bios only, PS/2 keyboard, cant be launched maybe)</li>
+    <li>UEFI firmware or a legacy BIOS - both are supported through <a href="#boot">Limine</a>.</li>
+    <li>A display that can be driven through VGA or VBE, see <a href="#display">Display</a>.</li>
+    <li>A PS/2 or USB-emulated keyboard, see <a href="#keyboard">Keyboard support</a>.</li>
+</ul>
+
+<h2>Download</h2>
+<p>All releases are published on GitHub. Pick the newest one (marked <em>Last</em> on the <a href="../index.html#versions">versions list</a>) and download the ISO attached to it.</p>
+
+<h2>Run in a virtual machine</h2>
+
+<h3>QEMU, legacy BIOS</h3>
+<pre><code>qemu-system-x86_64 -cdrom NwOS.iso -m 512M</code></pre>
+
+<h3>QEMU, UEFI</h3>
+<p>UEFI mode needs the OVMF firmware (package <code>ovmf</code> on most Linux distributions):</p>
+<pre><code>qemu-system-x86_64 -cdrom NwOS.iso -m 512M \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE.fd</code></pre>
+
+<h3>VirtualBox / VMware</h3>
+<ol>
+    <li>Create a new machine, type <em>Other</em>, version <em>Other/Unknown (64-bit)</em>.</li>
+    <li>Give it at least 128&nbsp;MB of RAM.</li>
+    <li>Attach the ISO as an optical drive and start the machine.</li>
+    <li>For UEFI boot enable <em>EFI</em> in the machine's system settings.</li>
+</ol>
+
+<h2>Boot from a USB drive</h2>
+
+<div class="box warning">
+    <span class="box-title">Warning</span>
+    <p>Writing an ISO erases the whole target drive. Double-check the device name - a wrong one can destroy your data.</p>
+    <p>Note that this OS unusable, It made as 'hobby' OS and not full support of real machine, check virtualbox for now</p>
+</div>
+
+<h3>Linux / macOS</h3>
+<pre><code>lsblk                       # find your USB drive, e.g. /dev/sdX
+sudo dd if=NwOS.iso of=/dev/sdX bs=4M status=progress conv=fsync</code></pre>
+
+<h3>Windows</h3>
+<p>Use a tool that writes raw images, such as Rufus (choose <em>DD Image</em> mode if asked) or balenaEtcher.</p>
+
+<h3>Booting</h3>
+<ol>
+    <li>Insert the drive and reboot.</li>
+    <li>Open the boot menu (usually <kbd>F12</kbd>, <kbd>F11</kbd>, <kbd>Esc</kbd> or <kbd>F8</kbd>).</li>
+    <li>Choose the USB drive. Entries with a <code>UEFI:</code> prefix boot in UEFI mode, the others in legacy mode.</li>
+    <li>In the Limine menu select NwOS.</li>
+</ol>
+
+<div class="box warning">
+    <span class="box-title">Warning</span>
+    <p>If Secure Boot is enabled, disable it in the firmware settings unless the image is signed — see <a href="#boot">Boot</a>.</p>
+</div>
+
+<h2>After booting</h2>
+<p>When the system is up you can write programs in <a href="#nwc">NwC</a>. If the screen stays black or the keyboard does not react, check <a href="#troubleshooting">Troubleshooting</a>.</p>
+<p>Also note that this system can not support any driver of your: micro, mouse, keyboard, or other.</p>

@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NwWiki — NwOS</title>
+    <meta name="description" content="NwWiki: guides for NwOS — installation, keyboard support, NwC language, display and more.">
+    <link rel="icon" type="image/png" href="../img/LogoNwOS.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="../css/style.css">
+    <link rel="stylesheet" href="nwWiki.css">
+</head>
+<body class="wiki">
+    <!-- NW WIKI HTML -->
+    <!-- All guides are placed in main/ and listed in main/index.json -->
+    <header class="site-header">
+        <div class="header-left">
+            <a class="site-brand" href="../index.html">
+                <img src="../img/LogoNwOS.png" alt="NwOS logo" width="28" height="28">
+                <span>NwOS</span>
+            </a>
+            <nav class="site-nav">
+                <a href="../index.html#about">About</a>
+                <a href="../index.html#nwc">NwC</a>
+                <a href="../gallery.html">Gallery</a>
+                <a href="nwWiki.html" class="active">Wiki</a>
+            </nav>
+        </div>
+        <div class="header-right">
+            <div class="wiki-header-search">
+                <input id="wikiSearch" type="search" placeholder="Search wiki  ( / )" autocomplete="off" aria-label="Search NwWiki">
+                <div id="wikiDropdown" class="search-dropdown" hidden></div>
+            </div>
+            <a href="https://github.com/User0140155/NwOS/" class="header-github" aria-label="NwOS on GitHub">
+                <img src="../img/github.svg" alt="GitHub icon" width="22" height="22">
+            </a>
+        </div>
+    </header>
+
+    <div class="wiki-layout">
+        <aside class="wiki-sidebar" id="wikiSidebar" aria-label="Wiki navigation">
+            <p class="wiki-status">Loading…</p>
+        </aside>
+
+        <main class="wiki-content">
+            <button type="button" class="wiki-menu-btn" id="wikiMenuBtn">&#9776; Menu</button>
+            <div id="wikiArticle">
+                <noscript>NwWiki needs JavaScript enabled.</noscript>
+            </div>
+        </main>
+    </div>
+
+    <footer class="footer">
+        <div class="footer-links">
+            <a href="https://github.com/User0140155/NwOS/">GitHub</a>
+            <span>&middot;</span>
+            <a href="../gallery.html">Gallery</a>
+            <span>&middot;</span>
+            <a href="../index.html#versions">Versions</a>
+        </div>
+        <p>NwWiki &middot; NwOS &middot; Made by User0140155</p>
+    </footer>
+
+    <script src="searchbar.js"></script>
+</body>
+</html>

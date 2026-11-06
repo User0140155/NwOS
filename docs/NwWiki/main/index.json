@@ -1,0 +1,9 @@
+[
+  { "id": "home", "title": "NwWiki", "file": "home.html", "category": "Start", "summary": "Guides and reference for NwOS" },
+  { "id": "installation", "title": "Installation", "file": "installation.html", "category": "Getting started", "summary": "Download NwOS, run it in a VM or boot it from USB", "keywords": ["install", "iso", "usb", "qemu", "virtualbox", "boot"] },
+  { "id": "boot", "title": "Boot: Limine, UEFI and legacy BIOS", "file": "boot.html", "category": "Getting started", "summary": "How NwOS is loaded on UEFI and legacy systems", "keywords": ["limine", "uefi", "bios", "legacy", "bootloader", "secure boot"] },
+  { "id": "keyboard", "title": "Keyboard support", "file": "keyboard.html", "category": "Hardware", "summary": "Keyboard input, layouts and shortcuts", "keywords": ["layout", "ps/2", "usb", "keys", "input", "scancode"] },
+  { "id": "display", "title": "Display: VGA and VBE", "file": "display.html", "category": "Hardware", "summary": "Text mode, VBE framebuffer and resolutions", "keywords": ["vga", "vbe", "resolution", "framebuffer", "graphics", "screen"] },
+  { "id": "nwc", "title": "NwC language", "file": "nwc.html", "category": "Development", "summary": "Write .nw programs, compile to .nwo and run them", "keywords": ["compiler", "nw", "nwo", "hello world", "code", "programming"] },
+  { "id": "troubleshooting", "title": "Troubleshooting", "file": "troubleshooting.html", "category": "Help", "summary": "Black screen, no keyboard, won't boot", "keywords": ["problem", "error", "black screen", "fix", "not working", "bug"] }
+]

@@ -1,0 +1,27 @@
+<div class="related">
+    <strong>Related articles</strong>
+    <ul>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#display">Display: VGA and VBE</a></li>
+    </ul>
+</div>
+
+<p>NwOS uses the <a href="https://limine-bootloader.org/">Limine</a> bootloader. Limine hands control to the kernel in 64-bit mode and passes information about memory and the framebuffer, so the same kernel can start from both firmware types.</p>
+
+<h2>UEFI</h2>
+<p>On UEFI machines the firmware loads Limine as an EFI application from the EFI System Partition (ESP), usually from <code>\EFI\BOOT\BOOTX64.EFI</code>. A UEFI start gives the kernel a linear framebuffer straight away.</p>
+
+<h2>Legacy BIOS</h2>
+<p>On legacy BIOS machines the firmware loads the first sector of the drive, which chain-loads the rest of Limine. Limine switches to long mode and sets up the video mode (VBE) before starting the kernel.</p>
+
+<h2>Differences at a glance</h2>
+<table>
+    <tr><th></th><th>UEFI</th><th>Legacy BIOS</th></tr>
+    <tr><td>Boot entry</td><td>EFI application on ESP</td><td>MBR / boot sector</td></tr>
+    <tr><td>Partition table</td><td>GPT (usually)</td><td>MBR (usually)</td></tr>
+    <tr><td>Video setup</td><td>GOP framebuffer</td><td>VBE mode set by Limine</td></tr>
+    <tr><td>Secure Boot</td><td>Must be off for unsigned images</td><td>Not applicable</td></tr>
+</table>
+
+<h2>Secure Boot</h2>
+<p>ISO that are not signed will not start while Secure Boot is on. Disable it in the firmware settings, or enroll the key if the release provides one.</p>

@@ -1,0 +1,36 @@
+<div class="related">
+    <strong>Related articles</strong>
+    <ul>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+    </ul>
+</div>
+
+<p>This article describes how keyboard input works in NwOS and what to do when keys do not respond.</p>
+
+<h2>Supported keyboards</h2>
+<table>
+    <tr><th>Type</th><th>Status</th><th>Notes</th></tr>
+    <tr><td>PS/2 keyboard</td><td>Check in your release</td><td>Also what virtual machines like QEMU emulate by default.</td></tr>
+    <tr><td>USB keyboard</td><td>Check in your release</td><td>Has drivers, but it not working for me (User0140155) when i was testing NwOS on my PC.</td></tr>
+    <tr><td>Laptop built-in</td><td>Usually PS/2</td><td>Works through the same path as PS/2.</td></tr>
+</table>
+
+<h2>Layouts</h2>
+<p>Describe here which layouts the current version ships (for example US QWERTY) and how to switch between them. Keep one table row per layout:</p>
+<table>
+    <tr><th>Layout</th><th>Status</th><th>How to enable</th></tr>
+    <tr><td>US QWERTY</td><td>Default (expected)</td><td>—</td></tr>
+</table>
+
+<h2>Shortcuts</h2>
+<p>Add system and shell shortcuts here, using <code>&lt;kbd&gt;</code> for keys, for example <kbd>Ctrl</kbd> + <kbd>C</kbd>.</p>
+
+<h2>Testing the keyboard in a VM</h2>
+<ul>
+    <li>Click inside the QEMU window so it captures the keyboard. Release the mouse/keyboard with <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>G</kbd>.</li>
+    <li>With a USB keyboard on a physical machine, enable legacy USB / PS/2 emulation in the firmware setup.</li>
+</ul>
+
+<h2>Keyboard does not work</h2>
+<p>See <a href="#troubleshooting">Troubleshooting</a>.</p>

@@ -1,0 +1,34 @@
+<p>NwWiki is a set of plain HTML fragments in the <code>docs/NwWiki/main/</code> folder. The search bar indexes every article listed in <code>main/index.json</code>.</p>
+
+<h2>Add an article</h2>
+<ol>
+    <li>Create <code>docs/NwWiki/main/my-article.html</code>. Write only the content — no <code>&lt;html&gt;</code> or <code>&lt;body&gt;</code>. Start sections with <code>&lt;h2&gt;</code>.</li>
+    <li>Add an entry to <code>main/index.json</code>:
+<pre><code>{ "id": "my-article", "title": "My article", "file": "my-article.html",
+  "category": "Help", "summary": "One line description",
+  "keywords": ["extra", "search", "words"] }</code></pre>
+    </li>
+    <li>Open <code>nwWiki.html#my-article</code>. The menu, table of contents and search are updated automatically.</li>
+</ol>
+
+<h2>Available building blocks</h2>
+
+<h3>Boxes</h3>
+<pre><code>&lt;div class="box note"&gt;&lt;span class="box-title"&gt;Note&lt;/span&gt;&lt;p&gt;Text&lt;/p&gt;&lt;/div&gt;</code></pre>
+<p>Classes: <code>note</code>, <code>tip</code>, <code>warning</code>, <code>stub</code>.</p>
+<div class="box tip"><span class="box-title">Tip</span><p>This is a tip box.</p></div>
+
+<h3>Related articles</h3>
+<pre><code>&lt;div class="related"&gt;&lt;strong&gt;Related articles&lt;/strong&gt;&lt;ul&gt;&lt;li&gt;&lt;a href="#installation"&gt;Installation&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;</code></pre>
+
+<h3>Links between articles</h3>
+<p>Link with <code>&lt;a href="#article-id"&gt;</code>, for example <a href="#installation">Installation</a>. Links to the rest of the site start with <code>../</code>.</p>
+
+<h3>Keys and code</h3>
+<p>Use <code>&lt;kbd&gt;</code> for keys: <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Del</kbd>, and <code>&lt;pre&gt;&lt;code&gt;</code> for code blocks.</p>
+
+<h2>Testing locally</h2>
+<p>Browsers block <code>fetch()</code> on <code>file://</code>, so serve the folder:</p>
+<pre><code>cd docs
+python3 -m http.server 8000</code></pre>
+<p>Then open <code>http://localhost:8000/NwWiki/nwWiki.html</code>.</p>

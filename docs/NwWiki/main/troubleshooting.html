@@ -1,0 +1,36 @@
+<p>Common problems and the first things to try. If nothing helps, open an issue on <a href="https://github.com/User0140155/NwOS/">GitHub</a> with your firmware type (UEFI/legacy), the NwOS version and what you see on screen.</p>
+
+<h2>The system does not boot</h2>
+<ul>
+    <li>Make sure the image was written in raw mode (<code>dd</code>, or Rufus in DD mode), not just copied onto the drive as a file.</li>
+    <li>Try the other boot entry: <code>UEFI:</code> and plain entries start in different modes, see <a href="#boot">Boot</a>.</li>
+    <li>Disable Secure Boot.</li>
+    <li>Re-download the image — a damaged download is a frequent cause.</li>
+</ul>
+
+<h2>Black screen after the Limine menu</h2>
+<ul>
+    <li>Try another resolution in the boot entry, see <a href="#display">Display</a>.</li>
+    <li>In QEMU add <code>-vga std</code>; in VirtualBox use the VBoxVGA or VMSVGA controller.</li>
+    <li>On UEFI, try legacy mode (CSM) and the reverse.</li>
+</ul>
+
+<h2>Keyboard does not respond</h2>
+<ul>
+    <li>In a VM click inside the window first so it captures the input.</li>
+    <li>On real hardware enable legacy USB / PS/2 emulation in the firmware setup, or try a PS/2 keyboard.</li>
+    <li>See <a href="#keyboard">Keyboard support</a>.</li>
+</ul>
+
+<h2>Boots in a VM but not on real hardware</h2>
+<ul>
+    <li>Check the firmware type of the machine and test both boot entries.</li>
+    <li>Update the firmware and reset it to defaults.</li>
+</ul>
+
+<h2>Reporting a bug</h2>
+<ol>
+    <li>Note the NwOS version (see <a href="../index.html#versions">versions</a>).</li>
+    <li>Note UEFI or legacy, the VM or hardware model, and what exactly happens.</li>
+    <li>Attach a screenshot or a photo of the screen.</li>
+</ol>
