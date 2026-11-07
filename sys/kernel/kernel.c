@@ -57,6 +57,16 @@ void mouse_init(void);
 int mouse_is_touchpad(void);
 const char* mouse_device_name(void);
 
+// NwOS - Operating System
+// Copyright (C) 2026 User0140155
+
+// This program is free software: you can redistribute it
+// and/or modify it under the terms of the GNU General
+// Public License as published by the Free Software Foundation,
+// version 2 only.
+
+// See the LICENSE file for details.
+
 
 /*
 * I am original User014015
@@ -181,8 +191,6 @@ typedef unsigned short uint16_t;
 #define WIDTH 80
 #define HEIGHT 60
 
-/* VGA text attributes are palette indices (0x0..0xF), not RGB colors.
- * Keep these separate from COLOR_* in graphics.h, which are 0xRRGGBB. */
 enum {
     TERM_COLOR_BLACK = 0x00,
     TERM_COLOR_BLUE = 0x01,

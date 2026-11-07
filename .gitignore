@@ -33,6 +33,7 @@ shortNwC.md
 make
 apply.py
 PY_WORD_DATA.md
+license.text.txt
 
 # ignoring CONTRIBUTING.md
 # because it not made yet

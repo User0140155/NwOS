@@ -63,6 +63,15 @@ and license notices.
 Modified NwOS source files must comply
 with the original project's license.
 
+## License
+
+NwOS is licensed under the GNU General Public License
+v2.0 only (GPL-2.0-only).
+
+Copyright (C) 2026 User0140155.
+
+See [LICENSE](LICENSE) for the full license text.
+
 ## Tiktok page
 (Russian account)
 
