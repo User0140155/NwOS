@@ -8,8 +8,6 @@ You need to put ISO to the flash drive
 And run OS (check also safe boot if needed),
 Warning: Dont use format disk or raw NwFS
 It gonna clear all data on disk, use live boot,
-Also: It not tested, it tested only on virtual box
-with UEFI support
 
 LEGACY BIOS:
 
@@ -20,6 +18,7 @@ Debug:
 You can sent screenshots of OS on real PC,
 contant with developer in tiktok: @csplayer421
 https://www.tiktok.com/@csplayer421
+(or qust send issues to github)
 
 So if you get something not working, contact
 developer, sent him reason, screenshots, and

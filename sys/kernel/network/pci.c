@@ -26,6 +26,7 @@ static inline void pci_io_outw(uint16_t port, uint16_t val)
 #endif
 
 #ifndef TEST_MOCK_HARDWARE
+#endif
 
 static uint32_t pci_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 {
@@ -243,13 +244,40 @@ int pci_scan_xhci(pci_dev_t *controllers, int max_controllers)
     return count;
 }
 
+int pci_set_power_d0(const pci_dev_t *dev)
+{
+    if (!dev) return 0;
+    uint16_t status = pci_read_word(dev->bus, dev->slot, dev->func, 0x06);
+    if (!(status & 0x10u)) return 1;
+
+    uint8_t cap = (uint8_t)(pci_read_word(dev->bus, dev->slot, dev->func, 0x34) & 0xFCu);
+    for (int i = 0; i < 64 && cap >= 0x40; ++i) {
+        uint8_t id = (uint8_t)(pci_read_word(dev->bus, dev->slot, dev->func, cap) & 0xFFu);
+        if (id == 0x01u) {
+            uint16_t pmcsr = pci_read_word(dev->bus, dev->slot, dev->func, cap + 4u);
+            if ((pmcsr & 0x3u) == 0u) return 1;
+            pmcsr &= ~0x3u;
+            pci_write_word(dev->bus, dev->slot, dev->func, cap + 4u, pmcsr);
+            for (int j = 0; j < 200000; ++j) {
+                pmcsr = pci_read_word(dev->bus, dev->slot, dev->func, cap + 4u);
+                if ((pmcsr & 0x3u) == 0u) return 1;
+                __asm__ volatile("pause");
+            }
+            return 0;
+        }
+        cap = (uint8_t)(pci_read_word(dev->bus, dev->slot, dev->func, cap + 1u) & 0xFCu);
+    }
+    return 1;
+}
+
 int pci_enable_mem_busmaster(const pci_dev_t *dev)
 {
     if (!dev) return 0;
     uint16_t cmd = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
-    cmd |= (1u << 1) | (1u << 2); /* Bit 1: Memory Space, Bit 2: Bus Master */
+    cmd |= (1u << 1) | (1u << 2);
     pci_write_word(dev->bus, dev->slot, dev->func, 0x04, cmd);
-    return 1;
+    uint16_t after = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
+    return (after & 0x6u) == 0x6u;
 }
 
 int pci_get_mmio_bar(const pci_dev_t *dev, unsigned int bar_idx, uint64_t *bar_out, int *is_64_out)
@@ -258,22 +286,20 @@ int pci_get_mmio_bar(const pci_dev_t *dev, unsigned int bar_idx, uint64_t *bar_o
     uint8_t offset = (uint8_t)(0x10u + bar_idx * 4u);
     uint32_t bar_low = pci_read_dword(dev->bus, dev->slot, dev->func, offset);
 
-    /* Bit 0 must be 0 for Memory Space indicator */
     if (bar_low & 1u) return 0;
 
     uint8_t bar_type = (uint8_t)((bar_low >> 1) & 3u);
-    if (bar_type == 0x02u) { /* 64-bit BAR */
+    if (bar_type == 0x02u || bar_type == 0x03u) {
         if (bar_idx >= 5u) return 0;
         uint32_t bar_high = pci_read_dword(dev->bus, dev->slot, dev->func, offset + 4u);
         *bar_out = ((uint64_t)bar_high << 32) | (bar_low & ~0x0Fu);
         *is_64_out = 1;
         return 1;
-    } else if (bar_type == 0x00u) { /* 32-bit BAR */
+    }
+    if (bar_type == 0x00u || bar_type == 0x01u) {
         *bar_out = (uint64_t)(bar_low & ~0x0Fu);
         *is_64_out = 0;
         return 1;
     }
     return 0;
 }
-
-#endif

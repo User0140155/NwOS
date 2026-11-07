@@ -145,10 +145,8 @@ static uint32_t vga_to_rgb(uint8_t color) {
 
 static int fb_initialized = 0;
 
-/* Convert OS colors in 0x00RRGGBB form to the RGB layout supplied by GRUB/GOP. */
 static uint32_t fb_pack_rgb(uint32_t rgb)
 {
-    /* NWOS_FB_PHYSICAL_FAST_V1: avoid three divides for the common 8:8:8 GOP. */
     uint32_t r = (rgb >> 16) & 0xFFu;
     uint32_t g = (rgb >> 8) & 0xFFu;
     uint32_t b = rgb & 0xFFu;
@@ -189,7 +187,6 @@ void fb_init(void)
         if (type == 0)
             break;
 
-        /* RGB framebuffer tag: common 32 bytes + six RGB mask bytes. */
         if (type == 8 && size >= 38) {
             uint64_t addr = *(uint64_t*)(tag + 8);
             uint32_t pitch = *(uint32_t*)(tag + 16);
@@ -204,7 +201,6 @@ void fb_init(void)
             uint64_t bytes = (uint64_t)pitch * height;
             uint64_t row_bytes = (uint64_t)width * 4u;
 
-            /* kernel_entry.asm identity-maps physical addresses below 4 GiB. */
             int address_mapped = addr != 0 && addr < 0x100000000ULL &&
                 bytes != 0 && bytes <= 0x100000000ULL - addr;
             int masks_valid = red_size && red_size <= 8 &&
@@ -217,7 +213,7 @@ void fb_init(void)
             if (kind == 1 && bpp == 32 && width && height &&
                 pitch >= row_bytes && address_mapped && masks_valid) {
                 fb_addr = (uint32_t*)(uintptr_t)addr;
-                fb_pitch = pitch; /* Keep the firmware's actual stride. */
+                fb_pitch = pitch;
                 fb_width = width;
                 fb_height = height;
                 fb_bpp = bpp;
@@ -237,8 +233,6 @@ void fb_init(void)
     }
 }
 
-/* UEFI GOP mode is owned by the bootloader. Do not probe Bochs DISPI ports
- * or overwrite the real width/height/pitch on physical hardware. */
 int fb_set_mode(uint32_t width, uint32_t height)
 {
     if (!fb_is_available() || !width || !height)
@@ -338,10 +332,6 @@ static void fb_fill_rect(int x0, int y0, int x1, int y1, uint32_t rgb) {
             row[x] = rgb;
     }
 }
-/* Fast scaled 8x8 glyph renderer.
- * Colors are packed once and each destination pixel is visited once.
- * The x mapping uses an integer error accumulator, avoiding division
- * in the inner pixel loop. */
 static void fb_draw_char_box_fast_impl(
     int x0, int y0, int x1, int y1,
     char c, uint8_t color, int transparent)
@@ -425,7 +415,6 @@ void fb_draw_image(int x, int y, const uint16_t* data, int width, int height) {
             uint32_t r = (p >> 11) & 0x1Fu;
             uint32_t g = (p >> 5) & 0x3Fu;
             uint32_t b = p & 0x1Fu;
-            /* Exact 5/6/5 -> 8/8/8 bit replication; no integer division. */
             uint32_t rgb = (((r << 3) | (r >> 2)) << 16) |
                            (((g << 2) | (g >> 4)) << 8) |
                            ((b << 3) | (b >> 2));
@@ -444,7 +433,6 @@ void fb_draw_wallpaper(void) {
         return;
     }
 
-    /* Nearest-neighbour scaler using error accumulators: no per-pixel divide. */
     uint32_t sy = 0;
     uint64_t y_rem = 0;
 

@@ -64,6 +64,7 @@ KERNEL_CFLAGS := \
     -fdata-sections \
     -Os \
     -I$(ROOT)/drivers \
+    -I$(ROOT)/sys/kernel \
     -I$(ROOT)/sys/net \
     -I$(ROOT)/sys/kernel/network \
     -I$(BUILD)
@@ -80,6 +81,9 @@ SOURCES_REL := \
     sys/kernel/Apps/fileStats/filestats.c \
     sys/kernel/Apps/baseconverter/baseconverter.c \
     sys/kernel/Apps/wordgenerator/wordgenerator.c \
+    sys/kernel/random/word_module.c \
+    sys/kernel/random/entropy.c \
+    sys/kernel/random/passage_module.c \
     sys/kernel/Apps/textredactor/textredactor.c \
     drivers/keyboard.c \
     drivers/mouse.c \
@@ -90,13 +94,15 @@ SOURCES_REL := \
     sys/kernel/network/timer.c \
     sys/kernel/network/net.c \
     sys/kernel/fb.c \
+	sys/kernel/time.c \
     sys/kernel/Apps/Games/snake.c \
-	sys/kernel/memory/mem.c \
+    sys/kernel/memory/mem.c \
+    sys/kernel/graphics.c \
     sys/kernel/apps_list.c \
     sys/kernel/dead_boot.c \
-	sys/kernel/memory/pmm.c \
-	sys/kernel/memory/mmu.c \
-	drivers/usb/xhci.c \
+    sys/kernel/memory/pmm.c \
+    sys/kernel/memory/mmu.c \
+    drivers/usb/xhci.c \
     sys/kernel/Apps/Games/rps.c \
     sys/kernel/Apps/Games/game_coin.c \
     sys/kernel/utf8.c \
@@ -106,7 +112,8 @@ SOURCES_REL := \
     compiler/nwc_runtime.c \
     compiler/nwc_stdio.c \
     compiler/nwc_kernel.c \
-    sys/kernel/package.c
+    sys/kernel/package.c \
+	sys/kernel/installer.c
 
 # Optional local driver.
 ifneq ($(wildcard $(ROOT)/drivers/touchpad.c),)
@@ -124,6 +131,30 @@ VIDEO_CONFIG_H := $(BUILD)/video_config.h
 GENERATED_STAMP := $(BUILD)/generated.stamp
 LIMINE_CONF := $(BUILD)/limine.conf
 VENTOY_GRUB_CONF := $(BUILD)/ventoy-grub.cfg
+
+# NwWord source files. The generated binary is shipped as a Multiboot2 module.
+NWWD_SOURCE := $(ROOT)/data/wordlists/en_US.txt
+NWWD_EXCLUDE := $(ROOT)/data/wordlists/excluded_words.txt
+NWWD_GENERATOR := $(ROOT)/tools/gen_word_data.py
+NWWD_NOTICE := $(ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt
+NWWD_MODULE := $(BUILD)/words.bin
+
+# Optional TempleOS-style Shift+F7 passage corpus (UTF-8, one verse per line).
+NWBIBLE_SOURCE := $(ROOT)/data/passages/world_english_bible.txt
+NWBIBLE_NOTICE := $(ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt
+NWBIBLE_MODULE := $(BUILD)/world_english_bible.txt
+
+# The exclusions file is optional; if present, changes to it rebuild the module.
+NWWD_INPUTS := $(NWWD_SOURCE) $(NWWD_GENERATOR)
+ifneq ($(wildcard $(NWWD_EXCLUDE)),)
+NWWD_INPUTS += $(NWWD_EXCLUDE)
+endif
+
+NWBIBLE_ENABLED := $(if $(wildcard $(NWBIBLE_SOURCE)),1,0)
+NWBIBLE_ISO_DEPS :=
+ifeq ($(NWBIBLE_ENABLED),1)
+NWBIBLE_ISO_DEPS += $(NWBIBLE_MODULE) $(NWBIBLE_NOTICE)
+endif
 
 .PHONY: all iso kernel boot-sector clean check-tools help
 
@@ -178,6 +209,23 @@ $(GENERATED_STAMP): $(ROOT)/tools/gen_wallpaper.py $(ROOT)/tools/gen_packages.py
 	cd "$(ROOT)" && $(PYTHON) tools/gen_wallpaper.py
 	cd "$(ROOT)" && $(PYTHON) tools/gen_packages.py
 	@touch "$@"
+
+# NwWord dictionary: en_US.txt is converted into a compact NWWD module.
+$(NWWD_MODULE): $(NWWD_INPUTS) | $(BUILD)
+	@test -f "$(NWWD_SOURCE)" || { echo 'Missing data/wordlists/en_US.txt' >&2; exit 1; }
+	@test -f "$(NWWD_GENERATOR)" || { echo 'Missing tools/gen_word_data.py' >&2; exit 1; }
+	@if [[ -f "$(NWWD_EXCLUDE)" ]]; then \
+	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@" --exclude "$(NWWD_EXCLUDE)"; \
+	else \
+	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@"; \
+	fi
+
+ifeq ($(NWBIBLE_ENABLED),1)
+$(NWBIBLE_MODULE): $(NWBIBLE_SOURCE) | $(BUILD)
+	@test -f "$(NWBIBLE_NOTICE)" || { echo 'Missing data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt' >&2; exit 1; }
+	@cp "$<" "$@.tmp"
+	@cmp -s "$@.tmp" "$@" && rm -f "$@.tmp" || mv "$@.tmp" "$@"
+endif
 
 $(BUILD)/obj/%.o: $(ROOT)/%.c $(VIDEO_CONFIG_H) $(GENERATED_STAMP) | check-tools
 	@mkdir -p "$(@D)"
@@ -262,37 +310,66 @@ $(LIMINE_STAMP): $(LIMINE_ARCHIVE) | check-tools
 $(LIMINE_TOOL): $(LIMINE_STAMP)
 	@test -x "$@"
 
-# Regenerate only when the actual config content changes.
-$(LIMINE_CONF): $(ROOT)/Makefile | $(BUILD)
+# Limine configuration is generated here; do not edit build/limine.conf manually.
+$(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
-	  printf '%s\n' 'timeout: 3' '' '/NwOS' \
+	  printf '%s\n' 'timeout: 10' 'default_entry: 1' '' '/NwOS' \
 	    '    protocol: multiboot2' \
 	    '    path: boot():/boot/kernel.elf' \
+	    '    module_path: boot():/boot/nwos/words.bin' \
+	    '    module_string: nwos-word-dictionary' \
 	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
+	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
+	    printf '%s\n' \
+	      '    module_path: boot():/boot/nwos/world_english_bible.txt' \
+	      '    module_string: nwos-bible-passages'; \
+	  fi; \
+	  printf '%s\n' \
+	    '' '/Windows Boot Manager (UEFI)' \
+	    '    protocol: efi_boot_entry' \
+	    '    entry: Windows Boot Manager' \
+	    '    if_fw_type: UEFI' \
+	    '' '/Existing system boot sector (BIOS, first hard disk)' \
+	    '    protocol: bios' \
+	    '    drive: 1' \
+	    '    partition: 0' \
+	    '    if_fw_type: BIOS'; \
 	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(VENTOY_GRUB_CONF): $(ROOT)/Makefile | $(BUILD)
-	@printf '%s\n' \
-	  '# NwOS Ventoy GRUB2 fallback: select a real UEFI GOP mode first.' \
-	  'set root=(loop)' \
-	  'insmod all_video' \
-	  'insmod gfxterm' \
-	  'set gfxmode=auto' \
-	  'terminal_output gfxterm' \
-	  'set gfxpayload=keep' \
-	  'insmod iso9660' \
-	  'insmod multiboot2' \
-	  'multiboot2 /boot/kernel.elf' \
-	  'boot' \
-	  > "$@.tmp"
+# Ventoy GRUB2 fallback; module2 must follow multiboot2 and precede boot.
+$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
+	@{ \
+	  printf '%s\n' \
+	    '# NwOS Ventoy GRUB2 fallback: select a real UEFI GOP mode first.' \
+	    'set root=(loop)' \
+	    'insmod all_video' \
+	    'insmod gfxterm' \
+	    'set gfxmode=auto' \
+	    'terminal_output gfxterm' \
+	    'set gfxpayload=keep' \
+	    'insmod iso9660' \
+	    'insmod multiboot2' \
+	    'multiboot2 /boot/kernel.elf' \
+	    'module2 /boot/nwos/words.bin nwos-word-dictionary'; \
+	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
+	    printf '%s\n' 'module2 /boot/nwos/world_english_bible.txt nwos-bible-passages'; \
+	  fi; \
+	  printf '%s\n' 'boot'; \
+	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(ISO_STAMP): $(KERNEL_ELF) $(LIMINE_STAMP) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools
+$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_MODULE) $(NWWD_NOTICE) $(NWBIBLE_ISO_DEPS) $(LIMINE_STAMP) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools
 	@set -eu; \
 	rm -rf "$(ISO_ROOT)"; \
-	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/EFI/BOOT"; \
+	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses" "$(ISO_ROOT)/EFI/BOOT"; \
 	install -m 0644 "$(KERNEL_ELF)" "$(ISO_ROOT)/boot/kernel.elf"; \
+	install -m 0644 "$(NWWD_MODULE)" "$(ISO_ROOT)/boot/nwos/words.bin"; \
+	install -m 0644 "$(NWWD_NOTICE)" "$(ISO_ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt"; \
+	if [[ -f "$(NWBIBLE_MODULE)" ]]; then \
+	  install -m 0644 "$(NWBIBLE_MODULE)" "$(ISO_ROOT)/boot/nwos/world_english_bible.txt"; \
+	  install -m 0644 "$(NWBIBLE_NOTICE)" "$(ISO_ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt"; \
+	fi; \
 	install -m 0644 "$(LIMINE_DIR)/bin/limine-bios.sys" "$(ISO_ROOT)/boot/limine/limine-bios.sys"; \
 	install -m 0644 "$(LIMINE_DIR)/bin/limine-bios-cd.bin" "$(ISO_ROOT)/boot/limine/limine-bios-cd.bin"; \
 	install -m 0644 "$(LIMINE_DIR)/bin/limine-uefi-cd.bin" "$(ISO_ROOT)/boot/limine/limine-uefi-cd.bin"; \
@@ -324,7 +401,7 @@ $(ISO_OUT): $(ISO_STAMP) $(LIMINE_TOOL) $(ROOT)/Makefile | check-tools
 	"$(LIMINE_TOOL)" bios-install "$(ISO_TMP)"; \
 	system_report="$$($(XORRISO) -indev "$(ISO_TMP)" -report_system_area plain 2>&1)"; \
 	printf '\n%s\n' '=== ISO system area / partition table ===' "$$system_report"; \
-	report="$$( $(XORRISO) -indev "$(ISO_TMP)" -report_el_torito plain 2>&1 )"; \
+	report="$$($(XORRISO) -indev "$(ISO_TMP)" -report_el_torito plain 2>&1)"; \
 	printf '\n%s\n' '=== El Torito boot catalog ===' "$$report"; \
 	printf '%s\n' "$$report" | grep -Fq 'limine-uefi-cd.bin' || { \
 	  echo 'ERROR: ISO has no UEFI El Torito entry for limine-uefi-cd.bin' >&2; \

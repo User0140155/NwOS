@@ -7,13 +7,18 @@
 #include "Apps/textredactor/textredactor.h"
 #include "nwoloader/nwo_vm.h"
 #include "nwoloader/nwo_runner.h"
-
+#include "installer.h"
 #include "Apps/Games/slot.h"
+#include "time.h"
 #include "Apps/Games/game_memory.h"
 #include "Apps/Games/snake.h"
 #include "kernel.h"
 #include "../../compiler/nwc_kernel.h"
 #include "memory/pmm.h"
+#include "random/word_module.h"
+#include "random/entropy.h"
+#include "random/passage_module.h"
+#include "graphics.h"
 #include "memory/mem.h"
 #include "Apps/fileStats/filestats.h"
 #include "../../drivers/usb/xhci.h"
@@ -43,6 +48,7 @@
 #include <stdint.h>
 
 extern uint32_t multiboot_info_ptr;
+uint8_t keyboard_get_last_event_modifiers(void);
 
 void disk_death(void);
 void game_snake(void);
@@ -122,8 +128,6 @@ void installer(void);
 
 static void print_size_bytes(unsigned long long bytes);
 
-static int installer_cancelled = 0;
-
 static void cmd_install(void);
 
 void app_nwo_info(const char* filename);
@@ -177,6 +181,27 @@ typedef unsigned short uint16_t;
 #define WIDTH 80
 #define HEIGHT 60
 
+/* VGA text attributes are palette indices (0x0..0xF), not RGB colors.
+ * Keep these separate from COLOR_* in graphics.h, which are 0xRRGGBB. */
+enum {
+    TERM_COLOR_BLACK = 0x00,
+    TERM_COLOR_BLUE = 0x01,
+    TERM_COLOR_GREEN = 0x02,
+    TERM_COLOR_CYAN = 0x03,
+    TERM_COLOR_RED = 0x04,
+    TERM_COLOR_MAGENTA = 0x05,
+    TERM_COLOR_BROWN = 0x06,
+    TERM_COLOR_LIGHT_GRAY = 0x07,
+    TERM_COLOR_DARK_GRAY = 0x08,
+    TERM_COLOR_LIGHT_BLUE = 0x09,
+    TERM_COLOR_LIGHT_GREEN = 0x0A,
+    TERM_COLOR_LIGHT_CYAN = 0x0B,
+    TERM_COLOR_LIGHT_RED = 0x0C,
+    TERM_COLOR_LIGHT_MAGENTA = 0x0D,
+    TERM_COLOR_YELLOW = 0x0E,
+    TERM_COLOR_WHITE = 0x0F
+};
+
 #define MAX_FILES 64
 #define MAX_FILENAME 32
 #define MAX_FILE_SIZE 20480
@@ -187,6 +212,22 @@ typedef unsigned short uint16_t;
 #define MAX_HISTORY_COMMANDS 256
 #define MAX_CMD_LENGTH 1024
 #define HISTORY_MAX_BYTES 10240
+
+#define CP_H2   0xCD
+#define CP_V2   0xBA
+#define CP_TL2  0xC9
+#define CP_TR2  0xBB
+#define CP_BL2  0xC8
+#define CP_BR2  0xBC
+#define CP_ML2  0xCC
+#define CP_MR2  0xB9
+#define CP_BLK  0xDB
+#define CP_RGT  0x10
+#define CP_UP   0x18
+#define CP_DN   0x19 
+
+#define UI_LEFT 1
+#define UI_W    76
 
 typedef struct __attribute__((packed)) {
     uint8_t used;
@@ -217,14 +258,14 @@ static int fb_graphics_mode = 0;
 
 static int nwos_safe_load = 0;
 
-static unsigned char text_color = COLOR_LIGHT_GRAY;
-static unsigned char base_color = COLOR_LIGHT_GRAY;
-static unsigned char prompt_color = COLOR_CYAN;
+static unsigned char text_color = TERM_COLOR_LIGHT_GRAY;
+static unsigned char base_color = TERM_COLOR_LIGHT_GRAY;
+static unsigned char prompt_color = TERM_COLOR_CYAN;
 static int console_f7_enabled = 0;
 
 static int timezone_offset = 0; /* UTC+0 by default */
 static int custom_time_offset = 0;
-static volatile unsigned long long idle_us_accum = 0;
+volatile unsigned long long idle_us_accum = 0;
 static int use_custom_time = 0;
 static int custom_day = -1;
 static int custom_month = -1;
@@ -291,7 +332,7 @@ void terminal_new_line(void)
     for (int x = 0; x < WIDTH; x++)
     {
         line_buffer[idx][x] =
-            (uint16_t)' ' | ((uint16_t)COLOR_LIGHT_GRAY << 8);
+            (uint16_t)' ' | ((uint16_t)TERM_COLOR_LIGHT_GRAY << 8);
     }
 
     cursor_col = 0;
@@ -412,7 +453,7 @@ static void terminal_draw_blank_row(int screen_row)
         return;
 
     for (int x = 0; x < WIDTH; ++x)
-        term_draw_cell(x, screen_row, ' ', COLOR_LIGHT_GRAY);
+        term_draw_cell(x, screen_row, ' ', TERM_COLOR_LIGHT_GRAY);
 }
 
 static void terminal_draw_cursor(void)
@@ -420,7 +461,7 @@ static void terminal_draw_cursor(void)
     if (!fb_is_available() || view_offset != 0 || cursor_col < 0 || cursor_col >= WIDTH)
         return;
 
-    term_draw_cell_mode(cursor_col, terminal_cursor_row(), '_', COLOR_WHITE);
+    term_draw_cell_mode(cursor_col, terminal_cursor_row(), '_', TERM_COLOR_WHITE);
 }
 
 void render_view(void);
@@ -487,7 +528,7 @@ void render_view(void)
     {
         int cy = shown - 1;
         if (cy >= 0 && cy < HEIGHT && cursor_col < WIDTH)
-            term_draw_cell_mode(cursor_col, cy, '_', COLOR_WHITE);
+            term_draw_cell_mode(cursor_col, cy, '_', TERM_COLOR_WHITE);
     }
 
     terminal_display_initialized = 1;
@@ -1006,6 +1047,7 @@ static int normalize_hostname(char* s)
     return 1;
 }
 
+/* Password input always echoes '*' rather than the typed character. */
 static int read_password(char* buffer, int max)
 {
     int length = 0;
@@ -1308,8 +1350,7 @@ static int verify_root_password(const char* password)
 
     return diff == 0;
 }
-
-static void wipe_secret(char* secret, int size)
+void wipe_secret(char* secret, int size)
 {
     volatile char* p = secret;
 
@@ -1523,6 +1564,22 @@ void read_line(char* buffer, int max)
 
         if (console_f7_enabled && key == KEY_F7)
         {
+            uint8_t event_modifiers = keyboard_get_last_event_modifiers();
+
+            if (event_modifiers & (KEY_MOD_LSHIFT | KEY_MOD_RSHIFT))
+            {
+                /* TempleOS Shift+F7 analogue: show a random passage without
+                   inserting multiline text into the command buffer. */
+                buffer[length] = '\0';
+                putchar_os('\n');
+                nw_god_bible_passage();
+                set_color(prompt_color);
+                print_shell_p();
+                set_color(base_color);
+                print(buffer);
+                continue;
+            }
+
             const char* word = nwf_random_word();
             int start = length;
 
@@ -1665,21 +1722,21 @@ void read_line(char* buffer, int max)
 
 void print_error(const char* text)
 {
-    set_color(COLOR_LIGHT_RED);
+    set_color(TERM_COLOR_LIGHT_RED);
     print(text);
     set_color(base_color);
 }
 
 void print_success(const char* text)
 {
-    set_color(COLOR_LIGHT_GREEN);
+    set_color(TERM_COLOR_LIGHT_GREEN);
     print(text);
     set_color(base_color);
 }
 
 void print_title(const char* text)
 {
-    set_color(COLOR_YELLOW);
+    set_color(TERM_COLOR_YELLOW);
     print(text);
     set_color(base_color);
 }
@@ -1710,14 +1767,100 @@ unsigned int rand_simple(void)
     return random_seed;
 }
 
+/* GodPick-style refill: wait for a new key event. keyboard.c samples its
+   TSC timestamp and inserts the 24 timing bits before the key is returned. */
+static void nw_god_pick(void)
+{
+    print("\n[NwWord] Entropy FIFO is empty. Press a key to sample the timer... ");
+    (void)keyboard_getkey();
+    print("\n");
+}
+
+/* Return N timer-derived bits, like TempleOS GodBits(). */
+static int nw_god_bits(uint32_t bit_count, uint32_t *value_out)
+{
+    uint32_t value = 0;
+    uint32_t i;
+
+    if (value_out == 0 || bit_count == 0u || bit_count > 32u)
+        return 0;
+
+    for (i = 0; i < bit_count; ++i) {
+        uint32_t bit = 0;
+
+        while (!nw_entropy_get_bits(1u, &bit))
+            nw_god_pick();
+
+        value = (value << 1) | (bit & 1u);
+    }
+
+    *value_out = value;
+    return 1;
+}
+
+static uint32_t nw_god_bits_required(uint32_t value)
+{
+    uint32_t bits = 0;
+
+    while (value != 0u) {
+        ++bits;
+        value >>= 1;
+    }
+
+    return bits;
+}
+
+/* TempleOS GodBits-style unbiased selection for GodSpeak's phrase shuffle. */
+uint32_t nw_god_random_bounded(uint32_t upper_bound)
+{
+    uint32_t bit_count;
+    uint32_t mask;
+
+    if (upper_bound <= 1u)
+        return 0u;
+
+    bit_count = nw_god_bits_required(upper_bound - 1u);
+    mask = (bit_count >= 32u) ? 0xFFFFFFFFu : ((1u << bit_count) - 1u);
+
+    for (;;) {
+        uint32_t candidate = 0;
+
+        (void)nw_god_bits(bit_count, &candidate);
+        candidate &= mask;
+        if (candidate < upper_bound)
+            return candidate;
+    }
+}
+
 const char* nwf_random_word(void)
 {
-    int index;
+    uint32_t bits;
+    uint32_t count;
+    uint32_t index;
 
-    if (NWOS_WORD_COUNT <= 0)
+    /* TempleOS GodWordStr uses GodBits(17) % num_words. */
+    if (!nw_god_bits(17u, &bits))
         return "";
 
-    index = random_range(0, NWOS_WORD_COUNT - 1);
+    if (nw_word_module_is_ready()) {
+        count = nw_word_module_count();
+        if (count != 0u) {
+            index = bits % count;
+            {
+                const char *word = nw_word_module_get(index);
+                if (word != 0 && word[0] != '\0')
+                    return word;
+            }
+        }
+    }
+
+    /* Safe fallback: never index the small built-in list with the 100k
+       module's count if a validated module later becomes unavailable. */
+    count = (NWOS_WORD_COUNT > 0) ? (uint32_t)NWOS_WORD_COUNT : 0u;
+    if (count == 0u)
+        return "";
+
+    index = bits % count;
     return nw_words[index];
 }
 
@@ -2389,7 +2532,7 @@ static void print_size_human(unsigned long long bytes)
 
 void dateCr()
 {
-    set_color(COLOR_WHITE);
+    set_color(TERM_COLOR_WHITE);
     print(OS_MADE_DATE "\n");
     print("v." OS_VERSION_STR "\n");
     set_color(base_color);
@@ -3069,16 +3212,16 @@ void nwfetch(void)
 
     static const unsigned char logo_color[14] =
     {
-        COLOR_WHITE, COLOR_WHITE, COLOR_LIGHT_CYAN, COLOR_LIGHT_CYAN,
-        COLOR_LIGHT_CYAN, COLOR_LIGHT_CYAN, COLOR_LIGHT_CYAN, COLOR_LIGHT_CYAN,
-        COLOR_LIGHT_CYAN, COLOR_LIGHT_CYAN, COLOR_YELLOW, COLOR_BROWN,
-        COLOR_BROWN, COLOR_YELLOW
+        TERM_COLOR_WHITE, TERM_COLOR_WHITE, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN,
+        TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN,
+        TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_YELLOW, TERM_COLOR_BROWN,
+        TERM_COLOR_BROWN, TERM_COLOR_YELLOW
     };
 
     static const unsigned char palette[8] =
     {
-        COLOR_BLACK, COLOR_RED, COLOR_GREEN, COLOR_YELLOW,
-        COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE
+        TERM_COLOR_BLACK, TERM_COLOR_RED, TERM_COLOR_GREEN, TERM_COLOR_YELLOW,
+        TERM_COLOR_BLUE, TERM_COLOR_MAGENTA, TERM_COLOR_CYAN, TERM_COLOR_WHITE
     };
 
     print("\n");
@@ -3092,62 +3235,62 @@ void nwfetch(void)
         switch (row)
         {
             case 0:
-                set_color(COLOR_CYAN);  print(cfg_user);
-                set_color(COLOR_WHITE); print("@");
-                set_color(COLOR_CYAN);  print(cfg_hostname);
+                set_color(TERM_COLOR_CYAN);  print(cfg_user);
+                set_color(TERM_COLOR_WHITE); print("@");
+                set_color(TERM_COLOR_CYAN);  print(cfg_hostname);
                 break;
 
             case 1:
-                set_color(COLOR_LIGHT_GRAY);
+                set_color(TERM_COLOR_LIGHT_GRAY);
                 print("----------------------");
                 break;
 
             case 2:
-                set_color(COLOR_CYAN);  print("OS: ");
-                set_color(COLOR_WHITE); print(cfg_os); print(" "); print(OS_VERSION_STR); print(" x86_64");
+                set_color(TERM_COLOR_CYAN);  print("OS: ");
+                set_color(TERM_COLOR_WHITE); print(cfg_os); print(" "); print(OS_VERSION_STR); print(" x86_64");
                 break;
 
             case 3:
-                set_color(COLOR_CYAN);  print("Kernel: ");
-                set_color(COLOR_WHITE); print(OS_NAME " 64-bit");
+                set_color(TERM_COLOR_CYAN);  print("Kernel: ");
+                set_color(TERM_COLOR_WHITE); print(OS_NAME " 64-bit");
                 break;
 
             case 4:
-                set_color(COLOR_CYAN);  print("Uptime: ");
-                set_color(COLOR_WHITE);
+                set_color(TERM_COLOR_CYAN);  print("Uptime: ");
+                set_color(TERM_COLOR_WHITE);
                 if (up_h > 0) { print_int((int)up_h); print("h "); }
                 if (up_m > 0) { print_int((int)up_m); print("m "); }
                 print_int((int)total_sec); print("s");
                 break;
 
             case 5:
-                set_color(COLOR_CYAN);  print("Shell: ");
-                set_color(COLOR_WHITE); print("nwsh");
+                set_color(TERM_COLOR_CYAN);  print("Shell: ");
+                set_color(TERM_COLOR_WHITE); print("nwsh");
                 break;
 
             case 6:
-                set_color(COLOR_CYAN);  print("Display: ");
-                set_color(COLOR_WHITE); print("VGA Text 80x50");
+                set_color(TERM_COLOR_CYAN);  print("Display: ");
+                set_color(TERM_COLOR_WHITE); print("VGA Text 80x50");
                 break;
 
             case 7:
-                set_color(COLOR_CYAN);  print("GPU: ");
-                set_color(COLOR_WHITE); nwf_print_gpu();
+                set_color(TERM_COLOR_CYAN);  print("GPU: ");
+                set_color(TERM_COLOR_WHITE); nwf_print_gpu();
                 break;
 
             case 8:
-                set_color(COLOR_CYAN);  print("Terminal: ");
-                set_color(COLOR_WHITE); print(OS_NAME " Console");
+                set_color(TERM_COLOR_CYAN);  print("Terminal: ");
+                set_color(TERM_COLOR_WHITE); print(OS_NAME " Console");
                 break;
 
             case 9:
-                set_color(COLOR_CYAN);  print("CPU: ");
-                set_color(COLOR_WHITE); print(cpu_name);
+                set_color(TERM_COLOR_CYAN);  print("CPU: ");
+                set_color(TERM_COLOR_WHITE); print(cpu_name);
                 break;
 
             case 10:
-                set_color(COLOR_CYAN);  print("Memory: ");
-                set_color(COLOR_WHITE);
+                set_color(TERM_COLOR_CYAN);  print("Memory: ");
+                set_color(TERM_COLOR_WHITE);
                 print_int((int)(nwf_ram_used_kb() / 1024UL));
                 print(" / ");
                 print_int((int)ram_mb);
@@ -3157,18 +3300,18 @@ void nwfetch(void)
                 break;
 
             case 11:
-                set_color(COLOR_CYAN);  print("Network: ");
-                set_color(COLOR_WHITE); print("e1000");
+                set_color(TERM_COLOR_CYAN);  print("Network: ");
+                set_color(TERM_COLOR_WHITE); print("e1000");
                 break;
 
             case 12:
-                set_color(COLOR_CYAN);  print("IP: ");
-                set_color(COLOR_WHITE); print("10.0.2.15");
+                set_color(TERM_COLOR_CYAN);  print("IP: ");
+                set_color(TERM_COLOR_WHITE); print("10.0.2.15");
                 break;
 
             case 13:
-                set_color(COLOR_CYAN);  print("Date: ");
-                set_color(COLOR_WHITE);
+                set_color(TERM_COLOR_CYAN);  print("Date: ");
+                set_color(TERM_COLOR_WHITE);
                 print_two_digits(day);   putchar_os('.');
                 print_two_digits(month); putchar_os('.');
                 print_int(year);         putchar_os(' ');
@@ -3223,11 +3366,7 @@ void poweroff(void)
 {
     __asm__ volatile ("cli");
 
-    /* Prefer the platform's ACPI _S5_ sleep type and PM1 control registers.
-       Fixed ports below are retained for common emulators/legacy chipsets. */
     if (acpi_shutdown_from_tables()) {
-        /* Normally power is removed before this delay expires. If firmware
-           ignored the request, try the legacy emulator/chipset ports. */
         for (volatile unsigned int delay = 0; delay < 2000000u; ++delay)
             __asm__ volatile ("pause");
     }
@@ -3318,7 +3457,7 @@ static int fs_write_lba(unsigned int lba, const unsigned char* buf)
     return ata_write_sector_d(fs_current_drive, fs_part_lba + lba, buf);
 }
 
-static int fs_drive_has_fs_at(int idx, unsigned int base)
+int fs_drive_has_fs_at(int idx, unsigned int base)
 {
     unsigned char sector[512];
 
@@ -3430,7 +3569,7 @@ void fs_save_directory(void)
         fs_write_lba(FS_DIR_LBA + s, buffer + s * 512);
     }
 }
-static int fs_drive_has_fs(int idx)
+int fs_drive_has_fs(int idx)
 {
     return fs_drive_fs_base(idx) != 0xFFFFFFFFu;
 }
@@ -3508,22 +3647,22 @@ void change_p_color(void)
 
     print("Prompt color:\n");
 
-    set_color(COLOR_CYAN);           print("1. cyan (default)\n");
-    set_color(COLOR_RED);            print("2. red\n");
-    set_color(COLOR_GREEN);          print("3. green\n");
-    set_color(COLOR_BLUE);           print("4. blue\n");
-    set_color(COLOR_MAGENTA);        print("5. magenta\n");
-    set_color(COLOR_BROWN);          print("6. brown\n");
-    set_color(COLOR_LIGHT_GRAY);     print("7. light gray\n");
-    set_color(COLOR_DARK_GRAY);      print("8. dark gray\n");
-    set_color(COLOR_LIGHT_BLUE);     print("9. light blue\n");
-    set_color(COLOR_LIGHT_GREEN);    print("10. light green\n");
-    set_color(COLOR_LIGHT_CYAN);     print("11. light cyan\n");
-    set_color(COLOR_LIGHT_RED);      print("12. light red\n");
-    set_color(COLOR_LIGHT_MAGENTA);  print("13. light magenta\n");
-    set_color(COLOR_YELLOW);         print("14. yellow\n");
-    set_color(COLOR_WHITE);          print("15. white\n");
-    set_color(COLOR_BLACK);          print("16. black\n");
+    set_color(TERM_COLOR_CYAN);           print("1. cyan (default)\n");
+    set_color(TERM_COLOR_RED);            print("2. red\n");
+    set_color(TERM_COLOR_GREEN);          print("3. green\n");
+    set_color(TERM_COLOR_BLUE);           print("4. blue\n");
+    set_color(TERM_COLOR_MAGENTA);        print("5. magenta\n");
+    set_color(TERM_COLOR_BROWN);          print("6. brown\n");
+    set_color(TERM_COLOR_LIGHT_GRAY);     print("7. light gray\n");
+    set_color(TERM_COLOR_DARK_GRAY);      print("8. dark gray\n");
+    set_color(TERM_COLOR_LIGHT_BLUE);     print("9. light blue\n");
+    set_color(TERM_COLOR_LIGHT_GREEN);    print("10. light green\n");
+    set_color(TERM_COLOR_LIGHT_CYAN);     print("11. light cyan\n");
+    set_color(TERM_COLOR_LIGHT_RED);      print("12. light red\n");
+    set_color(TERM_COLOR_LIGHT_MAGENTA);  print("13. light magenta\n");
+    set_color(TERM_COLOR_YELLOW);         print("14. yellow\n");
+    set_color(TERM_COLOR_WHITE);          print("15. white\n");
+    set_color(TERM_COLOR_BLACK);          print("16. black\n");
 
     set_color(base_color);
     print("Color: ");
@@ -4250,15 +4389,50 @@ void fs_format_disk(int drive_idx) {
         print_success("Filesystem formatted. Rootfs installed.\n");
 }
 
+/*
+ * Format the NwOS filesystem at a selected partition offset.
+ * The filesystem internals remain private to kernel.c; installer.c uses
+ * this narrow interface instead of accessing fs_ram_mode/fs_part_lba/
+ * fs_live_build directly.
+ */
+int fs_install_format_partition(int drive_idx, unsigned int partition_lba)
+{
+    int saved_live_build;
+
+    if (drive_idx < 0 || drive_idx >= ata_drive_count())
+        return -1;
+
+    fs_ram_mode = 0;
+    fs_set_drive(drive_idx);
+    fs_part_lba = partition_lba;
+
+    saved_live_build = fs_live_build;
+    fs_live_build = 1;
+    fs_format_disk(drive_idx);
+    fs_live_build = saved_live_build;
+
+    return 0;
+}
+
 void fs_format(void) {
     fs_format_disk(fs_current_drive);
 }
 
 #define FS_PART_START_LBA 2048u
 
-static unsigned int fs_layout_sectors(void)
+unsigned int fs_layout_sectors(void)
 {
-    return 1u + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS;
+    unsigned long long magic_end = (unsigned long long)FS_MAGIC_LBA + 1ULL;
+    unsigned long long dir_end = (unsigned long long)FS_DIR_LBA + FS_DIR_SECTORS;
+    unsigned long long data_end = (unsigned long long)FS_DATA_LBA +
+                                  (unsigned long long)MAX_FILES * FS_FILE_SECTORS;
+    unsigned long long end_lba = magic_end;
+
+    if (dir_end > end_lba) end_lba = dir_end;
+    if (data_end > end_lba) end_lba = data_end;
+    if (end_lba == 0 || end_lba > 0xFFFFFFFFULL)
+        return 0;
+    return (unsigned int)end_lba;
 }
 static void fs_live_init(void)
 {
@@ -4279,39 +4453,6 @@ static void fs_live_init(void)
     current_dir = 0;
 }
 
-static int fs_write_mbr_partition(int drive_idx, unsigned int start_lba,
-                                  unsigned int total_sectors)
-{
-    unsigned char mbr[512];
-    fs_bytes_zero(mbr, 512);
-
-    if (total_sectors <= start_lba) return -1;
-
-    unsigned int part_sectors = total_sectors - start_lba;
-    unsigned char* e = mbr + 446;
-
-    e[0] = 0x00; /* not marked bootable: the ISO remains the boot media */
-    e[1] = 0x00;
-    e[2] = 0x00;
-    e[3] = 0x00;
-    e[4] = 0x83; /* Linux filesystem type */
-    e[5] = 0xFE;
-    e[6] = 0xFF;
-    e[7] = 0xFF;
-    e[8]  = (unsigned char)(start_lba & 0xFF);
-    e[9]  = (unsigned char)((start_lba >> 8) & 0xFF);
-    e[10] = (unsigned char)((start_lba >> 16) & 0xFF);
-    e[11] = (unsigned char)((start_lba >> 24) & 0xFF);
-    e[12] = (unsigned char)(part_sectors & 0xFF);
-    e[13] = (unsigned char)((part_sectors >> 8) & 0xFF);
-    e[14] = (unsigned char)((part_sectors >> 16) & 0xFF);
-    e[15] = (unsigned char)((part_sectors >> 24) & 0xFF);
-
-    mbr[510] = 0x55;
-    mbr[511] = 0xAA;
-
-    return ata_write_sector_d(drive_idx, 0, mbr);
-}
 
 int fs_find(const char* name)
 {
@@ -4388,6 +4529,134 @@ static int fs_resolve_dir_path(const char* path)
     }
 
     return dir;
+}
+
+static int ui_len(const char* s)
+{
+    int n = 0;
+    while (s && s[n]) n++;
+    return n;
+}
+
+static void ui_rep(unsigned char ch, int n)
+{
+    for (int i = 0; i < n; i++) putchar_os((char)ch);
+}
+
+static void ui_sp(int n)
+{
+    for (int i = 0; i < n; i++) putchar_os(' ');
+}
+
+static void ui_top(const char* title)
+{
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_TL2);
+    if (title && title[0]) {
+        int tl = ui_len(title) + 2;
+        if (tl > UI_W) tl = UI_W;
+        int l = (UI_W - tl) / 2;
+        int r = UI_W - tl - l;
+        ui_rep(CP_H2, l);
+        putchar_os(' ');
+        set_color(TERM_COLOR_WHITE);
+        print(title);
+        set_color(TERM_COLOR_LIGHT_CYAN);
+        putchar_os(' ');
+        ui_rep(CP_H2, r);
+    } else {
+        ui_rep(CP_H2, UI_W);
+    }
+    putchar_os((char)CP_TR2);
+    putchar_os('\n');
+}
+
+static void ui_mid(void)
+{
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_ML2);
+    ui_rep(CP_H2, UI_W);
+    putchar_os((char)CP_MR2);
+    putchar_os('\n');
+}
+
+static void ui_bot(void)
+{
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_BL2);
+    ui_rep(CP_H2, UI_W);
+    putchar_os((char)CP_BR2);
+    putchar_os('\n');
+    set_color(TERM_COLOR_LIGHT_GRAY);
+}
+
+static void ui_empty(void)
+{
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_V2);
+    ui_sp(UI_W);
+    putchar_os((char)CP_V2);
+    putchar_os('\n');
+}
+
+static void ui_text(const char* text, int indent, unsigned char fg)
+{
+    int len = ui_len(text);
+    int max_len = UI_W - indent;
+    if (len > max_len) len = max_len;
+
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_V2);
+    ui_sp(indent);
+    set_color(fg);
+    for (int i = 0; i < len; i++) putchar_os(text[i]);
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    int pad = UI_W - indent - len;
+    if (pad > 0) ui_sp(pad);
+    putchar_os((char)CP_V2);
+    putchar_os('\n');
+}
+
+static void ui_progress(int percent)
+{
+    if (percent < 0)   percent = 0;
+    if (percent > 100) percent = 100;
+
+    int bar_w = 40;
+    int filled = percent * bar_w / 100;
+
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    ui_sp(UI_LEFT);
+    putchar_os((char)CP_V2);
+    ui_sp(2);
+
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    putchar_os('[');
+    set_color(TERM_COLOR_LIGHT_GREEN);
+    ui_rep(CP_BLK, filled);
+    set_color(TERM_COLOR_DARK_GRAY);
+    ui_rep(CP_BLK, bar_w - filled);
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    putchar_os(']');
+    putchar_os(' ');
+
+    set_color(TERM_COLOR_WHITE);
+    print_int(percent);
+    putchar_os('%');
+
+    set_color(TERM_COLOR_LIGHT_CYAN);
+    {
+        int used = 2 + 1 + bar_w + 2 + 4;
+        int pad = UI_W - used;
+        if (pad > 0) ui_sp(pad);
+    }
+    putchar_os((char)CP_V2);
+    putchar_os('\n');
 }
 
 static void cmd_cd_path(const char* args)
@@ -4706,7 +4975,7 @@ void generate_num(void) {
     while (1) {
         unsigned int random_num = random_range(1, 100);
         print("Generated random number: ");
-        set_color(COLOR_GREEN);
+        set_color(TERM_COLOR_GREEN);
         print_int(random_num);
         set_color(base_color);
         print("\n");
@@ -4721,22 +4990,6 @@ void generate_num(void) {
             print_error("Invalid command! automaticaly 'y'\n");
         }
     }
-}
-
-void sleep(unsigned int ms)
-{
-    if (ms == 0) return;
-
-    unsigned long long idle_start = timer_us();
-    unsigned long long start = timer_ms();
-    unsigned long long target = start + ms;
-
-    while (timer_ms() < target)
-    {
-        __asm__ volatile ("pause");
-    }
-
-    idle_us_accum += timer_us() - idle_start;
 }
 
 #define MENU_INNER 34
@@ -4766,7 +5019,7 @@ void games_menu(void)
         clear();
 
         print("\n\n");
-        set_color(COLOR_CYAN);
+        set_color(TERM_COLOR_CYAN);
         menu_border();
         menu_line("            NWOS ARCADE");
         menu_border();
@@ -5377,18 +5630,17 @@ int fs_read_text(
 
 void init_print(const char *str)
 {
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print(str);
 }
 
 void pre_boot_init() {
-    /* PS/2/i8042 polling can take several seconds on modern PCs without a
-       native legacy controller. Print this before entering the bounded waits,
-       so the user knows the apparent pause is hardware probing, not a hang. */
-    print_error("[WARN] PS/2 keyboard detection may take several seconds; please wait.\n");
+    /* Reset the timing pool before PS/2 or xHCI starts delivering key events. */
+    nw_entropy_init();
     print("[BOOT] Initializing keyboard (PS/2 probe)...\n");
+    print_error("[WARN] PS/2 keyboard detection may take several seconds or minutes; please wait.\n");
     keyboard_init();
 
     print("[PS/2] Controller/channel responded during init: ");
@@ -5400,6 +5652,9 @@ void pre_boot_init() {
     print("[XHCI] ");
     print(xhci_status_string());
     putchar_os('\n');
+    print("[XHCI] BIOS released semaphore: ");
+    print_int(xhci_bios_released());
+    putchar_os('\n');
     print("Loading boot menu..\n");
     sleep(150);
 }
@@ -5408,54 +5663,54 @@ void startingNWOS() {
     clear();
     print("Cleared!\n");
     fb_init();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("FB\n");
     random_init();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("RANDOM\n");
     history_load();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("HISTORY\n");
     ata_init();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("ATA\n");
     fs_load();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("FILESYSTEM\n");
     sleep(100);
     mouse_init();
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("KEYBOARD\n");
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("MOUSE\n");
     if (mouse_is_touchpad())
     {
-        set_color(COLOR_GREEN);
+        set_color(TERM_COLOR_GREEN);
         print("[OK] ");
         set_color(base_color);
         print("TOUCHPAD (");
         print(mouse_device_name());
         print(")\n");
     }
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("COMPILER\n");
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("[OK] ");
     set_color(base_color);
     print("SYSTEM\n");
@@ -5511,31 +5766,31 @@ int fs_read_binary(
 
 void t_colorgreen(void)
 {
-    set_base_color(COLOR_GREEN);
+    set_base_color(TERM_COLOR_GREEN);
     settings_save();
     print("setted color to green\n");
 }
 void t_colorred(void)
 {
-    set_base_color(COLOR_RED);
+    set_base_color(TERM_COLOR_RED);
     settings_save();
     print("setted color to red\n");
 }
 void t_colorgray(void)
 {
-    set_base_color(COLOR_LIGHT_GRAY);
+    set_base_color(TERM_COLOR_LIGHT_GRAY);
     settings_save();
     print("setted color to gray\n");
 }
 void t_colorblue(void)
 {
-    set_base_color(COLOR_BLUE);
+    set_base_color(TERM_COLOR_BLUE);
     settings_save();
     print("setted color to blue\n");
 }
 void t_colorcyan(void)
 {
-    set_base_color(COLOR_CYAN);
+    set_base_color(TERM_COLOR_CYAN);
     settings_save();
     print("setted color to cyan\n");
 }
@@ -5624,7 +5879,7 @@ static void cmd_disks(void)
         ata_drive_t* d = ata_get_drive(i);
         unsigned long long total = (unsigned long long)d->sectors * 512ULL;
 
-        if (i == fs_current_drive) set_color(COLOR_LIGHT_GREEN);
+        if (i == fs_current_drive) set_color(TERM_COLOR_LIGHT_GREEN);
         else set_color(base_color);
 
         putchar_os(d->letter);
@@ -5646,7 +5901,7 @@ static void cmd_disks(void)
 
         if (fs_drive_has_fs(i))
         {
-            set_color(COLOR_LIGHT_CYAN);
+            set_color(TERM_COLOR_LIGHT_CYAN);
             print("  [");
             print(OS_NAME);
             print("]");
@@ -6080,7 +6335,7 @@ void fs_ls(void) {
     for (int i = 0; i < MAX_FILES; i++) {
         if (directory[i].used && directory[i].parent == current_dir && i != 0) {
             if (directory[i].type == FS_TYPE_DIR) {
-                set_color(COLOR_LIGHT_BLUE);
+                set_color(TERM_COLOR_LIGHT_BLUE);
                 print("  [DIR]  ");
                 print(directory[i].name);
                 print("/\n");
@@ -6635,7 +6890,7 @@ static const Command commands[] =
 
 static void cmd_help(void)
 {
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("Commands:\n");
     int lines_on_screen = 1; 
 
@@ -6645,9 +6900,9 @@ static void cmd_help(void)
         {
             if (lines_on_screen >= 52)
             {
-                set_color(COLOR_YELLOW);
+                set_color(TERM_COLOR_YELLOW);
                 print("--- MORE --- (ENTER: line, SPACE: page, ESC: quit)\n");
-                set_color(COLOR_GREEN);
+                set_color(TERM_COLOR_GREEN);
 
                 int advance = 0;
                 while (!advance) 
@@ -6671,9 +6926,9 @@ static void cmd_help(void)
                     }
                 }
                 
-                set_color(COLOR_DARK_GRAY);
+                set_color(TERM_COLOR_DARK_GRAY);
                 print("--- continued ---\n");
-                set_color(COLOR_GREEN);
+                set_color(TERM_COLOR_GREEN);
                 lines_on_screen++;
             }
 
@@ -6689,7 +6944,7 @@ static void cmd_help(void)
 
 static void cmd_more_help(void)
 {
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("More commands:\n");
     print("  mem      - show memory info\n");
     print("  cpu      - show CPU info\n");
@@ -6711,7 +6966,7 @@ static void cmd_more_help(void)
 
 static void cmd_about(void)
 {
-    set_color(COLOR_WHITE);
+    set_color(TERM_COLOR_WHITE);
     print("====" OS_NAME " " OS_VERSION_STR "====\n");
     print("Name: " OS_NAME "\n");
     print("Version: v" OS_VERSION_STR "\n");
@@ -7526,6 +7781,27 @@ static int nwc_has_suffix(const char* name, const char* suffix)
     return strcmp(name + name_len - suffix_len, suffix) == 0;
 }
 
+void format_size_buf(unsigned long long bytes, char* buf, int max_len) {
+    int len = 0;
+    if (bytes >= 1024ULL * 1024ULL * 1024ULL) {
+        unsigned long long gb = bytes / (1024ULL * 1024ULL * 1024ULL);
+        char tmp[24]; int t = 0;
+        if (gb == 0) tmp[t++] = '0';
+        else { while (gb > 0) { tmp[t++] = '0' + (gb % 10); gb /= 10; } }
+        for (int i = t - 1; i >= 0 && len < max_len - 4; i--) buf[len++] = tmp[i];
+        buf[len++] = ' '; buf[len++] = 'G'; buf[len++] = 'B';
+    } else {
+        unsigned long long mb = bytes / (1024ULL * 1024ULL);
+        if (mb == 0) mb = 1;
+        char tmp[24]; int t = 0;
+        if (mb == 0) tmp[t++] = '0';
+        else { while (mb > 0) { tmp[t++] = '0' + (mb % 10); mb /= 10; } }
+        for (int i = t - 1; i >= 0 && len < max_len - 4; i--) buf[len++] = tmp[i];
+        buf[len++] = ' '; buf[len++] = 'M'; buf[len++] = 'B';
+    }
+    buf[len] = '\0';
+}
+
 static void cmd_nwc(const char* args)
 {
     char input_name[MAX_FILENAME];
@@ -7929,7 +8205,7 @@ static unsigned char color_from_name(const char* name)
             return (unsigned char)i;
     }
 
-    return COLOR_LIGHT_GRAY;
+    return TERM_COLOR_LIGHT_GRAY;
 }
 
 static int cfg_find_key(const char* buffer, const char* key, char* out, int out_max)
@@ -8450,7 +8726,7 @@ static unsigned long long rootfs_total_size(void)
 
 static unsigned long long install_disk_usage(void)
 {
-    return (unsigned long long)(1 + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS) * 512ULL;
+    return (unsigned long long)fs_layout_sectors() * 512ULL;
 }
 
 static void installer_print_disks(int selected)
@@ -8463,7 +8739,7 @@ static void installer_print_disks(int selected)
 
         print("    ");
 
-        if (selected == i) set_color(COLOR_LIGHT_GREEN);
+        if (selected == i) set_color(TERM_COLOR_LIGHT_GREEN);
         else set_color(base_color);
 
         print_int(i + 1);
@@ -8472,7 +8748,7 @@ static void installer_print_disks(int selected)
         putchar_os(d->letter);
         print(":  ");
 
-        set_color(COLOR_WHITE);
+        set_color(TERM_COLOR_WHITE);
         print(d->model);
         set_color(base_color);
 
@@ -8481,104 +8757,455 @@ static void installer_print_disks(int selected)
 
         if (fs_drive_has_fs(i))
         {
-            set_color(COLOR_LIGHT_RED);
+            set_color(TERM_COLOR_LIGHT_RED);
             print("  [has " OS_NAME "]");
             set_color(base_color);
         }
 
-        if (selected == i) set_color(COLOR_LIGHT_GREEN);
+        if (selected == i) set_color(TERM_COLOR_LIGHT_GREEN);
         else set_color(base_color);
 
         putchar_os('\n');
     }
 }
 
-static int installer_collect_setup(void)
+static void installer_setup_draw(const char* title, const char* prompt,
+                                  const char* value, const char* hint)
+{
+    int w = 700;
+    int h = 500;
+    int x = ((int)fb_get_width() - w) / 2;
+    int y = ((int)fb_get_height() - h) / 2;
+
+    fb_clear(COLOR_BLUE);
+    gui_draw_window(x, y, w, h, title);
+    gui_draw_text(x + 24, y + 55,
+                  "Configure the account used by the installed system.",
+                  COLOR_BLACK);
+    gui_draw_text(x + 24, y + 125, prompt, COLOR_BLACK);
+    gui_rect(x + 20, y + 155, w - 40, 42, COLOR_WHITE);
+    gui_draw_text(x + 32, y + 168, value, COLOR_BLACK);
+
+    if (hint && hint[0] != '\0')
+        gui_draw_text(x + 24, y + 225, hint, COLOR_DARK_GRAY);
+
+    gui_draw_text(x + 24, y + h - 42,
+                  "Type to enter   Backspace: delete   Enter: continue   Esc: cancel",
+                  COLOR_DARK_GRAY);
+}
+
+static int installer_read_setup_field(const char* title,
+                                      const char* prompt,
+                                      char* output, int capacity,
+                                      const char* hint)
+{
+    int length = 0;
+
+    if (output == 0 || capacity < 2)
+        return 0;
+
+    output[0] = '\0';
+
+    while (1)
+    {
+        installer_setup_draw(title, prompt, output, hint);
+
+        int key = keyboard_getkey();
+        if (key == KEY_ENTER)
+        {
+            output[length] = '\0';
+            return 1;
+        }
+        if (key == KEY_ESC || key == 27)
+        {
+            output[0] = '\0';
+            return 0;
+        }
+        if (key == KEY_BACKSPACE)
+        {
+            if (length > 0)
+                output[--length] = '\0';
+            continue;
+        }
+        if (key >= 32 && key <= 126 && length < capacity - 1)
+        {
+            output[length++] = (char)key;
+            output[length] = '\0';
+        }
+    }
+}
+
+/* Password entry has no code path that passes the password to gui_draw_text. */
+static int installer_read_secret_field(const char* title,
+                                       const char* prompt,
+                                       char* output, int capacity,
+                                       const char* hint)
+{
+    int length = 0;
+    char mask[64];
+
+    if (output == 0 || capacity < 2 || capacity > (int)sizeof(mask))
+        return 0;
+
+    output[0] = '\0';
+    mask[0] = '\0';
+
+    while (1)
+    {
+        int w = 700;
+        int h = 500;
+        int x = ((int)fb_get_width() - w) / 2;
+        int y = ((int)fb_get_height() - h) / 2;
+
+        for (int i = 0; i < (int)sizeof(mask); ++i)
+            mask[i] = '\0';
+        for (int i = 0; i < length; ++i)
+            mask[i] = '*';
+        mask[length] = '\0';
+
+        fb_clear(COLOR_BLUE);
+        gui_draw_window(x, y, w, h, title);
+        gui_draw_text(x + 24, y + 55,
+                      "Password characters are never displayed.", COLOR_BLACK);
+        gui_draw_text(x + 24, y + 125, prompt, COLOR_BLACK);
+        gui_rect(x + 20, y + 155, w - 40, 42, COLOR_WHITE);
+        gui_draw_text(x + 32, y + 168, mask, COLOR_BLACK);
+        if (hint && hint[0] != '\0')
+            gui_draw_text(x + 24, y + 225, hint, COLOR_DARK_GRAY);
+        gui_draw_text(x + 24, y + h - 42,
+                      "Type to enter   Backspace: delete   Enter: continue   Esc: cancel",
+                      COLOR_DARK_GRAY);
+
+        int key = keyboard_getkey();
+        if (key == KEY_ENTER)
+        {
+            output[length] = '\0';
+            wipe_secret(mask, sizeof(mask));
+            return 1;
+        }
+        if (key == KEY_ESC || key == 27)
+        {
+            wipe_secret(output, capacity);
+            wipe_secret(mask, sizeof(mask));
+            return 0;
+        }
+        if (key == KEY_BACKSPACE)
+        {
+            if (length > 0)
+                output[--length] = '\0';
+            continue;
+        }
+        if (key >= 32 && key <= 126 && length < capacity - 1)
+        {
+            output[length++] = (char)key;
+            output[length] = '\0';
+        }
+    }
+}
+
+static void installer_setup_error(const char* message)
+{
+    int w = 700;
+    int h = 500;
+    int x = ((int)fb_get_width() - w) / 2;
+    int y = ((int)fb_get_height() - h) / 2;
+
+    fb_clear(COLOR_BLUE);
+    gui_draw_window(x, y, w, h, "Account setup - Invalid value");
+    gui_draw_text(x + 24, y + 90, message, COLOR_RED);
+    gui_draw_text(x + 24, y + h - 42, "Press any key to try again.", COLOR_DARK_GRAY);
+    (void)keyboard_getkey();
+}
+
+static int installer_choose_login_requirement(void)
+{
+    int w = 700;
+    int h = 500;
+    int x = ((int)fb_get_width() - w) / 2;
+    int y = ((int)fb_get_height() - h) / 2;
+
+    while (1)
+    {
+        fb_clear(COLOR_BLUE);
+        gui_draw_window(x, y, w, h, "Account setup - Startup login");
+        gui_draw_text(x + 24, y + 75,
+                      "Require the account password every time NwOS starts?",
+                      COLOR_BLACK);
+        gui_draw_text(x + 40, y + 145,
+                      "Y  Require login (recommended)", COLOR_GREEN);
+        gui_draw_text(x + 40, y + 185,
+                      "N  Boot directly to the shell", COLOR_BLACK);
+        gui_draw_text(x + 24, y + h - 42,
+                      "Press Y or N   Esc: cancel installation",
+                      COLOR_DARK_GRAY);
+
+        int key = keyboard_getkey();
+        if (key == 'y' || key == 'Y' || key == KEY_ENTER)
+        {
+            cfg_require_login = 1;
+            return 1;
+        }
+        if (key == 'n' || key == 'N')
+        {
+            cfg_require_login = 0;
+            return 1;
+        }
+        if (key == KEY_ESC || key == 27)
+            return 0;
+    }
+}
+
+int installer_collect_setup(void)
 {
     char input[64];
     char password[64];
     char confirm[64];
+    char old_user[32];
+    char old_hostname[64];
+    char old_salt[17];
+    char old_hash[65];
+    char old_invite[28];
+    int old_shell_p = shell_p;
+    int old_setup_complete = cfg_setup_complete;
+    int old_require_login = cfg_require_login;
 
-    print_title("\n=== NwOS SETUP ===\n\n");
-    print("Configure your new NwOS installation.\n\n");
+    cfg_strcpy(old_user, cfg_user, sizeof(old_user));
+    cfg_strcpy(old_hostname, cfg_hostname, sizeof(old_hostname));
+    cfg_strcpy(old_salt, cfg_root_salt, sizeof(old_salt));
+    cfg_strcpy(old_hash, cfg_root_hash, sizeof(old_hash));
+    cfg_strcpy(old_invite, invite_user, sizeof(old_invite));
 
     while (1)
     {
-        print("Hostname [nwos]: ");
-        read_line(input, sizeof(input));
+        if (!installer_read_setup_field(
+                "Account setup - Hostname",
+                "Hostname [nwos]:", input, sizeof(input),
+                "Use lowercase letters, digits and hyphens."))
+            goto cancel_setup;
 
         if (input[0] == '\0')
         {
             cfg_strcpy(cfg_hostname, "nwos", sizeof(cfg_hostname));
             break;
         }
-
         if (normalize_hostname(input))
         {
             cfg_strcpy(cfg_hostname, input, sizeof(cfg_hostname));
             break;
         }
-
-        print_error("Invalid hostname. Use letters, digits and '-'.\n");
+        installer_setup_error("Invalid hostname. Use letters, digits and '-'.");
     }
 
     while (1)
     {
-        print("Username [user]: ");
-        read_line(input, 32);
+        if (!installer_read_setup_field(
+                "Account setup - Username",
+                "Username [user]:", input, sizeof(input),
+                "1-31 characters: a-z, 0-9, underscore or hyphen; root is reserved."))
+            goto cancel_setup;
 
         if (input[0] == '\0')
         {
             cfg_strcpy(cfg_user, "user", sizeof(cfg_user));
             break;
         }
-
         if (normalize_username(input))
         {
             cfg_strcpy(cfg_user, input, sizeof(cfg_user));
             break;
         }
-
-        print_error("Invalid username. Use 1-31 characters; root is reserved.\n");
+        installer_setup_error("Invalid username. Use 1-31 valid characters; root is reserved.");
     }
 
     while (1)
     {
-        print("Root password: ");
-        int len = read_password(password, sizeof(password));
-
-        print("Confirm root password: ");
-        read_password(confirm, sizeof(confirm));
-
-        if (strcmp(password, confirm) != 0)
+        if (!installer_read_secret_field(
+                "Account setup - Password",
+                "Account / administrator password:", password,
+                sizeof(password),
+                "The password is stored as a salted hash."))
         {
-            print_error("Passwords do not match. Try again.\n");
+            wipe_secret(password, sizeof(password));
+            goto cancel_setup;
+        }
+
+        if (password[0] == '\0')
+        {
+            installer_setup_error("Password cannot be empty.");
             continue;
         }
 
-        break;
+        if (!installer_read_secret_field(
+                "Account setup - Confirm password",
+                "Confirm password:", confirm, sizeof(confirm),
+                "Re-enter the same password."))
+        {
+            wipe_secret(password, sizeof(password));
+            wipe_secret(confirm, sizeof(confirm));
+            goto cancel_setup;
+        }
+
+        if (strcmp(password, confirm) == 0)
+            break;
+
+        wipe_secret(password, sizeof(password));
+        wipe_secret(confirm, sizeof(confirm));
+        installer_setup_error("Passwords do not match. Enter them again.");
+    }
+
+    if (!installer_choose_login_requirement())
+    {
+        wipe_secret(password, sizeof(password));
+        wipe_secret(confirm, sizeof(confirm));
+        goto cancel_setup;
     }
 
     make_root_salt(cfg_root_salt);
     nw_password_hash(password, cfg_root_salt, cfg_root_hash);
-
-    for (int i = 0; i < (int)sizeof(password); i++)
+    if (!verify_root_password(password))
     {
-        password[i] = '\0';
-        confirm[i] = '\0';
+        wipe_secret(password, sizeof(password));
+        wipe_secret(confirm, sizeof(confirm));
+        installer_setup_error("Password verification failed internally. Please enter it again.");
+        goto cancel_setup;
     }
+    wipe_secret(password, sizeof(password));
+    wipe_secret(confirm, sizeof(confirm));
 
     cfg_setup_complete = 1;
-    shell_p = 4;
+    shell_p = 4; /* Linux-style user@host:~/path$ prompt by default. */
 
-    print_success("\nSetup configuration collected.\n");
-    print("Hostname: ");
-    print(cfg_hostname);
-    print("\nUsername: ");
-    print(cfg_user);
-    print("\n\n");
+    fb_clear(COLOR_BLUE);
+    {
+        int w = 700;
+        int h = 500;
+        int x = ((int)fb_get_width() - w) / 2;
+        int y = ((int)fb_get_height() - h) / 2;
+        char prompt_preview[128];
+        int prompt_pos = 0;
 
+        prompt_preview[0] = '\0';
+        prompt_append(prompt_preview, sizeof(prompt_preview), &prompt_pos, cfg_user);
+        prompt_append(prompt_preview, sizeof(prompt_preview), &prompt_pos, "@");
+        prompt_append(prompt_preview, sizeof(prompt_preview), &prompt_pos, cfg_hostname);
+        prompt_append(prompt_preview, sizeof(prompt_preview), &prompt_pos, ":~/path$ ");
+
+        gui_draw_window(x, y, w, h, "Account setup complete");
+        gui_draw_text(x + 24, y + 65, "Hostname:", COLOR_DARK_GRAY);
+        gui_draw_text(x + 160, y + 65, cfg_hostname, COLOR_BLACK);
+        gui_draw_text(x + 24, y + 100, "Username:", COLOR_DARK_GRAY);
+        gui_draw_text(x + 160, y + 100, cfg_user, COLOR_BLACK);
+        gui_draw_text(x + 24, y + 145, "Shell prompt:", COLOR_DARK_GRAY);
+        gui_draw_text(x + 160, y + 145, prompt_preview, COLOR_GREEN);
+        gui_draw_text(x + 24, y + 185, "Startup login:", COLOR_DARK_GRAY);
+        gui_draw_text(x + 160, y + 185,
+                      cfg_require_login ? "Enabled" : "Disabled",
+                      cfg_require_login ? COLOR_GREEN : COLOR_BLACK);
+        gui_draw_text(x + 24, y + h - 42,
+                      "Press any key to continue to disk selection.",
+                      COLOR_DARK_GRAY);
+    }
+    (void)keyboard_getkey();
+    wipe_secret(old_salt, sizeof(old_salt));
+    wipe_secret(old_hash, sizeof(old_hash));
     return 1;
+
+cancel_setup:
+    cfg_strcpy(cfg_user, old_user, sizeof(cfg_user));
+    cfg_strcpy(cfg_hostname, old_hostname, sizeof(cfg_hostname));
+    cfg_strcpy(cfg_root_salt, old_salt, sizeof(cfg_root_salt));
+    cfg_strcpy(cfg_root_hash, old_hash, sizeof(cfg_root_hash));
+    cfg_strcpy(invite_user, old_invite, sizeof(invite_user));
+    shell_p = old_shell_p;
+    cfg_setup_complete = old_setup_complete;
+    cfg_require_login = old_require_login;
+    wipe_secret(old_salt, sizeof(old_salt));
+    wipe_secret(old_hash, sizeof(old_hash));
+    wipe_secret(password, sizeof(password));
+    wipe_secret(confirm, sizeof(confirm));
+    return 0;
+}
+
+void installer_profile_take(installer_profile_snapshot_t* snapshot)
+{
+    if (!snapshot) return;
+    cfg_strcpy(snapshot->user, cfg_user, sizeof(snapshot->user));
+    cfg_strcpy(snapshot->hostname, cfg_hostname, sizeof(snapshot->hostname));
+    cfg_strcpy(snapshot->root_salt, cfg_root_salt, sizeof(snapshot->root_salt));
+    cfg_strcpy(snapshot->root_hash, cfg_root_hash, sizeof(snapshot->root_hash));
+    cfg_strcpy(snapshot->invite, invite_user, sizeof(snapshot->invite));
+    snapshot->shell_mode = shell_p;
+    snapshot->setup_complete = cfg_setup_complete;
+    snapshot->require_login = cfg_require_login;
+}
+
+void installer_profile_restore(installer_profile_snapshot_t* snapshot)
+{
+    if (!snapshot) return;
+    cfg_strcpy(cfg_user, snapshot->user, sizeof(cfg_user));
+    cfg_strcpy(cfg_hostname, snapshot->hostname, sizeof(cfg_hostname));
+    cfg_strcpy(cfg_root_salt, snapshot->root_salt, sizeof(cfg_root_salt));
+    cfg_strcpy(cfg_root_hash, snapshot->root_hash, sizeof(cfg_root_hash));
+    cfg_strcpy(invite_user, snapshot->invite, sizeof(invite_user));
+    shell_p = snapshot->shell_mode;
+    cfg_setup_complete = snapshot->setup_complete;
+    cfg_require_login = snapshot->require_login;
+    wipe_secret(snapshot->root_salt, sizeof(snapshot->root_salt));
+    wipe_secret(snapshot->root_hash, sizeof(snapshot->root_hash));
+}
+
+int installer_confirm_preflight(void)
+{
+    while (1)
+    {
+        installer_draw_preflight_warning();
+        int key = keyboard_getkey();
+        if (key == KEY_ENTER || key == 'y' || key == 'Y') return 1;
+        if (key == KEY_ESC || key == 27 || key == 'n' || key == 'N') return 0;
+    }
+}
+
+int installer_verify_saved_account(void)
+{
+    char buffer[SETTINGS_MAX];
+    char value[80];
+    int previous_dir = current_dir;
+    int sys_dir = -1;
+    int ok = 0;
+
+    for (int i = 0; i < MAX_FILES; ++i)
+    {
+        if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
+            directory[i].parent == 0 && strcmp(directory[i].name, "sys") == 0)
+        {
+            sys_dir = i;
+            break;
+        }
+    }
+    if (sys_dir < 0) return 0;
+
+    current_dir = (uint16_t)sys_dir;
+    if (!fs_read_text(SETTINGS_FILE, buffer, sizeof(buffer)))
+        goto done;
+
+    if (!cfg_find_key(buffer, "name", value, sizeof(value)) || strcmp(value, cfg_user) != 0)
+        goto done;
+    if (!cfg_find_key(buffer, "hostname", value, sizeof(value)) || strcmp(value, cfg_hostname) != 0)
+        goto done;
+    if (!cfg_find_key(buffer, "root_salt", value, sizeof(value)) || strcmp(value, cfg_root_salt) != 0)
+        goto done;
+    if (!cfg_find_key(buffer, "root_hash", value, sizeof(value)) || strcmp(value, cfg_root_hash) != 0)
+        goto done;
+    if (!cfg_find_key(buffer, "require_login", value, sizeof(value)) ||
+        ((strcmp(value, "1") == 0) != (cfg_require_login != 0)))
+        goto done;
+
+    ok = 1;
+done:
+    current_dir = (uint16_t)previous_dir;
+    wipe_secret(value, sizeof(value));
+    wipe_secret(buffer, sizeof(buffer));
+    return ok;
 }
 
 static void cmd_install(void)
@@ -8590,208 +9217,22 @@ static void cmd_install(void)
         return;
     }
     installer_cancelled = 0;
+    installer_completed = 0;
 
     installer();
 
-    if (installer_cancelled)
+    if (installer_completed)
+    {
+        int status = fs_load_status();
+        if (status == 1)
+            print_success("Installation verified and detected.\n");
+        else
+            print_error("Install finished, but the boot scan cannot detect the new filesystem.\n");
+    }
+    else if (installer_cancelled)
     {
         print("Installation cancelled. The system keeps running.\n");
     }
-}
-
-void installer(void) {
-    clear();
-    fb_init();
-    set_color(COLOR_CYAN);
-    print("\n");
-    print("  +======================================+\n");
-    print("  |     " OS_NAME " Installation Wizard " OS_VERSION_STR "   |\n");
-    print("  +======================================+\n\n");
-    set_color(base_color);
-    
-    print("  Welcome to the " OS_NAME " installer.\n");
-    print("  Detected disks are listed below. Nothing is written until\n");
-    print("  you explicitly confirm formatting.\n\n");
-
-    ata_init();
-
-    int n = ata_drive_count();
-
-    if (n == 0)
-    {
-        print_error("  No ATA disks detected!\n");
-        print("  Add one to QEMU: -drive file=disk.img,format=raw,if=ide,index=0\n");
-        installer_cancelled = 1;
-        return;
-    }
-
-    if (!installer_collect_setup())
-    {
-        installer_cancelled = 1;
-        return;
-    }
-
-    print_title("\n  Disk configuration:\n");
-    print("    Automatic : MBR + one partition starting at LBA 2048\n");
-    print("    Legacy    : whole disk, raw NwFS starting at LBA 0\n");
-    print("    Nothing is written before the final confirmation.\n\n");
-
-    print_title("  Detected disks:\n");
-    installer_print_disks(-1);
-
-    print_title("\n  Installation size:\n");
-    print("    Files:       ");
-    print_int(ROOTFS_FILE_COUNT);
-    print("\n    Payload:     ");
-    print_size_bytes(rootfs_total_size());
-    print("\n    Disk usage:  ");
-    print_size_bytes(install_disk_usage());
-    print(" (");
-    print_int(1 + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS);
-    print(" sectors)\n");
-
-    char buf[32];
-    int sel = -1;
-
-    while (sel < 0)
-    {
-        print("\n  Select target disk (1-");
-        print_int(n);
-        print("), default 1: ");
-
-        read_line(buf, 32);
-
-        if (buf[0] == '\0')
-        {
-            sel = 1;
-            continue;
-        }
-
-        int value = atoi_simple(buf);
-
-        if (value < 1 || value > n)
-        {
-            print_error("  Invalid disk number.\n");
-            continue;
-        }
-
-        sel = value;
-    }
-
-    ata_drive_t* target = ata_get_drive(sel - 1);
-
-    if (target == 0)
-    {
-        print_error("\n  Disk is not available.\n");
-        installer_cancelled = 1;
-        return;
-    }
-
-    print("\n  Target disk:\n");
-    installer_print_disks(sel - 1);
-
-    if (fs_drive_has_fs(sel - 1))
-    {
-        print_error("\n  WARNING: this disk already contains an " OS_NAME " installation.\n");
-    }
-
-    print("\n  Target layout:\n");
-    print("    1) Automatic MBR partition (recommended)\n");
-    print("    2) Whole disk, raw NwFS (legacy)\n");
-    print("  Choice [1]: ");
-
-    read_line(buf, 32);
-
-    int use_mbr = !(buf[0] == '2');
-    unsigned int start_lba = use_mbr ? FS_PART_START_LBA : 0u;
-    unsigned int needed_sectors = start_lba + fs_layout_sectors();
-
-    if (target->sectors < needed_sectors)
-    {
-        print_error("\n  Disk is too small for " OS_NAME ".\n");
-        print("  Required: ");
-        print_size_bytes((unsigned long long)needed_sectors * 512ULL);
-        print(", available: ");
-        print_size_bytes((unsigned long long)target->sectors * 512ULL);
-        print("\n");
-        installer_cancelled = 1;
-        return;
-    }
-
-    print("Require a password at startup? [Y/n]: ");
-
-    char answer[8];
-    read_line(answer, sizeof(answer));
-
-    if (answer[0] == 'n' || answer[0] == 'N')
-        cfg_require_login = 0;
-    else
-        cfg_require_login = 1;
-
-    cfg_setup_complete = 1;
-
-    print("\n  This will FORMAT disk ");
-    putchar_os(target->letter);
-    print(": and erase every partition and file on it.\n");
-    print("  Layout: ");
-    print(use_mbr ? "MBR + partition at LBA 2048" : "raw NwFS from LBA 0");
-    print("\n  Type 'yes' to format and install: ");
-
-    read_line(buf, 32);
-
-    if (strcmp(buf, "yes") != 0)
-    {
-        print_error("\n  Cancelled. Nothing was changed.\n");
-        installer_cancelled = 1;
-        return;
-    }
-
-    print_success("\n\n  Installing to ");
-    putchar_os(target->letter);
-    print(": ...\n");
-    sleep(500);
-
-    fs_ram_mode = 0;
-    fs_part_lba = 0;
-
-    if (use_mbr)
-    {
-        print("  Writing MBR partition table...\n");
-
-        if (fs_write_mbr_partition(sel - 1, FS_PART_START_LBA,
-                                   target->sectors) != 0)
-        {
-            print_error("  Could not write the partition table.\n");
-            installer_cancelled = 1;
-            return;
-        }
-
-        fs_part_lba = FS_PART_START_LBA;
-    }
-
-    fs_set_drive(sel - 1);
-    fs_format_disk(sel - 1);
-    
-    print_success("\n  Installation complete!\n");
-    print("  " OS_NAME " was installed on ");
-    putchar_os(target->letter);
-    print(":\n");
-    print("    Files:       ");
-    print_int(ROOTFS_FILE_COUNT);
-    print("\n    Payload:     ");
-    print_size_bytes(rootfs_total_size());
-    print("\n    Disk usage:  ");
-    print_size_bytes(install_disk_usage());
-    print("\n");
-    print("  Boot from the " OS_NAME " ISO/USB again; the installed disk\n");
-    print("  is detected automatically and appears in the boot menu.\n\n");
-    for (int s = 3; s > 0; s--) {
-        print("Reboot in ");
-        print_int(s);
-        print(" seconds...\n");
-        sleep(1000);
-    }
-    reboot();
 }
 
 static int login_prompt(void)
@@ -8801,23 +9242,27 @@ static int login_prompt(void)
 
     if (!root_password_is_set())
     {
-        print_error("Login is enabled but no root password is configured.\n");
+        print_error("Login is enabled but no account password is configured.\n");
         return 0;
     }
 
-    while (1)
+    for (int attempt = 0; attempt < 3; ++attempt)
     {
-        char password[64];
-        int tries;
+        char username[32] = {0};
+        char password[64] = {0};
+        int valid = 0;
 
-        print("\nNwOS login: ");
-        print(cfg_user);
-        print("\nPassword: ");
+        print("\n" OS_NAME " login: ");
+        read_line(username, sizeof(username));
+        if (strcmp(username, cfg_user) == 0)
+        {
+            print("Password: ");
+            if (read_password(password, sizeof(password)) > 0)
+                valid = verify_root_password(password);
+        }
 
-        read_password(password, sizeof(password));
-
-        int valid = verify_root_password(password);
         wipe_secret(password, sizeof(password));
+        wipe_secret(username, sizeof(username));
 
         if (valid)
         {
@@ -8825,11 +9270,12 @@ static int login_prompt(void)
             return 1;
         }
 
-        print_error("Incorrect password. Try again.\n");
-        tries++;
-
-        sleep(1000);
+        print_error("Login incorrect.\n");
+        sleep(750);
     }
+
+    print_error("Too many failed login attempts. Reboot to try again.\n");
+    return 0;
 }
 
 #define BOOT_ACTION_SYSTEM 0
@@ -8838,47 +9284,79 @@ static int login_prompt(void)
 
 static int boot_menu(int has_installed)
 {
-    char input[16];
+    static const char* items_inst[] = {
+        "Boot installed " OS_NAME,
+        "Live mode (runs in RAM, disks are not modified)",
+        "Installer (use unallocated MBR space; existing partitions preserved)"
+    };
+    static const char* items_new[] = {
+        "Live mode (runs in RAM, disks are not modified)",
+        "Installer (use unallocated MBR space; existing partitions preserved)"
+    };
+    static const int acts_inst[] = {
+        BOOT_ACTION_SYSTEM, BOOT_ACTION_LIVE, BOOT_ACTION_SETUP
+    };
+    static const int acts_new[] = {
+        BOOT_ACTION_LIVE, BOOT_ACTION_SETUP
+    };
+
+    const char** items = has_installed ? items_inst : items_new;
+    const int*   acts  = has_installed ? acts_inst  : acts_new;
+    int count = has_installed ? 3 : 2;
+    int sel   = 0;
+
+    int w = 600;
+    int h = 400;
+    int x = ((int)fb_get_width() - w) / 2;
+    int y = ((int)fb_get_height() - h) / 2;
 
     clear();
-    fb_init();
 
-    set_color(COLOR_CYAN);
-    print("\n");
-    print("  +==========================================+\n");
-    print("  |          " OS_NAME " " OS_VERSION_STR " Boot Menu          |\n");
-    print("  +==========================================+\n\n");
-    set_color(base_color);
+    while (1) {
+        fb_clear(COLOR_BLUE);
 
-    if (has_installed)
-    {
-        print("  1) Boot installed " OS_NAME "\n");
-        print("  2) Live mode (runs in RAM, disks are not modified)\n");
-        print("  3) Installer (detect, partition and format a disk)\n\n");
-        print("  Selection [1]: ");
+        gui_draw_window(x, y, w, h, OS_NAME " " OS_VERSION_STR " Boot Menu");
+
+        if (!has_installed) {
+            gui_draw_text(x + 20, y + 50, "No installed " OS_NAME " filesystem was found.", COLOR_RED);
+            gui_draw_text(x + 20, y + 70, "Choose Live mode or start the installer.", COLOR_BLACK);
+        } else {
+            gui_draw_text(x + 20, y + 50, "Use arrow keys to select, Enter to boot.", COLOR_BLACK);
+        }
+
+        for (int i = 0; i < count; i++) {
+            int item_y = y + 120 + i * 40;
+
+            if (i == sel) {
+                gui_rect(x + 10, item_y - 5, w - 20, 30, COLOR_BLUE);
+                gui_draw_text(x + 20, item_y, ">", COLOR_WHITE);
+                gui_draw_text(x + 40, item_y, items[i], COLOR_WHITE);
+            } else {
+                gui_draw_text(x + 40, item_y, items[i], COLOR_BLACK);
+            }
+        }
+
+        gui_draw_text(x + 20, y + h - 30, "Arrows: Move   Enter: Select   R: Reboot", COLOR_DARK_GRAY);
+
+        int key = keyboard_getkey();
+
+        if (key == KEY_UP)        sel = (sel + count - 1) % count;
+        else if (key == KEY_DOWN) sel = (sel + 1) % count;
+        else if (key == KEY_ENTER) {
+            clear(); 
+            return acts[sel];
+        }
+        else if (key == 27 || key == KEY_ESC || key == 'r' || key == 'R') {
+            reboot();
+        }
+        else if (key >= '1' && key <= '9') {
+            int idx = key - '1';
+            if (idx < count) {
+                clear();
+                return acts[idx];
+            }
+        }
     }
-    else
-    {
-        print("  No installed " OS_NAME " filesystem was found.\n\n");
-        print("  1) Live mode (runs in RAM, disks are not modified)\n");
-        print("  2) Installer (detect, partition and format a disk)\n\n");
-        print("  Selection [1]: ");
-    }
-
-    read_line(input, sizeof(input));
-
-    int value = (input[0] == '\0') ? 1 : atoi_simple(input);
-
-    if (has_installed)
-    {
-        if (value == 2) return BOOT_ACTION_LIVE;
-        if (value == 3) return BOOT_ACTION_SETUP;
-        return BOOT_ACTION_SYSTEM;
-    }
-
-    if (value == 2) return BOOT_ACTION_SETUP;
-
-    return BOOT_ACTION_LIVE;
 }
 
 static void boot_system(void)
@@ -8899,20 +9377,22 @@ static void boot_system(void)
 
     sleep(1500);
 
+    clear();
+
     print("================================\n");
     print("        Welcome to " OS_NAME " " OS_VERSION_STR "\n");
     print("================================\n\n");
-    set_color(COLOR_LIGHT_GREEN);
+    set_color(TERM_COLOR_LIGHT_GREEN);
     print("copyright (c) User0140155 2026\n\n");
-    set_color(COLOR_LIGHT_GRAY);
+    set_color(TERM_COLOR_LIGHT_GRAY);
     print("Github: https://github.com/User0140155/NwOS"); print("\n");
     print("Alt + R to shutdown\n");
     print("Type 'help' for commands.\n\n");
-    set_color(COLOR_GREEN);
+    set_color(TERM_COLOR_GREEN);
     print("================");
-    set_color(COLOR_BLUE);
+    set_color(TERM_COLOR_BLUE);
     print("================\n");
-    set_color(COLOR_LIGHT_GRAY);
+    set_color(TERM_COLOR_LIGHT_GRAY);
 
     fs_enter_user_home();
     if (!login_prompt())
@@ -8952,12 +9432,44 @@ void kernel_main(void) {
     }
 
     print("[BOOT] Initializing physical memory manager...\n");
-    if (!pmm_init()) {
+    int pmm_ready_for_modules = pmm_init();
+    if (!pmm_ready_for_modules) {
         print_error(
             "PMM initialization failed; USB DMA unavailable.\n"
         );
     } else {
         print("[BOOT] PMM initialized.\n");
+    }
+
+    /* pmm_init() reserves all Multiboot2 module ranges before the dictionary
+       reader stores pointers into the bootloader-provided module. */
+    if (pmm_ready_for_modules &&
+        nw_word_module_init_from_multiboot2(multiboot_info_ptr))
+    {
+        print_success("[BOOT] NwWord dictionary validated: ");
+        print_uint64(nw_word_module_count());
+        print(" words.\n");
+    }
+    else
+    {
+        print_error("[BOOT] NwWord dictionary unavailable: ");
+        if (pmm_ready_for_modules)
+            print(nw_word_module_error());
+        else
+            print("PMM is not ready");
+        print(". Using the built-in fallback dictionary.\n");
+    }
+
+    if (pmm_ready_for_modules &&
+        nw_passage_module_init_from_multiboot2(multiboot_info_ptr))
+    {
+        print_success("[BOOT] NwPassage text loaded: ");
+        print_uint64(nw_passage_module_count());
+        print(" verses. Shift+F7 is ready.\n");
+    }
+    else
+    {
+        print("[BOOT] NwPassage text is not installed; Shift+F7 will show setup instructions.\n");
     }
 
     pre_boot_init();
@@ -8988,9 +9500,28 @@ void kernel_main(void) {
         if (action == BOOT_ACTION_SETUP)
         {
             installer_cancelled = 0;
+            installer_completed = 0;
             installer();
 
-            if (installer_cancelled)
+            if (installer_completed)
+            {
+                int installed_status = fs_load_status();
+                if (installed_status == 2)
+                    dead_boot();
+
+                has_installed = (installed_status == 1);
+                if (has_installed)
+                {
+                    print_success("\nInstallation verified. NwOS is now available in this boot menu.\n");
+                }
+                else
+                {
+                    print_error("\nInstaller returned success, but disk scan did not find NwOS.\n");
+                    print_error("The new partition may not have been written or may not be readable.\n");
+                }
+                sleep(1500);
+            }
+            else if (installer_cancelled)
             {
                 print("\nInstaller cancelled. Returning to boot menu...\n");
                 sleep(1500);

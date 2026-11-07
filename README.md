@@ -48,6 +48,21 @@ Thank you for your understanding and support!
 
 **Old profile (if you need archives of <v1.4.6):** https://github.com/User014015/
 
+## Derivative Projects
+
+You are welcome to:
+- Fork NwOS.
+- Modify its kernel and drivers.
+- Create your own operating system based on NwOS.
+- Distribute modified versions.
+- Develop independent components.
+
+Please preserve all applicable copyright
+and license notices.
+
+Modified NwOS source files must comply
+with the original project's license.
+
 ## Tiktok page
 (Russian account)
 

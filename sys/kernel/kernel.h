@@ -10,7 +10,7 @@
 #define OS_NAME            "NwOS"
 #define OS_VERSION_MAJOR   1
 #define OS_VERSION_MINOR   5
-#define OS_VERSION_PATCH   5
+#define OS_VERSION_PATCH   6
 #define OS_MADE_DATE      "2026.08.27"
 
 #define OS_STR_HELPER(x)   #x
@@ -31,6 +31,8 @@ void putchar_os(char c);
 void change_p_color(void);
 void print_shell_p(void);
 void shell(void);
+unsigned int fs_layout_sectors(void);
+void format_size_buf(unsigned long long bytes, char* buf, int max_len);
 
 
 
@@ -98,7 +100,12 @@ int  fs_drive_index_by_letter(char letter);
 char fs_get_drive_letter(void);
 
 void fs_format_disk(int drive_idx);
+int fs_install_format_partition(int drive_idx, unsigned int partition_lba);
 
 void installer(void);
+
+void wipe_secret(char* secret, int size);
+int fs_drive_has_fs_at(int idx, unsigned int base);
+int fs_drive_has_fs(int idx);
 
 #endif

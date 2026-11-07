@@ -1,3 +1,4 @@
+# formats
 *.o
 *.elf
 *.bin
@@ -9,13 +10,15 @@
 *.nwo
 *.fd
 *.bak
-
+# other
 .vscode/
 .idea/
+#build & special & binary
 build/
 compiler/builded/
 compiler/nwc
 rootfs/
+# for me (help, commands, recovery, ...)
 cloc
 nwimg
 chars
@@ -29,3 +32,9 @@ NwC.md
 shortNwC.md
 make
 apply.py
+PY_WORD_DATA.md
+
+# ignoring CONTRIBUTING.md
+# because it not made yet
+
+CONTRIBUTING.md
