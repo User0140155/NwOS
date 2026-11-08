@@ -72,6 +72,86 @@ KERNEL_CFLAGS := \
 # Keep this list in sync with the source files in the NwOS repository.
 SOURCES_REL := \
     sys/kernel/kernel.c \
+    sys/kernel/usermode.c \
+    sys/kernel/boot/boot_menu.c \
+    sys/kernel/boot/boot_system.c \
+    sys/kernel/boot/keyboard_input_test.c \
+    sys/kernel/boot/startingNWOS.c \
+    sys/kernel/config/change_p_color.c \
+    sys/kernel/config/find_key.c \
+    sys/kernel/config/settings_load.c \
+    sys/kernel/config/settings_save.c \
+    sys/kernel/config/shell_prompt_text.c \
+    sys/kernel/fs/create.c \
+    sys/kernel/fs/current_path.c \
+    sys/kernel/fs/delete_file_path.c \
+    sys/kernel/fs/drive_fs_base.c \
+    sys/kernel/fs/ensure_dir_path.c \
+    sys/kernel/fs/entry_in_sys_apps_tree.c \
+    sys/kernel/fs/format_disk.c \
+    sys/kernel/fs/fs_load.c \
+    sys/kernel/fs/fs_mkdir.c \
+    sys/kernel/fs/fs_rmdir.c \
+    sys/kernel/fs/fs_write.c \
+    sys/kernel/fs/install_format_partition.c \
+    sys/kernel/fs/max_seq.c \
+    sys/kernel/fs/prepare_rootfs_path.c \
+    sys/kernel/fs/read_directory_of.c \
+    sys/kernel/fs/read_text.c \
+    sys/kernel/fs/resolve_dir_path.c \
+    sys/kernel/fs/rm_one.c \
+    sys/kernel/fs/split_file_path.c \
+    sys/kernel/games/game_guess.c \
+    sys/kernel/games/game_word.c \
+    sys/kernel/games/games_menu.c \
+    sys/kernel/games/hangman.c \
+    sys/kernel/games/higher_lower.c \
+    sys/kernel/games/tictactoe.c \
+    sys/kernel/hw/acpi_find_fadt.c \
+    sys/kernel/hw/acpi_find_s5.c \
+    sys/kernel/hw/acpi_rsdp_valid.c \
+    sys/kernel/hw/acpi_shutdown_from_tables.c \
+    sys/kernel/hw/reboot.c \
+    sys/kernel/input/history_load.c \
+    sys/kernel/input/read_line.c \
+    sys/kernel/installer/collect_setup.c \
+    sys/kernel/installer/read_secret_field.c \
+    sys/kernel/installer/read_setup_field.c \
+    sys/kernel/installer/ui_progress.c \
+    sys/kernel/installer/verify_saved_account.c \
+    sys/kernel/lib/format_size_buf.c \
+    sys/kernel/lib/random_word.c \
+    sys/kernel/lib/size_unit.c \
+    sys/kernel/lib/strncmp.c \
+    sys/kernel/script/cmd_bash.c \
+    sys/kernel/script/expand_vars.c \
+    sys/kernel/script/parse_assignment.c \
+    sys/kernel/script/script_run.c \
+    sys/kernel/script/set_var.c \
+    sys/kernel/security/login_prompt.c \
+    sys/kernel/security/passwd.c \
+    sys/kernel/security/read_password.c \
+    sys/kernel/security/sha256_final.c \
+    sys/kernel/security/sha256_transform.c \
+    sys/kernel/shell/cd_path.c \
+    sys/kernel/shell/cmd_disks.c \
+    sys/kernel/shell/cmd_drive.c \
+    sys/kernel/shell/cmd_nwc.c \
+    sys/kernel/shell/death_screen.c \
+    sys/kernel/shell/disk_info.c \
+    sys/kernel/shell/execute_single_command.c \
+    sys/kernel/shell/nwc_next_token.c \
+    sys/kernel/shell/nwo_from_dir.c \
+    sys/kernel/shell/shell_execute.c \
+    sys/kernel/sysinfo/cpu_load.c \
+    sys/kernel/sysinfo/cpu_name.c \
+    sys/kernel/sysinfo/date_set.c \
+    sys/kernel/sysinfo/nwfetch.c \
+    sys/kernel/sysinfo/print_gpu.c \
+    sys/kernel/term/new_line.c \
+    sys/kernel/term/print.c \
+    sys/kernel/term/putchar_os.c \
+    sys/kernel/term/render_view.c \
     sys/kernel/nwo_loader.c \
     sys/kernel/panic/kernelpanic.c \
     sys/kernel/nwoloader/nwo_vm.c \
@@ -126,6 +206,9 @@ SOURCES := $(addprefix $(ROOT)/,$(SOURCES_REL))
 OBJECTS := $(patsubst $(ROOT)/%.c,$(BUILD)/obj/%.o,$(SOURCES))
 KERNEL_ENTRY_OBJ := $(BUILD)/kernel_entry.o
 KERNEL_ELF := $(BUILD)/kernel.elf
+USER_SHELL_ASM := $(ROOT)/sys/user/shell.asm
+USER_SHELL_BIN := $(BUILD)/user_shell.bin
+USER_SHELL_HEADER := $(BUILD)/user_shell_blob.h
 BOOT_BIN := $(BUILD)/boot.bin
 VIDEO_CONFIG_H := $(BUILD)/video_config.h
 GENERATED_STAMP := $(BUILD)/generated.stamp
@@ -227,6 +310,14 @@ $(NWBIBLE_MODULE): $(NWBIBLE_SOURCE) | $(BUILD)
 	@cmp -s "$@.tmp" "$@" && rm -f "$@.tmp" || mv "$@.tmp" "$@"
 endif
 
+$(USER_SHELL_BIN): $(USER_SHELL_ASM) | check-tools $(BUILD)
+	$(NASM) -f bin "$<" -o "$@"
+
+$(USER_SHELL_HEADER): $(USER_SHELL_BIN) $(ROOT)/tools/bin2c.py | check-tools $(BUILD)
+	$(PYTHON) $(ROOT)/tools/bin2c.py "$<" "$@"
+
+$(BUILD)/obj/sys/kernel/usermode.o: $(USER_SHELL_HEADER)
+
 $(BUILD)/obj/%.o: $(ROOT)/%.c $(VIDEO_CONFIG_H) $(GENERATED_STAMP) | check-tools
 	@mkdir -p "$(@D)"
 	@if [[ "$<" == "$(ROOT)"/compiler/*.c ]]; then \
@@ -266,13 +357,13 @@ $(LIMINE_ARCHIVE): | $(BUILD) check-tools
 	@set -eu; \
 	if [[ -f "$@" ]] && printf '%s  %s\n' '$(LIMINE_SHA256)' "$@" | $(SHA256SUM) --check --status; then \
 	  echo 'Using verified Limine archive: $@'; \
-	else \
-	  rm -f "$@" "$@.tmp"; \
-	  echo 'Downloading Limine v$(LIMINE_VERSION)...'; \
-	  $(CURL) --fail --location --retry 3 --output "$@.tmp" '$(LIMINE_URL)'; \
-	  printf '%s  %s\n' '$(LIMINE_SHA256)' "$@.tmp" | $(SHA256SUM) --check -; \
-	  mv "$@.tmp" "$@"; \
-	fi
+ 	else \
+ 	  rm -f "$@" "$@.tmp"; \
+ 	  echo 'Downloading Limine v$(LIMINE_VERSION)...'; \
+ 	  $(CURL) --fail --location --retry 3 --output "$@.tmp" '$(LIMINE_URL)'; \
+ 	  printf '%s  %s\n' '$(LIMINE_SHA256)' "$@.tmp" | $(SHA256SUM) --check -; \
+ 	  mv "$@.tmp" "$@"; \
+ 	fi
 
 $(LIMINE_STAMP): $(LIMINE_ARCHIVE) | check-tools
 	@set -eu; \

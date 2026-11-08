@@ -1,6 +1,7 @@
 #include "mmu.h"
 
 #define MMU_PAGE_PRESENT 0x001ull
+#define MMU_PAGE_USER    0x004ull
 #define MMU_PAGE_PWT     0x008ull
 #define MMU_PAGE_PCD     0x010ull
 #define MMU_PAGE_PS      0x080ull
@@ -91,6 +92,65 @@ void mmu_mark_mmio_uncached(uint64_t phys, uint64_t size)
             uint64_t *pt = (uint64_t *)(uintptr_t)(e2 & MMU_PAGE_MASK);
             mmu_set_uncached_4k_table(pt);
         }
+    }
+
+    mmu_flush_tlb();
+}
+
+void mmu_mark_user(uint64_t phys, uint64_t size)
+{
+    uint64_t start, end, addr;
+    uint64_t *pml4;
+
+    if (size == 0)
+        return;
+
+    start = mmu_align_down(phys, 4096ull);
+    end = mmu_align_up(phys, 4096ull);
+    if (size > UINT64_MAX - end)
+        end = UINT64_MAX;
+    else
+        end += size;
+    end = mmu_align_up(end, 4096ull);
+
+    pml4 = (uint64_t *)(uintptr_t)(mmu_read_cr3() & MMU_PAGE_MASK);
+
+    for (addr = start; addr < end; addr += 4096ull) {
+        uint64_t i4 = (addr >> 39) & 0x1FFull;
+        uint64_t i3 = (addr >> 30) & 0x1FFull;
+        uint64_t i2 = (addr >> 21) & 0x1FFull;
+        uint64_t i1 = (addr >> 12) & 0x1FFull;
+        uint64_t e4, e3, e2;
+        uint64_t *pdpt, *pd;
+
+        e4 = pml4[i4];
+        if (!(e4 & MMU_PAGE_PRESENT))
+            continue;
+        pml4[i4] = e4 | MMU_PAGE_USER;
+
+        pdpt = (uint64_t *)(uintptr_t)(e4 & MMU_PAGE_MASK);
+        e3 = pdpt[i3];
+        if (!(e3 & MMU_PAGE_PRESENT))
+            continue;
+        pdpt[i3] = e3 | MMU_PAGE_USER;
+
+        if (e3 & MMU_PAGE_PS)
+            continue;
+
+        pd = (uint64_t *)(uintptr_t)(e3 & MMU_PAGE_MASK);
+        e2 = pd[i2];
+        if (!(e2 & MMU_PAGE_PRESENT))
+            continue;
+
+        if (e2 & MMU_PAGE_PS) {
+            pd[i2] = e2 | MMU_PAGE_USER;
+            continue;
+        }
+
+        pd[i2] = e2 | MMU_PAGE_USER;
+        uint64_t *pt = (uint64_t *)(uintptr_t)(e2 & MMU_PAGE_MASK);
+        if (pt[i1] & MMU_PAGE_PRESENT)
+            pt[i1] |= MMU_PAGE_USER;
     }
 
     mmu_flush_tlb();

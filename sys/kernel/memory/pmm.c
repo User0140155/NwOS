@@ -2,7 +2,9 @@
 
 #define PMM_PAGE_SHIFT       12u
 #define PMM_PAGE_SIZE        (1ull << PMM_PAGE_SHIFT)
-#define PMM_PHYS_LIMIT       0x100000000ull
+/* The bootstrap identity map covers 4 TiB (eight PML4 entries). */
+#define PMM_PHYS_LIMIT       0x40000000000ull
+#define PMM_DMA32_LIMIT      0x100000000ull
 #define PMM_PAGE_COUNT       (PMM_PHYS_LIMIT >> PMM_PAGE_SHIFT)
 #define PMM_BITMAP_BYTES     (PMM_PAGE_COUNT / 8ull)
 #define PMM_MIN_ALLOC_ADDR   0x00100000ull
@@ -17,8 +19,17 @@
 static uint8_t pmm_bitmap[PMM_BITMAP_BYTES];
 static uint8_t pmm_reserved_bitmap[PMM_BITMAP_BYTES];
 static uint64_t pmm_free_page_count_value;
+static uint64_t pmm_available_page_count_value;
 static uint64_t pmm_search_hint;
 static int pmm_ready;
+
+static void pmm_fill_bytes(uint8_t *dst, uint64_t bytes, uint8_t value)
+{
+    __asm__ volatile("cld\n\trep stosb"
+                     : "+D"(dst), "+c"(bytes)
+                     : "a"((unsigned int)value)
+                     : "memory");
+}
 
 extern uint32_t multiboot_info_ptr;
 extern uint8_t __kernel_start[];
@@ -98,7 +109,11 @@ static void pmm_mark_available(uint64_t first_page, uint64_t end_page)
         return;
 
     for (uint64_t page = first_page; page < end_page; ++page) {
-        pmm_bit_clear(page);
+        if (pmm_bit_is_set(page)) {
+            pmm_bit_clear(page);
+            ++pmm_free_page_count_value;
+            ++pmm_available_page_count_value;
+        }
         pmm_reserved_bit_clear(page);
     }
 }
@@ -124,9 +139,11 @@ static void pmm_reserve_range_internal(uint64_t base, uint64_t length)
         end_page = PMM_PAGE_COUNT;
 
     for (uint64_t page = first_page; page < end_page; ++page) {
-        if (!pmm_bit_is_set(page) && pmm_ready && pmm_free_page_count_value != 0)
-            --pmm_free_page_count_value;
-        pmm_bit_set(page);
+        if (!pmm_bit_is_set(page)) {
+            pmm_bit_set(page);
+            if (pmm_free_page_count_value != 0)
+                --pmm_free_page_count_value;
+        }
         pmm_reserved_bit_set(page);
     }
 }
@@ -263,18 +280,6 @@ static void pmm_reserve_boot_tags(uint8_t *mbi, uint32_t total_size)
     }
 }
 
-static void pmm_recount_free_pages(void)
-{
-    uint64_t count = 0;
-
-    for (uint64_t page = 0; page < PMM_PAGE_COUNT; ++page) {
-        if (!pmm_bit_is_set(page))
-            ++count;
-    }
-
-    pmm_free_page_count_value = count;
-}
-
 int pmm_init(void)
 {
     uint32_t mbi_phys = multiboot_info_ptr;
@@ -284,12 +289,11 @@ int pmm_init(void)
     if (pmm_ready)
         return 1;
 
-    for (uint64_t i = 0; i < PMM_BITMAP_BYTES; ++i) {
-        pmm_bitmap[i] = 0xFFu;
-        pmm_reserved_bitmap[i] = 0xFFu;
-    }
+    pmm_fill_bytes(pmm_bitmap, PMM_BITMAP_BYTES, 0xFFu);
+    pmm_fill_bytes(pmm_reserved_bitmap, PMM_BITMAP_BYTES, 0xFFu);
 
     pmm_free_page_count_value = 0;
+    pmm_available_page_count_value = 0;
     pmm_search_hint = (PMM_MIN_ALLOC_ADDR >> PMM_PAGE_SHIFT);
 
     if (!pmm_validate_mbi(mbi_phys, &total_size))
@@ -306,7 +310,6 @@ int pmm_init(void)
     pmm_reserve_range_internal(mbi_phys, total_size);
     pmm_reserve_boot_tags(mbi, total_size);
 
-    pmm_recount_free_pages();
     pmm_ready = 1;
     return 1;
 }
@@ -316,9 +319,22 @@ int pmm_is_ready(void)
     return pmm_ready;
 }
 
+uint64_t pmm_total_bytes(void)
+{
+    return pmm_available_page_count_value * PMM_PAGE_SIZE;
+}
+
 uint64_t pmm_total_free_bytes(void)
 {
     return pmm_free_page_count_value * PMM_PAGE_SIZE;
+}
+
+uint64_t pmm_used_bytes(void)
+{
+    uint64_t total = pmm_total_bytes();
+    uint64_t free_bytes = pmm_total_free_bytes();
+
+    return total > free_bytes ? total - free_bytes : 0;
 }
 
 uint64_t pmm_free_page_count(void)
@@ -377,6 +393,8 @@ uintptr_t pmm_alloc_contiguous_pages(size_t page_count,
     start = pmm_search_hint;
     if (start < (PMM_MIN_ALLOC_ADDR >> PMM_PAGE_SHIFT))
         start = PMM_MIN_ALLOC_ADDR >> PMM_PAGE_SHIFT;
+    if (start >= limit_pages)
+        start = PMM_MIN_ALLOC_ADDR >> PMM_PAGE_SHIFT;
 
     found = pmm_find_run(start, limit_pages, page_count, alignment_pages);
     if (found == PMM_PAGE_COUNT && start > (PMM_MIN_ALLOC_ADDR >> PMM_PAGE_SHIFT))
@@ -423,13 +441,14 @@ void *pmm_alloc_dma32(size_t size_bytes, size_t align_bytes,
     if ((align_pages & (align_pages - 1u)) != 0)
         return 0;
 
+    /* DMA32 users still require buffers below 4 GiB. */
     address = pmm_alloc_contiguous_pages((size_t)pages,
                                          (size_t)align_pages,
-                                         PMM_PHYS_LIMIT);
+                                         PMM_DMA32_LIMIT);
     if (address == 0)
         return 0;
 
-    /* The current bootstrap maps all addresses below 4 GiB identity-wise. */
+    /* The bootstrap identity-maps all addresses below PMM_PHYS_LIMIT. */
     for (uint64_t i = 0; i < pages * PMM_PAGE_SIZE; ++i)
         ((volatile uint8_t *)address)[i] = 0;
 
