@@ -58,10 +58,8 @@ void fs_delete(const char* name)
         return;
     }
 
-    directory[index].used = 0;
-
-    directory[index].name[0] = '\0';
-    directory[index].size = 0;
+    fs_file_release(index);
+    fs_entry_clear(index);
 
     fs_save_directory();
 
@@ -91,32 +89,26 @@ void fs_create(const char* name) {
         name_len++;
     }
 
-    for (int i = 0; i < MAX_FILES; i++) {
+    for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].parent == current_dir && strcmp(directory[i].name, name) == 0) {
             print_error("File already exists.\n");
             return;
         }
     }
 
-    for (int i = 1; i < MAX_FILES; i++) {
-        if (!directory[i].used) {
-            directory[i].used = 1;
-            directory[i].type = FS_TYPE_FILE;
-            directory[i].parent = current_dir;
-            strcpy(directory[i].name, name);
-            directory[i].size = 0;
+    int slot = fs_dir_alloc_slot();
 
-            unsigned char empty[512];
-            for (int k = 0; k < 512; k++) empty[k] = 0;
-            for (int s = 0; s < FS_FILE_SECTORS; s++)
-                fs_write_lba(
-                    FS_DATA_LBA + i * FS_FILE_SECTORS + s,
-                    empty);
-
-            fs_save_directory();
-            if (!fs_quiet) print_success("File created.\n");
-            return;
-        }
+    if (slot < 0) {
+        print_error("No free file slots.\n");
+        return;
     }
-    print_error("No free file slots.\n");
+
+    fs_entry_clear(slot);
+    directory[slot].used = 1;
+    directory[slot].type = FS_TYPE_FILE;
+    directory[slot].parent = current_dir;
+    strcpy(directory[slot].name, name);
+
+    fs_save_directory();
+    if (!fs_quiet) print_success("File created.\n");
 }

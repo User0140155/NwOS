@@ -19,52 +19,79 @@ int fs_get_drive(void)
 
 void fs_load(void)
 {
-    unsigned char buffer[FS_DIR_SECTORS * 512];
+    unsigned int count;
 
-    for (int i = 0; i < MAX_FILES; i++) {
-        directory[i].used = 0;
-        directory[i].name[0] = '\0';
-        directory[i].size = 0;
-    }
+    for (int i = 0; i < fs_dir_cap; i++)
+        fs_entry_clear(i);
+
+    fs_sb_ok = 0;
+    fs_fat_invalidate();
 
     if (!fs_ram_mode && ata_drive_count() == 0) return;
 
-    for (int s = 0; s < FS_DIR_SECTORS; s++) {
-        if (fs_read_lba(FS_DIR_LBA + s, buffer + s * 512) != 0) {
-            print_error("Warning: FS read failed.\n");
-            return;
-        }
+    if (fs_sb_load() != 0)
+        return;
+
+    count = fs_sb.dir_size / (unsigned int)sizeof(DirEntry);
+
+    if (count == 0)
+        return;
+
+    if (fs_dir_reserve((int)count + 64) != 0)
+    {
+        print_error("Warning: not enough memory for the directory.\n");
+        fs_sb_ok = 0;
+        return;
     }
 
-    DirEntry* disk_entries = (DirEntry*)buffer;
-    for (int i = 0; i < MAX_FILES; i++) {
-        directory[i] = disk_entries[i];
-        if (directory[i].used != 1) {
-            directory[i].used = 0;
-            directory[i].name[0] = '\0';
-            directory[i].size = 0;
-        }
+    if (fs_chain_read(fs_sb.dir_first, 0, (unsigned char*)directory,
+                      count * (unsigned int)sizeof(DirEntry)) != 0)
+    {
+        print_error("Warning: FS read failed.\n");
+        for (int i = 0; i < fs_dir_cap; i++)
+            fs_entry_clear(i);
+        fs_sb_ok = 0;
+        return;
+    }
+
+    for (int i = 0; i < (int)count; i++)
+    {
+        if (directory[i].used != 1)
+            fs_entry_clear(i);
+        else
+            directory[i].name[MAX_FILENAME - 1] = '\0';
     }
 }
+
 void fs_save_directory(void)
 {
+    int last = 0;
+    unsigned int bytes;
+    unsigned int first;
+
     if (!fs_ram_mode && ata_drive_count() == 0) return;
-    unsigned char buffer[FS_DIR_SECTORS * 512];
+    if (!fs_sb_ok) return;
 
-    for (int k = 0; k < FS_DIR_SECTORS * 512; k++) buffer[k] = 0;
-
-    DirEntry* disk_entries = (DirEntry*)buffer;
-
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
     {
-        disk_entries[i] = directory[i];
+        if (directory[i].used)
+            last = i;
     }
 
-    for (int s = 0; s < FS_DIR_SECTORS; s++)
+    bytes = (unsigned int)(last + 1) * (unsigned int)sizeof(DirEntry);
+    first = fs_sb.dir_first;
+
+    if (fs_chain_write(&first, (const unsigned char*)directory, bytes) != 0)
     {
-        fs_write_lba(FS_DIR_LBA + s, buffer + s * 512);
+        print_error("Error: cannot save the directory (disk full?).\n");
+        return;
     }
+
+    fs_sb.dir_first = first;
+    fs_sb.dir_size = bytes;
+    fs_sb_save();
 }
+
 int fs_drive_has_fs(int idx)
 {
     return fs_drive_fs_base(idx) != 0xFFFFFFFFu;

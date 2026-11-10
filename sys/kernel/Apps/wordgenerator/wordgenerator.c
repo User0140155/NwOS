@@ -382,8 +382,6 @@ void chat(void)
 
         print("\nNwOS: ");
 
-        /* Tiny deterministic responses for the common greeting/name example.
-           All other input uses the TempleOS-style random phrase collage. */
         if (nw_text_has_word(input, "name"))
         {
             print("I am NwOS, your operating system.");

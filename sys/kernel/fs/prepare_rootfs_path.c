@@ -63,7 +63,7 @@ int fs_prepare_rootfs_path(
 
         int child = -1;
 
-        for (int i = 1; i < MAX_FILES; i++)
+        for (int i = 1; i < fs_dir_cap; i++)
         {
             if (directory[i].used &&
                 directory[i].parent == (uint16_t)parent &&
@@ -79,18 +79,12 @@ int fs_prepare_rootfs_path(
 
         if (child == -1)
         {
-            for (int i = 1; i < MAX_FILES; i++)
-            {
-                if (!directory[i].used)
-                {
-                    child = i;
-                    break;
-                }
-            }
+            child = fs_dir_alloc_slot();
 
-            if (child == -1)
+            if (child < 0)
                 return -1;
 
+            fs_entry_clear(child);
             directory[child].used = 1;
             directory[child].type = FS_TYPE_DIR;
             directory[child].parent = (uint16_t)parent;

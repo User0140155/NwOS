@@ -770,3 +770,390 @@ void fb_draw_window(int x, int y, int w, int h, uint32_t color, const char* titl
         fb_draw_line(bx + 9, by + 4, bx + 4, by + 9, 0x00000000);
     }
 }
+
+/* ======================================================================
+ * Frutiger Aero primitives: gradients, rounded corners, glass, glossy orbs,
+ * ellipses and bubbles.
+ * NwC: nw::gradient nw::rgrad nw::glass nw::orb nw::ellipse nw::bubble
+ * All colors are 0x00RRGGBB, alpha is 0..255.
+ * ====================================================================== */
+
+static uint32_t aero_isqrt(uint32_t n)
+{
+    uint32_t res = 0;
+    uint32_t bit = 1u << 30;
+
+    while (bit > n)
+        bit >>= 2;
+
+    while (bit != 0) {
+        if (n >= res + bit) {
+            n -= res + bit;
+            res = (res >> 1) + bit;
+        } else {
+            res >>= 1;
+        }
+        bit >>= 2;
+    }
+
+    return res;
+}
+
+static int aero_fast_format(void)
+{
+    return fb_red_size == 8 && fb_green_size == 8 && fb_blue_size == 8;
+}
+
+static uint32_t aero_unpack(uint32_t pixel)
+{
+    uint32_t r = (pixel >> fb_red_pos)   & ((1u << fb_red_size)   - 1u);
+    uint32_t g = (pixel >> fb_green_pos) & ((1u << fb_green_size) - 1u);
+    uint32_t b = (pixel >> fb_blue_pos)  & ((1u << fb_blue_size)  - 1u);
+
+    if (fb_red_size != 8)   r = (r * 255u) / ((1u << fb_red_size)   - 1u);
+    if (fb_green_size != 8) g = (g * 255u) / ((1u << fb_green_size) - 1u);
+    if (fb_blue_size != 8)  b = (b * 255u) / ((1u << fb_blue_size)  - 1u);
+
+    return (r << 16) | (g << 8) | b;
+}
+
+/* a + (b - a) * num / den, per channel (used per row, not per pixel). */
+static uint32_t aero_lerp(uint32_t a, uint32_t b, int num, int den)
+{
+    uint32_t out = 0;
+    int shift;
+
+    if (den <= 0)
+        return a;
+    if (num < 0) num = 0;
+    if (num > den) num = den;
+
+    for (shift = 16; shift >= 0; shift -= 8) {
+        int ca = (int)((a >> shift) & 0xFFu);
+        int cb = (int)((b >> shift) & 0xFFu);
+        int c  = ca + ((cb - ca) * num) / den;
+        if (c < 0) c = 0;
+        if (c > 255) c = 255;
+        out |= ((uint32_t)c) << shift;
+    }
+
+    return out;
+}
+
+/* Division-free mix: al = 0..256 */
+static uint32_t aero_mix(uint32_t dst, uint32_t src, int al)
+{
+    int ia = 256 - al;
+    uint32_t r = ((((dst >> 16) & 0xFFu) * ia) + (((src >> 16) & 0xFFu) * al)) >> 8;
+    uint32_t g = ((((dst >> 8)  & 0xFFu) * ia) + (((src >> 8)  & 0xFFu) * al)) >> 8;
+    uint32_t b = (((dst & 0xFFu) * ia) + ((src & 0xFFu) * al)) >> 8;
+    return (r << 16) | (g << 8) | b;
+}
+
+/* Blend rgb over pixel (x,y), alpha 0..255. Clipped to the screen. */
+static void aero_blend(int x, int y, uint32_t rgb, int alpha)
+{
+    uint32_t* p;
+
+    if (alpha <= 0)
+        return;
+    if (x < 0 || y < 0 || x >= (int)fb_width || y >= (int)fb_height)
+        return;
+
+    p = (uint32_t*)((uint8_t*)fb_addr + (uint32_t)y * fb_pitch + (uint32_t)x * 4);
+
+    if (alpha >= 255) {
+        *p = fb_pack_rgb(rgb);
+        return;
+    }
+
+    *p = fb_pack_rgb(aero_mix(aero_unpack(*p), rgb, alpha + (alpha >> 7)));
+}
+
+/* One horizontal span from xl256 to xr256 (1/256 px units), soft edges. */
+static void aero_span(int py, int xl256, int xr256, uint32_t rgb, int alpha)
+{
+    int xl, xr, i;
+    uint32_t* row;
+
+    if (py < 0 || py >= (int)fb_height || xr256 <= xl256 || alpha <= 0)
+        return;
+
+    xl = xl256 >> 8;
+    xr = (xr256 - 1) >> 8;
+
+    if (xl == xr) {
+        aero_blend(xl, py, rgb, (alpha * (xr256 - xl256)) >> 8);
+        return;
+    }
+
+    aero_blend(xl, py, rgb, (alpha * (256 - (xl256 & 255))) >> 8);
+    aero_blend(xr, py, rgb, (alpha * (((xr256 - 1) & 255) + 1)) >> 8);
+
+    xl += 1;
+    xr -= 1;
+    if (xl < 0) xl = 0;
+    if (xr >= (int)fb_width) xr = (int)fb_width - 1;
+    if (xl > xr)
+        return;
+
+    row = (uint32_t*)((uint8_t*)fb_addr + (uint32_t)py * fb_pitch);
+
+    if (alpha >= 255) {
+        uint32_t packed = fb_pack_rgb(rgb);
+        for (i = xl; i <= xr; i++)
+            row[i] = packed;
+    } else if (aero_fast_format()) {
+        int a = alpha + (alpha >> 7);
+        int ia = 256 - a;
+        uint32_t sr = ((rgb >> 16) & 0xFFu) * (uint32_t)a;
+        uint32_t sg = ((rgb >> 8)  & 0xFFu) * (uint32_t)a;
+        uint32_t sb = (rgb & 0xFFu) * (uint32_t)a;
+        uint32_t rp = fb_red_pos, gp = fb_green_pos, bp = fb_blue_pos;
+
+        for (i = xl; i <= xr; i++) {
+            uint32_t p = row[i];
+            uint32_t r = ((((p >> rp) & 0xFFu) * (uint32_t)ia) + sr) >> 8;
+            uint32_t g = ((((p >> gp) & 0xFFu) * (uint32_t)ia) + sg) >> 8;
+            uint32_t b = ((((p >> bp) & 0xFFu) * (uint32_t)ia) + sb) >> 8;
+            row[i] = (r << rp) | (g << gp) | (b << bp);
+        }
+    } else {
+        for (i = xl; i <= xr; i++)
+            aero_blend(i, py, rgb, alpha);
+    }
+}
+
+/* Corner inset (1/256 px) for row j of a box h tall with corner radius r. */
+static int aero_corner_inset(int r, int j, int h)
+{
+    int k;
+    int yc;
+    uint32_t v;
+
+    if (r <= 0)
+        return 0;
+
+    if (j < r)
+        k = j;
+    else if (j >= h - r)
+        k = h - 1 - j;
+    else
+        return 0;
+
+    yc = 2 * (r - k) - 1;
+    v = (uint32_t)(4 * r * r - yc * yc);
+    return r * 256 - (int)aero_isqrt(v * 16384u);
+}
+
+/* Rounded box with vertical gradient c1 -> c2 and uniform alpha. */
+static void aero_rbox(int x, int y, int w, int h, int r,
+                      uint32_t c1, uint32_t c2, int alpha)
+{
+    int j;
+
+    if (!fb_addr || w <= 0 || h <= 0)
+        return;
+
+    if (r > w / 2) r = w / 2;
+    if (r > h / 2) r = h / 2;
+    if (r > 40) r = 40;
+    if (r < 0) r = 0;
+
+    for (j = 0; j < h; j++) {
+        uint32_t rgb;
+        int inset;
+
+        if (y + j < 0 || y + j >= (int)fb_height)
+            continue;
+
+        rgb = (c1 == c2) ? c1 : aero_lerp(c1, c2, j, h > 1 ? h - 1 : 1);
+        inset = aero_corner_inset(r, j, h);
+        aero_span(y + j, x * 256 + inset, (x + w) * 256 - inset, rgb, alpha);
+    }
+}
+
+void fb_draw_gradient(int x, int y, int w, int h, uint32_t top, uint32_t bottom)
+{
+    aero_rbox(x, y, w, h, 0, top, bottom, 255);
+}
+
+void fb_draw_rgrad(int x, int y, int w, int h, int r, uint32_t top, uint32_t bottom)
+{
+    aero_rbox(x, y, w, h, r, top, bottom, 255);
+}
+
+void fb_draw_glass(int x, int y, int w, int h, int r, uint32_t color, int alpha)
+{
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+    aero_rbox(x, y, w, h, r, color, color, alpha);
+}
+
+/* Ellipse inside box (x,y,w,h), vertical gradient, uniform alpha. */
+void fb_draw_ellipse(int x, int y, int w, int h, uint32_t c1, uint32_t c2, int alpha)
+{
+    int j;
+
+    if (!fb_addr || w <= 0 || h <= 0)
+        return;
+    if (w > 4000 || h > 4000)
+        return;
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+
+    for (j = 0; j < h; j++) {
+        int dy = 2 * j + 1 - h;
+        uint32_t v = (uint32_t)(h * h - dy * dy);
+        uint32_t s = aero_isqrt(v << 8) * 16u;        /* sqrt(v) * 256, no overflow for h <= 4000 */
+        uint32_t half = (uint32_t)(((unsigned long long)w * s) / (unsigned long long)(2 * h)); /* 1/256 px */
+        int cx256 = x * 256 + (w * 256) / 2;
+        uint32_t rgb;
+
+        if (y + j < 0 || y + j >= (int)fb_height)
+            continue;
+
+        rgb = (c1 == c2) ? c1 : aero_lerp(c1, c2, j, h > 1 ? h - 1 : 1);
+        aero_span(y + j, cx256 - (int)half, cx256 + (int)half, rgb, alpha);
+    }
+}
+
+/* Glossy sphere: radial shading, specular highlight, soft edge. */
+void fb_draw_orb(int cx, int cy, int r, uint32_t color)
+{
+    int dx, dy;
+    int r2;
+    uint32_t light, dark, white;
+
+    if (!fb_addr || r <= 0)
+        return;
+
+    r2    = r * r;
+    white = 0xFFFFFF;
+    light = aero_lerp(color, white, 150, 255);
+    dark  = aero_lerp(color, 0x000000, 90, 255);
+
+    for (dy = -r; dy <= r; dy++) {
+        for (dx = -r; dx <= r; dx++) {
+            int d2 = dx * dx + dy * dy;
+            int hx, hy, hd2, lim2;
+            int a = 255;
+            uint32_t rgb;
+
+            if (d2 > r2 + r)
+                continue;
+
+            if (d2 > r2 - r) {
+                a = ((r2 + r - d2) * 255) / (2 * r);
+                if (a < 0) a = 0;
+                if (a > 255) a = 255;
+            }
+
+            hx = dx + r / 3;
+            hy = dy + r / 3;
+            hd2 = hx * hx + hy * hy;
+            lim2 = (r * r * 9) / 4;
+            if (hd2 > lim2) hd2 = lim2;
+
+            if (hd2 < lim2 / 2)
+                rgb = aero_lerp(light, color, hd2, lim2 / 2);
+            else
+                rgb = aero_lerp(color, dark, hd2 - lim2 / 2, lim2 / 2);
+
+            if (dy > r / 2) {
+                int t = dy - r / 2;
+                rgb = aero_lerp(rgb, light, t * t, (r / 2 + 1) * (r / 2 + 1) * 2);
+            }
+
+            aero_blend(cx + dx, cy + dy, rgb, a);
+        }
+    }
+
+    {
+        int gw = r * 3 / 2;
+        int gh = r * 2 / 3;
+        int gx = cx - gw / 2;
+        int gy = cy - r + r / 6;
+        int yy, xx;
+
+        if (gw < 2 || gh < 2)
+            return;
+
+        for (yy = 0; yy < gh; yy++) {
+            for (xx = 0; xx < gw; xx++) {
+                int ex = xx * 2 - gw;
+                int ey = yy * 2 - gh;
+                int e2 = (ex * ex * 4096) / (gw * gw) + (ey * ey * 4096) / (gh * gh);
+                int ga;
+
+                if (e2 > 4096)
+                    continue;
+
+                ga = 150 - (yy * 150) / gh;
+                aero_blend(gx + xx, gy + yy, white, ga * (4096 - e2) / 4096 + 20);
+            }
+        }
+    }
+}
+
+/* Translucent soap bubble: clear body, bright rim, tiny highlights. */
+void fb_draw_bubble(int cx, int cy, int r, int alpha)
+{
+    int dx, dy, r2;
+
+    if (!fb_addr || r < 3)
+        return;
+    if (alpha < 0) alpha = 0;
+    if (alpha > 255) alpha = 255;
+
+    r2 = r * r;
+
+    for (dy = -r; dy <= r; dy++) {
+        for (dx = -r; dx <= r; dx++) {
+            int d2 = dx * dx + dy * dy;
+            int t, a, edge;
+            uint32_t rgb = 0xFFFFFF;
+
+            if (d2 > r2 + r)
+                continue;
+
+            t = (d2 * 256) / r2;
+            if (t > 256) t = 256;
+
+            /* body: nearly clear in the middle, denser near the rim */
+            a = 10 + (t * t * 60) / 65536;
+
+            /* bottom-right inner glow (aqua), top-left cooler tint */
+            if (dx + dy > r / 2 && d2 > r2 / 3)
+                { rgb = 0xC8F4FF; a += 28; }
+
+            /* crisp rim */
+            edge = r2 - d2;
+            if (edge < r) {
+                a += 90;
+                if (edge < 0)
+                    a = (a * (r + edge)) / r;
+            }
+
+            a = (a * alpha) / 255;
+            aero_blend(cx + dx, cy + dy, rgb, a);
+        }
+    }
+
+    /* specular dot */
+    {
+        int hr = r / 4;
+        int hx = cx - r / 2;
+        int hy = cy - r / 2;
+        int yy, xx;
+
+        if (hr < 1) hr = 1;
+        for (yy = -hr; yy <= hr; yy++)
+            for (xx = -hr; xx <= hr; xx++) {
+                int e = xx * xx + yy * yy;
+                if (e <= hr * hr)
+                    aero_blend(hx + xx, hy + yy, 0xFFFFFF,
+                               (((hr * hr - e) * 200) / (hr * hr + 1) + 40) * alpha / 255);
+            }
+    }
+}

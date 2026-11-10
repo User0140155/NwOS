@@ -1,5 +1,6 @@
 #include "../nwo_loader.h"
 #include "nwo_vm.h"
+#include "nwo_native.h"
 
 void graphics_end(void);
 void print(const char* text);
@@ -24,9 +25,17 @@ void nwo_run(const char* filename)
     print(filename);
     print("...\n");
 
+    if (nwo_native_try_run(filename))
+    {
+        graphics_end();
+        return;
+    }
+
     if (!nwo_load(filename, &program))
     {
-        print_error("Cannot load NWO program.\n");
+        print_error("Cannot load NWO program: ");
+        print(nwo_load_error());
+        putchar_os('\n');
         return;
     }
 

@@ -7,14 +7,6 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/*
- * NwOS native xHCI keyboard driver.
- *
- * This version keeps the existing single-active-controller architecture and
- * bounded hub enumerator, but fixes the root-port reset order: PORTSC speed is
- * not valid until after PR completes.  The USB2/USB3 port type is obtained
- * from Supported Protocol Extended Capabilities, not guessed from PORTSC.
- */
 #define XHCI_MAX_CONTROLLERS       16
 #define XHCI_RING_TRBS             256u
 #define XHCI_EVENT_TRBS            256u
@@ -54,9 +46,6 @@
 #define XHCI_STS_HSE               (1u << 2)
 #define XHCI_STS_EINT              (1u << 3)
 #define XHCI_STS_PCD               (1u << 4)
-/* CNR (Controller Not Ready) is USBSTS bit 11.  Bit 4 is PCD (Port Change
-   Detect), which is set whenever a device is attached - using it here made
-   the "controller ready" wait never finish on real hardware. */
 #define XHCI_STS_NOT_READY         (1u << 11)
 #define XHCI_STS_HCE               (1u << 12)
 #define XHCI_PORT_CCS              (1u << 0)
@@ -118,25 +107,17 @@ typedef struct xhci_erst_entry {
     uint32_t reserved;
 } __attribute__((packed)) xhci_erst_entry_t;
 
-/* Keyboard input report layout, extracted from the HID report descriptor.
-   Bit offsets are relative to the first data byte (after the Report ID byte
-   when has_id is set).  "Segments" are runs of 1-bit variable fields
-   (modifier bits E0..E7 and/or an N-key-rollover bitmap); the array is the
-   classic "6 key codes" byte array. */
 #define HID_MAX_SEGS 16u
 typedef struct xhci_kbd_layout {
     uint8_t valid, has_id, report_id, nsegs;
     uint16_t seg_off[HID_MAX_SEGS], seg_count[HID_MAX_SEGS], seg_base[HID_MAX_SEGS];
     uint16_t arr_off;
     uint8_t arr_size, arr_count;
-    uint16_t report_bytes;          /* expected report length incl. Report ID */
+    uint16_t report_bytes;
 } xhci_kbd_layout_t;
 
 #define XHCI_MAX_KEYBOARDS         4u
 
-/* One entry per HID keyboard interface that was set up.  Several devices can
-   expose a boot-keyboard interface (e.g. a keyboard AND a gaming mouse with a
-   macro-keyboard interface), so all of them are kept and polled. */
 typedef struct xhci_keyboard {
     xhci_trb_t *ring;
     uint8_t *report_buffer;
@@ -210,7 +191,6 @@ static inline void mmio_write32(volatile uint8_t *b, uint32_t o, uint32_t v)
 { *(volatile uint32_t *)(b + o) = v; }
 static inline void mmio_write64(volatile uint8_t *b, uint32_t o, uint64_t v)
 {
-    /* Low dword first, then high dword (Linux lo_hi_writeq order). */
     mmio_write32(b, o, (uint32_t)v);
     mmio_write32(b, o + 4u, (uint32_t)(v >> 32));
 }
@@ -224,16 +204,11 @@ static void *dma_alloc(size_t n,size_t a,uint64_t *phys)
 static uint32_t trb_type(uint32_t c)
 { return (c & XHCI_TRB_TYPE_MASK) >> XHCI_TRB_TYPE_SHIFT; }
 
-/* Input Context layout:  [0]=Input Control Context, [1]=Slot Context,
-   [1+DCI]=Endpoint Context.  Output Device Context layout: [0]=Slot Context,
-   [DCI]=Endpoint Context.  Every entry is context_size bytes (32 or 64,
-   HCCPARAMS1.CSZ); the Input Control Context is NOT a fixed 32 bytes. */
 static uint32_t *ctx_in(uint32_t index)
 { return (uint32_t *)(g_xhci.input_context + (size_t)index * g_xhci.context_size); }
 static volatile uint32_t *ctx_out(uint32_t index)
 { return (volatile uint32_t *)(g_xhci.device_context + (size_t)index * g_xhci.context_size); }
 
-/* Diagnostics: printed only during the first xhci_init() pass. */
 static void dbg_value(const char *what,uint32_t value)
 {
     if (!g_xhci.diag) return;
@@ -250,8 +225,6 @@ static void dbg_hex(const char *what,uint32_t value)
     print(what); print(text); print("\n");
 }
 
-/* Some controllers list only some (or no) USB2 speeds in the Protocol Speed
-   ID table.  Fill in the standard IDs (1=FS, 2=LS, 3=HS) when missing. */
 static void speed_fill_usb2_defaults(void)
 {
     if (!g_xhci.speed_class_by_protocol[2][1] && !g_xhci.speed_id_by_class[2][XHCI_SPEED_FULL]) {
@@ -279,9 +252,6 @@ static uint8_t speed_id_for(uint8_t protocol, uint8_t speed_class)
     return g_xhci.speed_id_by_class[protocol][speed_class];
 }
 
-/* Parse xECP and Supported Protocol capabilities. xHCI requires at least one
-   Supported Protocol capability. Port ranges define USB2 vs USB3; PORTSC
-   speed is deliberately not consulted until after the port reset. */
 static int parse_supported_protocols(uint32_t hccparams1)
 {
     uint32_t offset=((hccparams1 >> 16) & 0xFFFFu) * 4u;
@@ -395,8 +365,6 @@ static int event_pop(xhci_trb_t *out)
         (g_xhci.event_ring_phys+(uint64_t)g_xhci.event_index*sizeof(xhci_trb_t))|XHCI_ERDP_EHB);
     return 1;
 }
-/* Events nobody is waiting for: keyboard reports must not get lost while a
-   command or control transfer is being waited on. */
 static void event_discard_unrelated(const xhci_trb_t *ev)
 { keyboard_handle_event(ev); }
 
@@ -1859,15 +1827,11 @@ int xhci_init(void)
     pci_dev_t controllers[XHCI_MAX_CONTROLLERS];
     int count;
     if (g_xhci.ready) return 1;
-    /* Do not poison the one-shot flag when the PMM is not ready yet. */
     if (!pmm_is_ready()) {
         g_xhci.status="PMM is not initialized; xHCI DMA unavailable";
         return 0;
     }
     if (g_xhci.initialized) {
-        /* A running controller is rescanned from xhci_poll().  A controller
-           that never started is retried, but only occasionally: this function
-           is called on every key poll and a full reset is expensive. */
         if (g_xhci.controller_running) return 0;
         if (g_xhci.full_retry_countdown) { --g_xhci.full_retry_countdown; return 0; }
         g_xhci.initialized=0;
@@ -1999,11 +1963,6 @@ void xhci_poll(void)
 }
 
 int xhci_keyboard_ready(void) { return g_xhci.ready!=0; }
-/* Status text plus live counters, e.g.
-   "USB HID keyboard ready on root port {slot=1 ep=3 polls=812 ev=5 err=0 rep=5 cc=1 cmdcc=1}"
-   polls = xhci_poll() calls while ready, ev = transfer events for the keyboard
-   endpoint, err = failed events, rep = reports passed to the keyboard layer,
-   cc = last transfer completion code, cmdcc = last command completion code. */
 static char g_status_buf[384];
 static void sb_text(size_t *pos,const char *s)
 {

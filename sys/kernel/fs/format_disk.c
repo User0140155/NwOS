@@ -1,36 +1,33 @@
 #define NWOS_INCLUDE_ROOTFS_DATA_H
 #include "nwos_internal.h"
 
-static unsigned long long rootfs_total_size(void);
-
 void fs_format_disk(int drive_idx) {
-    unsigned char zero[512];
-    for (int k = 0; k < 512; k++) zero[k] = 0;
-
     fs_set_drive(drive_idx);
     fs_quiet = 1;
 
     unsigned int seq = fs_max_seq() + 1;
+    unsigned int total = fs_total_sectors_here();
 
-    for (int i = 0; i < MAX_FILES * FS_FILE_SECTORS; i++) {
-        fs_write_lba(FS_DATA_LBA + i, zero);
+    if (fs_format_layout(total) != 0)
+    {
+        fs_quiet = 0;
+        print_error("Cannot format: the volume is too small.\n");
+        return;
     }
 
-    for (int i = 0; i < MAX_FILES; i++) {
-        directory[i].used = 0;
-        directory[i].name[0] = '\0';
-        directory[i].size = 0;
-    }
-
-    directory[0].used = 1; directory[0].type = FS_TYPE_DIR; directory[0].parent = 0; strcpy(directory[0].name, "/");
-
-    current_dir = 0;
+    for (int i = 0; i < fs_dir_cap; i++)
+        fs_entry_clear(i);
 
     directory[0].used = 1;
     directory[0].type = FS_TYPE_DIR;
     directory[0].parent = 0;
     strcpy(directory[0].name, "/");
     directory[0].size = 0;
+    directory[0].first = 0;
+
+    current_dir = 0;
+
+    fs_mark_formatted(seq);
 
     fs_mkdir("sys");
     fs_mkdir("home");
@@ -84,43 +81,17 @@ void fs_format_disk(int drive_idx) {
             continue;
         }
 
-        unsigned char sector[512];
-
-        for (unsigned int s = 0; s < FS_FILE_SECTORS; s++)
+        if (!fs_write_binary(file_name, data, size))
         {
-            unsigned int offset = s * 512U;
-
-            if (offset >= size)
-                break;
-
-            for (int k = 0; k < 512; k++)
-                sector[k] = 0;
-
-            for (unsigned int k = 0;
-                k < 512 && offset + k < size;
-                k++)
-            {
-                sector[k] = data[offset + k];
-            }
-
-            if (fs_write_lba(
-                    FS_DATA_LBA + (unsigned int)idx *
-                        FS_FILE_SECTORS + s,
-                    sector) != 0)
-            {
-                print_error("Disk write failed: ");
-                print(path);
-                putchar_os('\n');
-                break;
-            }
+            print_error("Disk write failed: ");
+            print(path);
+            putchar_os('\n');
+            continue;
         }
-
-        directory[idx].size = size;
     }
 
     current_dir = 0;
 
-    fs_mark_formatted(seq);
     fs_save_directory();
 
     fs_quiet = 1;
@@ -137,16 +108,4 @@ void fs_format_disk(int drive_idx) {
 
     if (!fs_live_build)
         print_success("Filesystem formatted. Rootfs installed.\n");
-}
-
-static unsigned long long rootfs_total_size(void)
-{
-    unsigned long long total = 0;
-
-    for (int i = 0; i < ROOTFS_FILE_COUNT; i++)
-    {
-        total += rootfs_files[i].size;
-    }
-
-    return total;
 }

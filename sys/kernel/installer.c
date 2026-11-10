@@ -382,6 +382,10 @@ static int installer_choose_free_region(const installer_mbr_layout_t* layout,
         int y = ((int)fb_get_height() - h) / 2;
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Manual partition selection");
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 20, y + 48,
                       "Choose an unallocated MBR region. Existing partitions are untouched.",
                       COLOR_BLACK);
@@ -465,6 +469,10 @@ static int installer_read_typed_word(const char* title,
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, title);
         gui_draw_text(x + 24, y + 72, explanation, COLOR_BLACK);
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 140, required_word, COLOR_RED);
         gui_rect(x + 20, y + 190, w - 40, 42, COLOR_WHITE);
         gui_draw_text(x + 32, y + 203, input, COLOR_BLACK);
@@ -510,6 +518,10 @@ static int installer_read_typed_confirmation(char* output, int capacity)
         int y = ((int)fb_get_height() - h) / 2;
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Final confirmation");
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 70,
                       "NwOS will create one partition in the selected free region.", COLOR_BLACK);
         gui_draw_text(x + 24, y + 105,
@@ -576,6 +588,10 @@ void installer_draw_preflight_warning(void)
                   "If no free space exists, cancel and create unallocated space", COLOR_DARK_GRAY);
     gui_draw_text(x + 24, y + 250,
                   "with a trusted partition manager in your current operating system.", COLOR_DARK_GRAY);
+    gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+    gui_draw_text(x + 276, y + 595,
+                  "NwOS", COLOR_WHITE);
     gui_draw_text(x + 24, y + h - 42,
                   "Enter: continue   Esc: return without writing to disk", COLOR_DARK_GRAY);
 }
@@ -624,6 +640,10 @@ void installer(void)
         gui_draw_text(x + 20, y + 80, "Add one in QEMU, for example:", COLOR_BLACK);
         gui_draw_text(x + 20, y + 100,
                       "-drive file=disk.img,format=raw,if=ide,index=0", COLOR_DARK_GRAY);
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         sleep(3000);
         installer_cancelled = 1;
         clear();
@@ -648,6 +668,10 @@ void installer(void)
         gui_draw_window(x, y, w, h, "Step 1/3 - Select target disk");
         gui_draw_text(x + 20, y + 40,
                       "Detected disks (arrows select, Enter confirms):", COLOR_BLACK);
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         for (int i = 0; i < n; ++i)
         {
             ata_drive_t* d = ata_get_drive(i);
@@ -707,6 +731,10 @@ void installer(void)
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Cannot safely install on this disk");
         gui_draw_text(x + 24, y + 90, message, COLOR_RED);
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 135,
                       "Create unallocated space with a partition manager, then retry.",
                       COLOR_BLACK);
@@ -726,6 +754,10 @@ void installer(void)
         gui_draw_window(x, y, w, h, "Step 2/3 - Partition method");
         gui_draw_text(x + 20, y + 55,
                       "Choose where NwOS should be placed:", COLOR_BLACK);
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 36, y + 115,
                       install_method == 0 ? "> Automatic - largest free region" :
                                            "  Automatic - largest free region",
@@ -772,6 +804,10 @@ void installer(void)
         if (!installer_verify_blank_region(sel, selected_start, selected_sectors))
         {
             fb_clear(COLOR_BLUE);
+            gui_draw_text(x + 202, y + 580,
+                        "copyright (c) User0140155 2026", COLOR_WHITE);
+            gui_draw_text(x + 276, y + 595,
+                        "NwOS", COLOR_WHITE);
             gui_draw_window(x, y, w, h, "Unpartitioned disk contains data");
             gui_draw_text(x + 24, y + 90,
                           "The selected NwOS region is not completely empty.", COLOR_RED);
@@ -802,6 +838,10 @@ void installer(void)
     fb_clear(COLOR_BLUE);
     gui_draw_window(x, y, w, h, "Step 3/3 - Review installation");
     gui_draw_text(x + 24, y + 55, "Target disk:", COLOR_DARK_GRAY);
+    gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+    gui_draw_text(x + 276, y + 595,
+                  "NwOS", COLOR_WHITE);
     gui_draw_text(x + 170, y + 55, target->model, COLOR_BLACK);
     gui_draw_text(x + 24, y + 100, "NwOS partition start LBA:", COLOR_DARK_GRAY);
     {
@@ -858,6 +898,10 @@ void installer(void)
     {
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Partition table write failed");
+        gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 90,
                       "Could not create the NwOS partition. No filesystem format was started.",
                       COLOR_RED);
@@ -873,6 +917,10 @@ void installer(void)
     fb_clear(COLOR_BLUE);
     gui_draw_window(x, y, w, h, "Installing " OS_NAME);
     gui_draw_text(x + 20, y + 50, "Creating NwOS filesystem in the new partition...", COLOR_BLACK);
+    gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+    gui_draw_text(x + 276, y + 595,
+                  "NwOS", COLOR_WHITE);
     gui_draw_text(x + 20, y + 80, "Existing partitions are not being formatted.", COLOR_GREEN);
     gui_rect(x + 20, y + 120, w - 40, 20, COLOR_DARK_GRAY);
     for (int i = 0; i <= w - 40; i += 5)
@@ -884,6 +932,10 @@ void installer(void)
     {
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Filesystem verification failed");
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 80,
                       "The NwFS marker could not be read back from the target partition.", COLOR_RED);
         gui_draw_text(x + 24, y + 115,
@@ -901,6 +953,10 @@ void installer(void)
     {
         fb_clear(COLOR_BLUE);
         gui_draw_window(x, y, w, h, "Installation verification failed");
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 80,
                       "The account settings could not be read back from disk.", COLOR_RED);
         gui_draw_text(x + 24, y + 115,
@@ -919,6 +975,10 @@ void installer(void)
 
     fb_clear(COLOR_BLUE);
     gui_draw_window(x, y, w, h, "Installation complete");
+    gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+    gui_draw_text(x + 276, y + 595,
+                  "NwOS", COLOR_WHITE);
     gui_draw_text(x + 20, y + 50, OS_NAME " was installed in the selected free region.", COLOR_GREEN);
     gui_draw_text(x + 20, y + 80, "Existing MBR partitions were preserved.", COLOR_BLACK);
     gui_draw_text(x + 20, y + 110, "Return to the boot menu and select Boot installed NwOS.", COLOR_DARK_GRAY);

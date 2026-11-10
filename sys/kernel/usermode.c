@@ -23,6 +23,11 @@
 #define SYS_EXIT     3
 #define SYS_PROMPT   4
 
+#define SYS_LINUX_READ       0
+#define SYS_LINUX_WRITE      1
+#define SYS_LINUX_EXIT       60
+#define SYS_LINUX_EXIT_GROUP 231
+
 typedef struct
 {
     uint16_t limit_low;
@@ -98,6 +103,9 @@ typedef struct
 extern void *isr_stub_table[32];
 extern void isr128(void);
 extern void usermode_enter(uint64_t entry, uint64_t stack, uint64_t arg);
+extern void usermode_enter_user(uint64_t entry, uint64_t stack);
+
+volatile uint64_t usermode_exit_pending = 0;
 
 static gdt_entry_t gdt[7];
 static gdt_ptr_t gdt_ptr;
@@ -106,8 +114,14 @@ static idt_entry_t idt[256];
 static idt_ptr_t idt_ptr;
 
 static uint8_t syscall_stack[128 * 1024] __attribute__((aligned(16)));
+static uint8_t native_syscall_stack[128 * 1024] __attribute__((aligned(16)));
 static uint64_t user_block_base;
 static uint64_t user_block_end;
+static uint64_t native_block_base;
+static uint64_t native_block_size;
+static int native_active;
+static int native_abi;
+static uint64_t native_exit_code;
 
 static void gdt_set_gate(int index, uint32_t base, uint32_t limit,
                          uint8_t access, uint8_t granularity)
@@ -267,10 +281,31 @@ static uint64_t user_exec(uint64_t address)
     return 0;
 }
 
+static uint64_t native_syscall(interrupt_frame_t *frame)
+{
+    switch (frame->rax)
+    {
+        case SYS_LINUX_READ:
+            return user_readline(frame->rsi, frame->rdx);
+        case SYS_LINUX_WRITE:
+            return user_write(frame->rsi, frame->rdx);
+        case SYS_LINUX_EXIT:
+        case SYS_LINUX_EXIT_GROUP:
+            native_exit_code = frame->rdi;
+            usermode_exit_pending = 1;
+            return 0;
+        default:
+            return (uint64_t)-1;
+    }
+}
+
 uint64_t isr_dispatch(uint64_t vector, interrupt_frame_t *frame)
 {
     if (vector == 0x80)
     {
+        if (native_abi)
+            return native_syscall(frame);
+
         switch (frame->rax)
         {
             case SYS_WRITE:
@@ -288,6 +323,26 @@ uint64_t isr_dispatch(uint64_t vector, interrupt_frame_t *frame)
         }
     }
 
+    if (native_active)
+    {
+        print_error("\n[NWO64] CPU exception ");
+        print_int((int)vector);
+        if (vector == 14)
+        {
+            uint64_t cr2;
+            __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            print(" at ");
+            print_uint64(cr2);
+        }
+        print(" error=");
+        print_uint64(frame->error);
+        print("\n");
+
+        native_exit_code = (uint64_t)-1;
+        usermode_exit_pending = 1;
+        return 0;
+    }
+
     print_error("\n[USER] CPU exception ");
     print_int((int)vector);
     if (vector == 14)
@@ -303,6 +358,106 @@ uint64_t isr_dispatch(uint64_t vector, interrupt_frame_t *frame)
 
     while (1)
         __asm__ volatile ("cli; hlt");
+}
+
+int usermode_run_native(const uint8_t *image, uint32_t image_size,
+                        uint32_t bss_size, uint32_t entry,
+                        const uint32_t *relocs, uint32_t reloc_count,
+                        uint64_t *exit_code)
+{
+    uint64_t saved_block_base;
+    uint64_t saved_block_end;
+    uint64_t saved_rsp0;
+    uint64_t load_size;
+
+    if (!pmm_is_ready() || image == 0 || image_size == 0)
+        return 0;
+
+    load_size = (uint64_t)image_size + bss_size;
+
+    if (load_size + 0x10000u > USER_BLOCK_SIZE)
+        return 0;
+
+    if (entry >= image_size)
+        return 0;
+
+    if (native_block_base == 0)
+    {
+        uint64_t phys = 0;
+        void *block = pmm_alloc_dma32(USER_BLOCK_SIZE, USER_BLOCK_SIZE, &phys);
+
+        if (!block || phys == 0)
+            return 0;
+
+        native_block_base = phys;
+        native_block_size = USER_BLOCK_SIZE;
+        mmu_mark_user(phys, USER_BLOCK_SIZE);
+    }
+
+    uint8_t *base = (uint8_t *)(uintptr_t)native_block_base;
+
+    for (uint64_t i = 0; i < native_block_size; ++i)
+        base[i] = 0;
+
+    for (uint32_t i = 0; i < image_size; ++i)
+        base[i] = image[i];
+
+    for (uint32_t i = 0; i < reloc_count; ++i)
+    {
+        uint32_t type = relocs[i] >> 30;
+        uint32_t offset = relocs[i] & 0x3FFFFFFFu;
+
+        if (type == 1)
+        {
+            if ((uint64_t)offset + 8u > image_size)
+                return 0;
+
+            uint64_t *value = (uint64_t *)(uintptr_t)(base + offset);
+            *value += native_block_base;
+        }
+        else if (type == 2)
+        {
+            if ((uint64_t)offset + 4u > image_size)
+                return 0;
+
+            uint32_t *value = (uint32_t *)(uintptr_t)(base + offset);
+            *value += (uint32_t)native_block_base;
+        }
+        else
+        {
+            return 0;
+        }
+    }
+
+    saved_block_base = user_block_base;
+    saved_block_end = user_block_end;
+    saved_rsp0 = tss.rsp0;
+
+    user_block_base = native_block_base;
+    user_block_end = native_block_base + native_block_size;
+    tss.rsp0 = (uint64_t)(uintptr_t)(native_syscall_stack +
+                                     sizeof(native_syscall_stack));
+
+    native_active = 1;
+    native_abi = 1;
+    native_exit_code = 0;
+    usermode_exit_pending = 0;
+
+    usermode_enter_user(native_block_base + entry,
+                        native_block_base + native_block_size);
+
+    native_active = 0;
+    native_abi = 0;
+    usermode_exit_pending = 0;
+
+    tss.rsp0 = saved_rsp0;
+    user_block_base = saved_block_base;
+    user_block_end = saved_block_end;
+
+    if (exit_code)
+        *exit_code = native_exit_code;
+
+    return 1;
 }
 
 int usermode_enter_shell(void)
@@ -341,3 +496,4 @@ int usermode_enter_shell(void)
     usermode_enter(entry, stack, 0);
     return 0;
 }
+

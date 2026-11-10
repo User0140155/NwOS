@@ -86,7 +86,7 @@ int fs_create_user_home(void)
 
 int fs_find(const char* name)
 {
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
     {
         if (directory[i].used &&
             directory[i].parent == current_dir &&

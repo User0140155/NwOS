@@ -17,8 +17,10 @@ void nwfetch(void)
     nwf_cpu_name(cpu_name);
 
     unsigned int ram_mb = nwf_ram_mb();
+    fs_usage_t disk_usage;
+    int have_disk_usage = fs_usage_current(&disk_usage);
 
-    static const char* logo[14] =
+    static const char* logo[15] =
     {
         "         /\\         ",
         "        /  \\        ",
@@ -33,15 +35,16 @@ void nwfetch(void)
         "   ================ ",
         "        |  |        ",
         "        |  |        ",
-        "        (  )        "
+        "        (  )        ",
+        "                    "
     };
 
-    static const unsigned char logo_color[14] =
+    static const unsigned char logo_color[15] =
     {
         TERM_COLOR_WHITE, TERM_COLOR_WHITE, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN,
         TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN,
         TERM_COLOR_LIGHT_CYAN, TERM_COLOR_LIGHT_CYAN, TERM_COLOR_YELLOW, TERM_COLOR_BROWN,
-        TERM_COLOR_BROWN, TERM_COLOR_YELLOW
+        TERM_COLOR_BROWN, TERM_COLOR_YELLOW, TERM_COLOR_BLACK
     };
 
     static const unsigned char palette[8] =
@@ -52,7 +55,7 @@ void nwfetch(void)
 
     print("\n");
 
-    for (int row = 0; row < 14; row++)
+    for (int row = 0; row < 15; row++)
     {
         set_color(logo_color[row]);
         print(logo[row]);
@@ -136,6 +139,23 @@ void nwfetch(void)
                 break;
 
             case 13:
+                set_color(TERM_COLOR_CYAN);  print("Disk: ");
+                set_color(TERM_COLOR_WHITE);
+                if (have_disk_usage)
+                {
+                    print_int((int)disk_usage.used_percent);
+                    print("% used, ");
+                    print_size_human(disk_usage.free_bytes);
+                    print(" free of ");
+                    print_size_human(disk_usage.capacity_bytes);
+                }
+                else
+                {
+                    print("unavailable");
+                }
+                break;
+
+            case 14:
                 set_color(TERM_COLOR_CYAN);  print("Date: ");
                 set_color(TERM_COLOR_WHITE);
                 print_two_digits(day);   putchar_os('.');

@@ -7,7 +7,7 @@ void settings_save(void)
     int prev_dir = current_dir;
     int sys_dir = -1;
 
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
     {
         if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
             directory[i].parent == 0 && strcmp(directory[i].name, "sys") == 0)

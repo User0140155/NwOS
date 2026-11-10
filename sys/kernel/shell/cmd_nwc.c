@@ -26,7 +26,7 @@ void cmd_nwc(const char* args)
     script_command_failed = 1;
 
     static char source_buffer[NWC_MAX_SOURCE_SIZE + 1];
-    static unsigned char nwo_buffer[FS_FILE_SECTORS * 512u];
+    static unsigned char nwo_buffer[20480];
 
     if (!args) args = "";
 

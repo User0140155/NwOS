@@ -1,1 +1,1 @@
-qemu-img create -f raw img/disk.img 100M
+qemu-img create -f raw img/disk.img 3M

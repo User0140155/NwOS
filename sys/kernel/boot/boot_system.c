@@ -1,5 +1,6 @@
 #define NWOS_INCLUDE_LOGONWOS_H
 #include "nwos_internal.h"
+#include "audio/hda.h"
 
 static int boot_text_width(const char* text);
 static void boot_splash(void);
@@ -27,9 +28,9 @@ static void boot_splash(void)
     if (bar_width < 220)
         bar_width = 220;
 
-    fb_clear(0x000A1118);
+    fb_clear(COLOR_BLUE); // 0x000A1118
     fb_draw_rect(logo_x - 30, logo_y - 30,
-                 LOGO_NWOS_WIDTH + 60, LOGO_NWOS_HEIGHT + 60, 0x0015222C);
+                 LOGO_NWOS_WIDTH + 60, LOGO_NWOS_HEIGHT + 60, COLOR_LIGHT_GRAY);
     fb_draw_frame(logo_x - 30, logo_y - 30,
                   LOGO_NWOS_WIDTH + 60, LOGO_NWOS_HEIGHT + 60, 0x003B5A6B);
     fb_draw_frame(logo_x - 25, logo_y - 25,
@@ -45,6 +46,8 @@ static void boot_splash(void)
     fb_draw_text((width - boot_text_width(subtitle)) / 2,
                  logo_y + LOGO_NWOS_HEIGHT + 70, subtitle, COLOR_LIGHT_GRAY);
 
+    startup_sound_start();
+
     bar_x = (width - bar_width) / 2;
     bar_y = logo_y + LOGO_NWOS_HEIGHT + 108;
 
@@ -52,6 +55,7 @@ static void boot_splash(void)
     for (int i = 0; i <= 100; i += 4)
     {
         fb_draw_rect(bar_x, bar_y, (bar_width * i) / 100, 8, 0x003FA9C8);
+        hda_service();
         sleep(15);
     }
 
@@ -76,6 +80,7 @@ void boot_system(void)
     boot_splash();
 
     sleep(1200);
+    hda_wait();
 
     clear();
 

@@ -2,7 +2,7 @@
 
 int fs_entry_requires_admin(int index)
 {
-    if (index <= 0 || index >= MAX_FILES ||
+    if (index <= 0 || index >= fs_dir_cap ||
         !directory[index].used)
     {
         return 0;

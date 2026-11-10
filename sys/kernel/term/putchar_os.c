@@ -1,7 +1,17 @@
 #include "nwos_internal.h"
 
+extern int gui_term_capture;
+void gui_term_putc(char c);
+void gui_term_clear(void);
+
 void clear(void)
 {
+    if (gui_term_capture)
+    {
+        gui_term_clear();
+        return;
+    }
+
     fb_graphics_mode = 0;
 
     line_start = 0;
@@ -35,6 +45,12 @@ void scroll_view_down(void)
 }
 void putchar_os(char c)
 {
+    if (gui_term_capture)
+    {
+        gui_term_putc(c);
+        return;
+    }
+
     terminal_prepare_output();
 
     int force_render = (view_offset != 0);

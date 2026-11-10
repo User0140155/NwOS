@@ -39,6 +39,9 @@ align 4
 global multiboot_info_ptr
 multiboot_info_ptr: dd 0
 
+align 8
+usermode_kernel_rsp: dq 0
+
 section .text.start progbits alloc exec nowrite align=16
 bits 32
 
@@ -226,6 +229,7 @@ section .text
 bits 64
 
 extern isr_dispatch
+extern usermode_exit_pending
 
 %macro ISR_NOERR 1
 global isr%1
@@ -299,6 +303,8 @@ isr_common:
     and rsp, -16
     call isr_dispatch
     mov rsp, rbp
+    cmp qword [rel usermode_exit_pending], 0
+    jne usermode_return_to_kernel
     mov [rsp + 112], rax
 
     pop r15
@@ -337,6 +343,48 @@ usermode_enter:
     push qword 0x23
     push r8
     iretq
+
+global usermode_enter_user
+usermode_enter_user:
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov [rel usermode_kernel_rsp], rsp
+    mov r8, rdi
+    mov r9, rsi
+
+    mov ax, 0x1B
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+
+    push qword 0x1B
+    push r9
+    push qword 0x2
+    push qword 0x23
+    push r8
+    iretq
+
+usermode_return_to_kernel:
+    mov qword [rel usermode_exit_pending], 0
+    cld
+    mov ax, 0x10
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov rsp, [rel usermode_kernel_rsp]
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    ret
 
 section .rodata
 align 8

@@ -396,6 +396,14 @@ static ASTNode* parse_primary(Parser* parser)
                 strcmp(name, "cpu_load") == 0 ||
                 strcmp(name, "gpu_load") == 0 ||
                 strcmp(name, "cursor") == 0 ||
+            strcmp(name, "gradient") == 0 ||
+            strcmp(name, "rgrad") == 0 ||
+            strcmp(name, "glass") == 0 ||
+            strcmp(name, "orb") == 0 ||
+            strcmp(name, "ellipse") == 0 ||
+            strcmp(name, "bubble") == 0 ||
+            strcmp(name, "shi") == 0 ||
+            strcmp(name, "shs") == 0 ||
                 strcmp(name, "fs_create") == 0 ||
                 strcmp(name, "fs_delete") == 0 ||
                 strcmp(name, "fs_write") == 0 ||
@@ -1365,6 +1373,14 @@ static ASTNode* parse_nw_statement(Parser* parser)
             strcmp(name, "cpu_load") == 0 ||
             strcmp(name, "gpu_load") == 0 ||
             strcmp(name, "cursor") == 0 ||
+            strcmp(name, "gradient") == 0 ||
+            strcmp(name, "rgrad") == 0 ||
+            strcmp(name, "glass") == 0 ||
+            strcmp(name, "orb") == 0 ||
+            strcmp(name, "ellipse") == 0 ||
+            strcmp(name, "bubble") == 0 ||
+            strcmp(name, "shi") == 0 ||
+            strcmp(name, "shs") == 0 ||
             strcmp(name, "fs_create") == 0 ||
             strcmp(name, "fs_delete") == 0 ||
             strcmp(name, "fs_write") == 0 ||

@@ -22,7 +22,8 @@ void gui_draw_text(int x, int y, const char* text, uint32_t color) {
 }
 
 void gui_draw_window(int x, int y, int w, int h, const char* title) {
-    gui_rect(x + 14, y + 14, w, h, 0x00111111); // shadow
+    gui_rect(x + 24, y + 24, w, h, 0x00011111); // shadow
+    // gui_rect(x + 14, y + 14, w, h, 0x00111111); // previous
     
     gui_rect(x, y, w, h, COLOR_LIGHT_GRAY);
 

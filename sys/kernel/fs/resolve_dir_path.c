@@ -45,7 +45,7 @@ int fs_resolve_dir_path(const char* path)
 
         int found = -1;
 
-        for (int i = 1; i < MAX_FILES; i++)
+        for (int i = 1; i < fs_dir_cap; i++)
         {
             if (directory[i].used &&
                 directory[i].type == FS_TYPE_DIR &&
@@ -78,21 +78,20 @@ unsigned int fs_get_file_size(const char* name)
 
 void fs_entry_release(int index)
 {
-    if (fs_removed_count < MAX_FILES)
-        fs_removed[fs_removed_count++] = (uint16_t)index;
+    if (index < 0 || index >= fs_dir_cap)
+        return;
 
-    directory[index].used = 0;
-    directory[index].type = 0;
-    directory[index].parent = 0;
-    directory[index].name[0] = '\0';
-    directory[index].size = 0;
+    if (directory[index].type == FS_TYPE_FILE)
+        fs_file_release(index);
+
+    fs_entry_clear(index);
 }
 
 void fs_entry_release_tree(int index, int depth)
 {
     if (depth > 32) return;
 
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
     {
         if (i != index && directory[i].used &&
             directory[i].parent == index)
@@ -106,12 +105,6 @@ void fs_entry_release_tree(int index, int depth)
 
 void fs_release_finish(uint16_t fallback)
 {
-    for (int i = 0; i < fs_removed_count; i++)
-    {
-        if (current_dir == fs_removed[i])
-        {
-            current_dir = fallback;
-            return;
-        }
-    }
+    if (current_dir >= fs_dir_cap || !directory[current_dir].used)
+        current_dir = fallback;
 }

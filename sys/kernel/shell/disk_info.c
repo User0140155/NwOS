@@ -60,40 +60,42 @@ void cmd_disk_info(const char* args)
 
     if (fs_drive_has_fs(idx))
     {
-        unsigned int files = 0;
-        unsigned long long used = fs_drive_used_bytes(idx, &files);
-        unsigned int entries = fs_drive_entry_count(idx);
-        unsigned long long overhead =
-            (unsigned long long)(1 + FS_DIR_SECTORS + MAX_FILES * FS_FILE_SECTORS) * 512ULL;
-        unsigned long long free = (total > overhead) ? (total - overhead) : 0;
+        fs_usage_t usage;
 
         print("  Filesystem: ");
         print(OS_NAME);
         putchar_os('\n');
 
+        if (!fs_drive_usage(idx, &usage))
+        {
+            print_error("  Cannot read filesystem usage.\n");
+            putchar_os('\n');
+            return;
+        }
+
         print("  Entries:    ");
-        print_uint64(entries);
+        print_uint64(usage.entries);
         print(" (");
-        print_uint64(files);
+        print_uint64(usage.files);
         print(" files)\n");
 
+        print("  Volume:     ");
+        print_size_human(usage.volume_bytes);
+        putchar_os('\n');
+
         print("  File data:  ");
-        print_uint64(used);
-        print(" B  (");
-        print_size_unit(used, SIZE_KB, 2, "KB");
-        print(")\n");
+        print_size_human(usage.file_bytes);
+        putchar_os('\n');
 
-        print("  Overhead:   ");
-        print_uint64(overhead);
-        print(" B  (");
-        print_size_unit(overhead, SIZE_KB, 2, "KB");
-        print(")\n");
+        print("  Allocated:  ");
+        print_size_human(usage.used_bytes);
+        print("  (");
+        print_int((int)usage.used_percent);
+        print("% used)\n");
 
-        print("  Free space: ");
-        print_uint64(free);
-        print(" B  (");
-        print_size_unit(free, SIZE_MB, 2, "MB");
-        print(")\n");
+        print("  Free:       ");
+        print_size_human(usage.free_bytes);
+        putchar_os('\n');
     }
     else
     {

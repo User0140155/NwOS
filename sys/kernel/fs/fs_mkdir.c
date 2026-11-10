@@ -6,33 +6,34 @@ void fs_mkdir(const char* name) {
         return;
     }
 
-    for (int i = 0; i < MAX_FILES; i++) {
+    for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].parent == current_dir && strcmp(directory[i].name, name) == 0) {
             print_error("Directory already exists.\n");
             return;
         }
     }
 
-    for (int i = 1; i < MAX_FILES; i++) {
-        if (!directory[i].used) {
-            directory[i].used = 1;
-            directory[i].type = FS_TYPE_DIR;
-            directory[i].parent = current_dir;
-            strcpy(directory[i].name, name);
-            directory[i].size = 0;
+    int slot = fs_dir_alloc_slot();
 
-            fs_save_directory();
-            if (!fs_quiet) print_success("Directory created.\n");
-            return;
-        }
+    if (slot < 0) {
+        print_error("No free file slots.\n");
+        return;
     }
-    print_error("No free file slots.\n");
+
+    fs_entry_clear(slot);
+    directory[slot].used = 1;
+    directory[slot].type = FS_TYPE_DIR;
+    directory[slot].parent = current_dir;
+    strcpy(directory[slot].name, name);
+
+    fs_save_directory();
+    if (!fs_quiet) print_success("Directory created.\n");
 }
 
 void fs_ls(void) {
     print_title("\n=== DIRECTORY ===\n\n");
     int found = 0;
-    for (int i = 0; i < MAX_FILES; i++) {
+    for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].parent == current_dir && i != 0) {
             if (directory[i].type == FS_TYPE_DIR) {
                 set_color(TERM_COLOR_LIGHT_BLUE);
@@ -67,7 +68,7 @@ void fs_cd(const char* name) {
     const char* search_name = name;
     if (name[0] == '/') search_name = name + 1;
 
-    for (int i = 0; i < MAX_FILES; i++) {
+    for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].type == FS_TYPE_DIR &&
             directory[i].parent == current_dir &&
             strcmp(directory[i].name, search_name) == 0) {
@@ -80,7 +81,7 @@ void fs_cd(const char* name) {
 int fs_dir_count(void)
 {
     int n = 0;
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
         if (directory[i].used && directory[i].parent == current_dir && i != 0) n++;
     return n;
 }
@@ -88,7 +89,7 @@ int fs_dir_count(void)
 int fs_dir_entry(int index, const char** name, int* type, unsigned int* size)
 {
     int n = 0;
-    for (int i = 0; i < MAX_FILES; i++)
+    for (int i = 0; i < fs_dir_cap; i++)
     {
         if (directory[i].used && directory[i].parent == current_dir && i != 0)
         {

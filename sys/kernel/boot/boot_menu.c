@@ -63,9 +63,17 @@ int boot_menu(int has_installed)
         gui_draw_window(x, y, w, h, OS_NAME " " OS_VERSION_STR " Boot Menu");
 
         if (!has_installed) {
+            gui_draw_text(x + 202, y + 580,
+                        "copyright (c) User0140155 2026", COLOR_WHITE);
+            gui_draw_text(x + 276, y + 595,
+                        "NwOS", COLOR_WHITE);
             gui_draw_text(x + 20, y + 50, "No installed " OS_NAME " filesystem was found.", COLOR_RED);
             gui_draw_text(x + 20, y + 70, "Choose Live mode or start the installer.", COLOR_BLACK);
         } else {
+            gui_draw_text(x + 215, y + 520,
+                        "copyright (c) User0140155 2026", COLOR_WHITE);
+            gui_draw_text(x + 300, y + 505,
+                        "NwOS", COLOR_WHITE);
             gui_draw_text(x + 20, y + 50, "Use arrow keys to select, Enter to boot.", COLOR_BLACK);
         }
 

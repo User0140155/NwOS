@@ -30,29 +30,22 @@ void death_screen(void) {
     print_error("Deleting '/' directory..\n");
     sleep(1000);
 
-    for (int i = 1; i < MAX_FILES; i++) {
-        directory[i].used = 0;
-        directory[i].name[0] = '\0';
-        directory[i].size = 0;
+    current_dir = 0;
+    fs_removed_count = 0;
+
+    for (int i = 1; i < fs_dir_cap; i++) {
+        if (directory[i].used)
+            fs_entry_release(i);
     }
 
-    unsigned char zero[512];
-    for (int k = 0; k < 512; k++) zero[k] = 0;
-    for (int i = 0; i < MAX_FILES * FS_FILE_SECTORS; i++) {
-        fs_write_lba(FS_DATA_LBA + i, zero);
-    }
-
-    directory[1].used = 1;
-    directory[1].type = FS_TYPE_FILE;
-    directory[1].parent = 0;
-    strcpy(directory[1].name, "death.bsod");
     const char* msg = "Root filesystem destroyed.";
-    directory[1].size = 45;
 
-    unsigned char sector[512];
-    for (int k = 0; k < 512; k++) sector[k] = 0;
-    for (int k = 0; msg[k] != '\0' && k < 511; k++) sector[k] = msg[k];
-    fs_write_lba(FS_DATA_LBA + 1 * FS_FILE_SECTORS, sector);
+    fs_create("death.bsod");
+
+    int index = fs_find("death.bsod");
+
+    if (index >= 0)
+        fs_store_data(index, msg, "");
 
     fs_save_directory();
 
@@ -92,6 +85,7 @@ void cmd_more_help(void)
     print("  disks    - list all ATA disks\n");
     print("  drive <C|D|n> - switch the active disk\n");
     print("  disk <C|D|n>  - detailed size of one disk\n");
+    print("  listen <file.wav> - play a WAV file\n");
     putchar_os('\n');
     set_color(base_color);
 }

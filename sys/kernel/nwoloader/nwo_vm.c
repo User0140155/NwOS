@@ -28,6 +28,14 @@ int nwf_fs_write(const char* name, const char* text);
 int nwf_fs_read(const char* name, char* buffer, unsigned int max_size);
 void fb_draw_cursor(int x, int y);
 void fb_draw_rect(int x, int y, int w, int h, unsigned int color);
+int gui_term_shi(int op, int a);
+const char* gui_term_shs(int op, int a);
+void fb_draw_gradient(int x, int y, int w, int h, unsigned int top, unsigned int bottom);
+void fb_draw_rgrad(int x, int y, int w, int h, int r, unsigned int top, unsigned int bottom);
+void fb_draw_glass(int x, int y, int w, int h, int r, unsigned int color, int alpha);
+void fb_draw_orb(int cx, int cy, int r, unsigned int color);
+void fb_draw_ellipse(int x, int y, int w, int h, unsigned int c1, unsigned int c2, int alpha);
+void fb_draw_bubble(int cx, int cy, int r, int alpha);
 void fb_draw_frame(int x, int y, int w, int h, unsigned int color);
 void fb_draw_cube_default(unsigned int color);
 void fb_draw_window(int x, int y, int w, int h, unsigned int color, const char* title);
@@ -67,6 +75,14 @@ unsigned long long timer_ms(void);
 #define OP_CPU_LOAD    0xB0
 #define OP_GPU_LOAD    0xB1
 #define OP_CURSOR      0xB2
+#define OP_GRADIENT    0xC0
+#define OP_RGRAD       0xC1
+#define OP_GLASS       0xC2
+#define OP_ORB         0xC3
+#define OP_ELLIPSE     0xC4
+#define OP_BUBBLE      0xC5
+#define OP_SHI         0xC6
+#define OP_SHS         0xC7
 #define OP_FS_CREATE   0xB3
 #define OP_FS_DELETE   0xB4
 #define OP_FS_WRITE    0xB5
@@ -2669,6 +2685,92 @@ int nwo_execute(
                     vm_to_int(&width),
                     vm_to_int(&height),
                     (unsigned int)vm_to_int(&color));
+
+                break;
+            }
+
+            case OP_SHI:
+            case OP_SHS:
+            {
+                VmValue sop, sarg;
+                VmValue res;
+
+                if (!vm_pop(&vm, &sarg)) return -1;
+                if (!vm_pop(&vm, &sop)) return -1;
+
+                if (opcode == OP_SHI)
+                {
+                    res.type = VM_INT;
+                    res.string_length = 0;
+                    res.as.integer = gui_term_shi(vm_to_int(&sop),
+                                                  vm_to_int(&sarg));
+                }
+                else
+                {
+                    const char* str = gui_term_shs(vm_to_int(&sop),
+                                                   vm_to_int(&sarg));
+                    unsigned int n = 0;
+
+                    while (str[n]) n++;
+                    res.type = VM_STRING;
+                    res.string_length = n;
+                    res.as.string = str;
+                }
+
+                if (!vm_push(&vm, res)) return -1;
+                break;
+            }
+
+            case OP_GRADIENT:
+            case OP_RGRAD:
+            case OP_GLASS:
+            case OP_ORB:
+            case OP_ELLIPSE:
+            case OP_BUBBLE:
+            {
+                VmValue a[8];
+                int n = (opcode == OP_GRADIENT) ? 6 :
+                        (opcode == OP_RGRAD)    ? 7 :
+                        (opcode == OP_GLASS)    ? 7 :
+                        (opcode == OP_ELLIPSE)  ? 7 : 4;
+                int k;
+
+                for (k = n - 1; k >= 0; k--)
+                    if (!vm_pop(&vm, &a[k]))
+                        return -1;
+
+                graphics_begin();
+
+                if (opcode == OP_GRADIENT)
+                    fb_draw_gradient(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                     vm_to_int(&a[2]), vm_to_int(&a[3]),
+                                     (unsigned int)vm_to_int(&a[4]),
+                                     (unsigned int)vm_to_int(&a[5]));
+                else if (opcode == OP_RGRAD)
+                    fb_draw_rgrad(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                  vm_to_int(&a[2]), vm_to_int(&a[3]),
+                                  vm_to_int(&a[4]),
+                                  (unsigned int)vm_to_int(&a[5]),
+                                  (unsigned int)vm_to_int(&a[6]));
+                else if (opcode == OP_GLASS)
+                    fb_draw_glass(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                  vm_to_int(&a[2]), vm_to_int(&a[3]),
+                                  vm_to_int(&a[4]),
+                                  (unsigned int)vm_to_int(&a[5]),
+                                  vm_to_int(&a[6]));
+                else if (opcode == OP_ELLIPSE)
+                    fb_draw_ellipse(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                    vm_to_int(&a[2]), vm_to_int(&a[3]),
+                                    (unsigned int)vm_to_int(&a[4]),
+                                    (unsigned int)vm_to_int(&a[5]),
+                                    vm_to_int(&a[6]));
+                else if (opcode == OP_BUBBLE)
+                    fb_draw_bubble(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                   vm_to_int(&a[2]), vm_to_int(&a[3]));
+                else
+                    fb_draw_orb(vm_to_int(&a[0]), vm_to_int(&a[1]),
+                                vm_to_int(&a[2]),
+                                (unsigned int)vm_to_int(&a[3]));
 
                 break;
             }

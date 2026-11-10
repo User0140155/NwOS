@@ -127,7 +127,32 @@ typedef struct __attribute__((packed)) {
     uint16_t parent;
     char name[MAX_FILENAME];
     uint32_t size;
+    uint32_t first;
 } DirEntry;
+
+typedef struct {
+    uint32_t seq;
+    uint32_t total;
+    uint32_t csec;
+    uint32_t fat_lba;
+    uint32_t fat_secs;
+    uint32_t data_lba;
+    uint32_t clusters;
+    uint32_t dir_first;
+    uint32_t dir_size;
+    uint32_t hint;
+} fs_sb_t;
+
+typedef struct {
+    unsigned long long volume_bytes;
+    unsigned long long capacity_bytes;
+    unsigned long long used_bytes;
+    unsigned long long free_bytes;
+    unsigned long long file_bytes;
+    unsigned int used_percent;
+    unsigned int files;
+    unsigned int entries;
+} fs_usage_t;
 
 typedef struct {
     void (*draw_rect)(int x, int y, int w, int h, uint32_t color);
@@ -141,7 +166,14 @@ typedef struct {
 #define FS_MAGIC_VALUE 0x4E774653
 #define FS_SEQ_OFFSET  4
 #define FS_VER_OFFSET  8
-#define FS_FORMAT_VER  2
+#define FS_FORMAT_VER  3
+
+#define FS_FAT_LBA              200u
+#define FS_FAT_EOC              0xFFFFFFFFu
+#define FS_FAT_PER_SECTOR       128u
+#define FS_CLUSTER_MIN_SECTORS  8u
+#define FS_MAX_CLUSTERS         0x00100000u
+#define FS_MIN_SECTORS          4096u
 
 #define SETTINGS_FILE "sys.conf"
 #define SETTINGS_MAX  2048
@@ -205,6 +237,9 @@ unsigned int rand_simple(void);
 const char* fs_current_path(void);
 void set_p_shell(void);
 void print_shell_p(void);
+void uname_p(void);
+void uname_o(void);
+void uname_a(void);
 void change_p_color(void);
 void print_title(const char* text);
 void settings_load(void);
@@ -254,6 +289,8 @@ int fs_read_binary(
 void reboot(void);
 void fs_load(void);
 void fs_save_directory(void);
+void uname(void);
+void uname_r(void);
 unsigned char rtc_read(unsigned char reg);
 unsigned char bcd_to_bin(unsigned char value);
 void get_time(int* hour, int* minute, int* second);
@@ -266,7 +303,8 @@ int fs_read_binary(
     unsigned int max_size
 );
 
-extern DirEntry directory[MAX_FILES];
+extern DirEntry* directory;
+extern int fs_dir_cap;
 extern uint16_t current_dir;
 extern unsigned char text_color;
 extern unsigned char base_color;
@@ -289,7 +327,6 @@ extern char cmd_history[MAX_HISTORY_COMMANDS][MAX_CMD_LENGTH];
 extern int fs_current_drive;
 extern int fs_quiet;
 extern int fs_ram_mode;
-extern unsigned char fs_scratch[FS_DIR_SECTORS * 512];
 extern uint16_t fs_removed[MAX_FILES];
 extern int script_command_failed;
 
@@ -378,6 +415,28 @@ void fs_set_drive(int idx);
 int fs_get_drive(void);
 void fs_load(void);
 void fs_save_directory(void);
+int fs_sb_load(void);
+void fs_sb_save(void);
+void fs_fat_invalidate(void);
+unsigned int fs_fat_get(unsigned int cluster);
+unsigned int fs_alloc_cluster(void);
+unsigned int fs_count_used_clusters(void);
+void fs_free_chain(unsigned int first);
+int fs_chain_read(unsigned int first, unsigned int offset,
+                  unsigned char* out, unsigned int length);
+int fs_chain_write(unsigned int* first, const unsigned char* data,
+                   unsigned int size);
+int fs_format_layout(unsigned int total_sectors);
+unsigned int fs_total_sectors_here(void);
+void* fs_mem_alloc(unsigned long size);
+void fs_mem_free(void* ptr, unsigned long size);
+int fs_dir_reserve(int needed);
+int fs_dir_alloc_slot(void);
+void fs_entry_clear(int index);
+int fs_file_write(int index, const unsigned char* data, unsigned int size);
+int fs_file_read(int index, unsigned int offset,
+                 unsigned char* out, unsigned int length);
+void fs_file_release(int index);
 int fs_drive_has_fs(int idx);
 const char* disk_position_name(ata_drive_t* d);
 int fs_drive_index_by_letter(char letter);
@@ -389,6 +448,8 @@ void shell(void);
 int fs_change_drive_letter(char letter);
 unsigned long long fs_drive_used_bytes(int idx, unsigned int* file_count);
 unsigned int fs_drive_entry_count(int idx);
+int fs_drive_usage(int idx, fs_usage_t* usage);
+int fs_usage_current(fs_usage_t* usage);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
 int nwf_tz_get(void);
@@ -494,7 +555,11 @@ extern int custom_month;
 extern int custom_year;
 extern unsigned int fs_part_lba;
 extern int fs_live_build;
-extern unsigned char fs_ram_disk[FS_RAM_LBAS * 512];
+extern unsigned char* fs_ram_disk;
+extern unsigned int fs_ram_lbas;
+extern fs_sb_t fs_sb;
+extern int fs_sb_ok;
+extern int fs_sb_committed;
 extern int fs_removed_count;
 extern int script_depth;
 extern int script_last_status;
@@ -561,6 +626,7 @@ int script_run(const char* filename, int mode);
 void cmd_cd_path(const char* args);
 void run_nwo_from_dir( const char* dir_path, const char* filename );
 void cmd_disks(void);
+void cmd_listen(const char* args);
 int resolve_drive_arg(const char* args);
 void cmd_drive(const char* args);
 void cmd_drive_status(void);

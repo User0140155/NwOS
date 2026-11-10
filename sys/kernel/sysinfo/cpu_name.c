@@ -28,14 +28,6 @@ void cmd_time_cmd(void)
     putchar_os('\n');
 }
 
-void dateCr()
-{
-    set_color(TERM_COLOR_WHITE);
-    print(OS_MADE_DATE "\n");
-    print("v." OS_VERSION_STR "\n");
-    set_color(base_color);
-}
-
 void get_time(int* hour, int* minute, int* second) {
     if (use_custom_time) {
 

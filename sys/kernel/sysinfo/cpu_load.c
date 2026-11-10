@@ -84,19 +84,16 @@ unsigned long kernel_static_memory_kb(void)
 
     used += (unsigned long long)sizeof(line_buffer);
     used += (unsigned long long)sizeof(cmd_history);
-    used += (unsigned long long)sizeof(directory);
-    used += (unsigned long long)sizeof(fs_removed);
-    used += (unsigned long long)sizeof(fs_scratch);
+    used += (unsigned long long)fs_dir_cap * sizeof(DirEntry);
 
     if (fs_ram_mode)
     {
-        unsigned long long fs_used =
-            (unsigned long long)FS_DIR_SECTORS * 512ULL;
+        unsigned long long fs_used = 0;
 
-        for (int i = 0; i < MAX_FILES; i++)
+        for (int i = 0; i < fs_dir_cap; i++)
         {
             if (directory[i].used && directory[i].type == FS_TYPE_FILE)
-                fs_used += (unsigned long long)FS_FILE_SECTORS * 512ULL;
+                fs_used += ((unsigned long long)directory[i].size + 511ULL) & ~511ULL;
         }
 
         used += fs_used;

@@ -20,10 +20,10 @@ int fs_entry_in_tree(int index, const char* root_name)
     int current = index;
 
     for (int depth = 0;
-         depth < MAX_FILES && current > 0;
+         depth < fs_dir_cap && current > 0;
          depth++)
     {
-        if (current >= MAX_FILES || !directory[current].used)
+        if (current >= fs_dir_cap || !directory[current].used)
             return 0;
 
         if (directory[current].parent == 0 &&
@@ -43,10 +43,10 @@ int fs_entry_in_sys_apps_tree(int index)
     int sys_index = -1;
     int apps_index = -1;
 
-    if (index < 0 || index >= MAX_FILES || !directory[index].used)
+    if (index < 0 || index >= fs_dir_cap || !directory[index].used)
         return 0;
 
-    for (int i = 1; i < MAX_FILES; i++)
+    for (int i = 1; i < fs_dir_cap; i++)
     {
         if (directory[i].used &&
             directory[i].type == FS_TYPE_DIR &&
@@ -61,7 +61,7 @@ int fs_entry_in_sys_apps_tree(int index)
     if (sys_index < 0)
         return 0;
 
-    for (int i = 1; i < MAX_FILES; i++)
+    for (int i = 1; i < fs_dir_cap; i++)
     {
         if (directory[i].used &&
             directory[i].type == FS_TYPE_DIR &&
@@ -77,12 +77,12 @@ int fs_entry_in_sys_apps_tree(int index)
         return 0;
 
     int current = index;
-    for (int depth = 0; depth < MAX_FILES; depth++)
+    for (int depth = 0; depth < fs_dir_cap; depth++)
     {
         if (current == apps_index)
             return 1;
 
-        if (current <= 0 || current >= MAX_FILES ||
+        if (current <= 0 || current >= fs_dir_cap ||
             !directory[current].used)
             return 0;
 

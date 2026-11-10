@@ -4,7 +4,8 @@
 
 static void fs_bytes_zero(unsigned char* p, unsigned int n);
 
-DirEntry directory[MAX_FILES];
+static unsigned char fs_ram_static[FS_RAM_LBAS * 512];
+
 uint16_t current_dir = 0;
 
 int fs_current_drive = 0;
@@ -13,7 +14,8 @@ int fs_quiet = 0;
 int fs_ram_mode = 0;
 unsigned int fs_part_lba = 0;
 int fs_live_build = 0;
-unsigned char fs_ram_disk[FS_RAM_LBAS * 512];
+unsigned char* fs_ram_disk = fs_ram_static;
+unsigned int fs_ram_lbas = FS_RAM_LBAS;
 
 static void fs_bytes_zero(unsigned char* p, unsigned int n)
 {
@@ -28,7 +30,7 @@ int fs_read_lba(unsigned int lba, unsigned char* buf)
     {
         unsigned long long abs = (unsigned long long)fs_part_lba + lba;
 
-        if (abs >= FS_RAM_LBAS)
+        if (abs >= fs_ram_lbas)
         {
             fs_bytes_zero(buf, 512);
             return -1;
@@ -55,7 +57,7 @@ int fs_write_lba(unsigned int lba, const unsigned char* buf)
     {
         unsigned long long abs = (unsigned long long)fs_part_lba + lba;
 
-        if (abs >= FS_RAM_LBAS) return -1;
+        if (abs >= fs_ram_lbas) return -1;
 
         unsigned char* dst = fs_ram_disk + (unsigned int)abs * 512u;
 

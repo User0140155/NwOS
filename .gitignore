@@ -34,3 +34,5 @@ make
 apply.py
 PY_WORD_DATA.md
 license.text.txt
+nwasm.md
+builded/

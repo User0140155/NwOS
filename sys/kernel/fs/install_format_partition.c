@@ -27,26 +27,43 @@ void fs_format(void) {
 
 unsigned int fs_layout_sectors(void)
 {
-    unsigned long long magic_end = (unsigned long long)FS_MAGIC_LBA + 1ULL;
-    unsigned long long dir_end = (unsigned long long)FS_DIR_LBA + FS_DIR_SECTORS;
-    unsigned long long data_end = (unsigned long long)FS_DATA_LBA +
-                                  (unsigned long long)MAX_FILES * FS_FILE_SECTORS;
-    unsigned long long end_lba = magic_end;
-
-    if (dir_end > end_lba) end_lba = dir_end;
-    if (data_end > end_lba) end_lba = data_end;
-    if (end_lba == 0 || end_lba > 0xFFFFFFFFULL)
-        return 0;
-    return (unsigned int)end_lba;
+    return FS_MIN_SECTORS;
 }
+
 void fs_live_init(void)
 {
+    static const unsigned int mb_sizes[] = { 64, 32, 16, 8 };
+
     fs_ram_mode = 1;
     fs_part_lba = 0;
     fs_current_drive = 0;
 
-    for (unsigned int i = 0; i < (unsigned int)FS_RAM_LBAS * 512u; i++)
-        fs_ram_disk[i] = 0;
+    int fresh = 0;
+
+    if (fs_ram_lbas <= FS_RAM_LBAS)
+    {
+        for (unsigned int k = 0; k < 4; k++)
+        {
+            unsigned long bytes = (unsigned long)mb_sizes[k] * 1024ul * 1024ul;
+            unsigned char* mem = (unsigned char*)fs_mem_alloc(bytes);
+
+            if (mem != 0)
+            {
+                fs_ram_disk = mem;
+                fs_ram_lbas = (unsigned int)(bytes / 512ul);
+                fresh = 1;
+                break;
+            }
+        }
+    }
+
+    /* Fresh memory from the page allocator is zeroed; the static fallback
+       must be cleared explicitly. */
+    if (!fresh)
+    {
+        for (unsigned long i = 0; i < (unsigned long)fs_ram_lbas * 512ul; i++)
+            fs_ram_disk[i] = 0;
+    }
 
     cfg_require_login = 0;
     cfg_setup_complete = 1;

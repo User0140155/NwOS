@@ -29,6 +29,7 @@ typedef struct
 } NwoProgram;
 
 int nwo_load(const char* filename, NwoProgram* program);
+const char* nwo_load_error(void);
 
 void nwo_unload(NwoProgram* program);
 

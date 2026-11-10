@@ -1,8 +1,8 @@
 #include "nwos_internal.h"
 
-int script_run(const char* filename, int mode)
+static int script_run_impl(const char* filename, int mode,
+                           char* file_buffer, unsigned int file_capacity)
 {
-    static char file_buffer[MAX_FILE_SIZE + 1];
     char line[SCRIPT_LINE_MAX];
     char expanded[SCRIPT_LINE_MAX];
     unsigned int pos = 0;
@@ -33,7 +33,7 @@ int script_run(const char* filename, int mode)
         return 0;
     }
 
-    if (!fs_read_text(filename, file_buffer, sizeof(file_buffer)))
+    if (!fs_read_text(filename, file_buffer, file_capacity))
     {
         print_error("Could not read script file.\n");
         return 0;
@@ -233,5 +233,44 @@ int script_run(const char* filename, int mode)
 
     script_depth--;
     script_clear_vars();
+    return result;
+}
+
+int script_run(const char* filename, int mode)
+{
+    static char fallback[16384 + 1];
+    char* buffer = fallback;
+    unsigned long capacity = sizeof(fallback);
+    unsigned long heap_size = 0;
+    char* heap = 0;
+    int index;
+    int result;
+
+    if (filename && filename[0] != '\0')
+    {
+        index = fs_find(filename);
+
+        if (index >= 0 && directory[index].type == FS_TYPE_FILE &&
+            (unsigned long)directory[index].size + 1 > capacity)
+        {
+            heap_size = (unsigned long)directory[index].size + 1;
+            heap = (char*)fs_mem_alloc(heap_size);
+
+            if (heap == 0)
+            {
+                print_error("Script is too large: not enough memory.\n");
+                return 0;
+            }
+
+            buffer = heap;
+            capacity = heap_size;
+        }
+    }
+
+    result = script_run_impl(filename, mode, buffer, (unsigned int)capacity);
+
+    if (heap != 0)
+        fs_mem_free(heap, heap_size);
+
     return result;
 }

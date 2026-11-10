@@ -1239,11 +1239,17 @@ int keyboard_pollkey(void)
 }
 
 
+extern int gui_term_capture;
+int gui_term_fake_key(void);
+
 int keyboard_getkey(void)
 
 {
 
     int key;
+
+    if (gui_term_capture)
+        return gui_term_fake_key();
 
     while ((key=keyboard_pollkey())==KEY_NONE) cpu_relax();
 

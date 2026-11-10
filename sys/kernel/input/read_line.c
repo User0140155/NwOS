@@ -24,8 +24,17 @@ void history_add_command(const char* cmd)
     history_save();
 }
 
+extern int gui_term_capture;
+
 void read_line(char* buffer, int max)
 {
+    if (gui_term_capture)
+    {
+        if (max > 0)
+            buffer[0] = '\0';
+        return;
+    }
+
     int length = 0;
     history_pos = history_count;
 

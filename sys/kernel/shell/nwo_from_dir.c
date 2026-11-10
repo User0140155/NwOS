@@ -12,7 +12,7 @@ static void run_startup_nwo(const char* filename)
 
     current_dir = 0;
 
-    for (int i = 1; i < MAX_FILES; i++)
+    for (int i = 1; i < fs_dir_cap; i++)
     {
         if (directory[i].used &&
             directory[i].type == FS_TYPE_DIR &&

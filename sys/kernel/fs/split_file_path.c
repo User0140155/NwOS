@@ -2,40 +2,21 @@
 
 void fs_store_data(int index, const char* text, const char* success_message)
 {
-    static unsigned char buffer[FS_FILE_SECTORS * 512];
+    unsigned int length = 0;
 
-    int i = 0;
+    if (text == 0)
+        text = "";
 
-    while (text[i] != '\0' &&
-           i < MAX_FILE_SIZE - 1)
+    while (text[length] != '\0')
+        length++;
+
+    if (!fs_file_write(index, (const unsigned char*)text, length))
     {
-        buffer[i] = text[i];
-        i++;
-    }
-
-    buffer[i] = '\0';
-
-    for (int k = i + 1; k < FS_FILE_SECTORS * 512; k++)
-    {
-        buffer[k] = 0;
-    }
-
-    directory[index].size = (unsigned int)i;
-
-    for (int s = 0; s < FS_FILE_SECTORS; s++)
-    {
-        fs_write_lba(
-            FS_DATA_LBA + index * FS_FILE_SECTORS + s,
-            buffer + s * 512);
+        print_error("Unable to write file data.\n");
+        return;
     }
 
     fs_save_directory();
-
-    if (text[i] != '\0')
-    {
-        print_error("Text is too long. Maximum is 20480 characters.\n");
-        return;
-    }
 
     if (!fs_quiet) print_success(success_message);
 }
@@ -55,14 +36,10 @@ void fs_write(const char* name, const char* text)
 
 int fs_write_binary(const char* name, const unsigned char* data, unsigned int size)
 {
-    static unsigned char sector[512];
     int index;
     int previous_quiet;
-    unsigned int i;
-    unsigned int sector_index;
 
-    if (name == 0 || data == 0 || size > MAX_FILE_SIZE ||
-        size > FS_FILE_SECTORS * 512u)
+    if (name == 0 || (data == 0 && size != 0))
         return 0;
 
     index = fs_find(name);
@@ -77,18 +54,9 @@ int fs_write_binary(const char* name, const unsigned char* data, unsigned int si
     if (index < 0 || directory[index].type != FS_TYPE_FILE)
         return 0;
 
-    directory[index].size = size;
-    for (sector_index = 0; sector_index < FS_FILE_SECTORS; ++sector_index)
-    {
-        for (i = 0; i < 512; ++i)
-        {
-            unsigned int offset = sector_index * 512u + i;
-            sector[i] = offset < size ? data[offset] : 0;
-        }
-        fs_write_lba(
-            FS_DATA_LBA + (unsigned int)index * FS_FILE_SECTORS + sector_index,
-            sector);
-    }
+    if (!fs_file_write(index, data, size))
+        return 0;
+
     fs_save_directory();
     return 1;
 }

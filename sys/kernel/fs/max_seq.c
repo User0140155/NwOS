@@ -86,12 +86,8 @@ static int fs_is_formatted(void) {
 }
 
 void fs_mark_formatted(unsigned int seq) {
-    unsigned char sector[512];
-    for (int k = 0; k < 512; k++) sector[k] = 0;
-    *(unsigned int*)sector = FS_MAGIC_VALUE;
-    *(unsigned int*)(sector + FS_SEQ_OFFSET) = seq;
-    *(unsigned int*)(sector + FS_VER_OFFSET) = FS_FORMAT_VER;
-    fs_write_lba(FS_MAGIC_LBA, sector);
+    fs_sb.seq = seq;
+    fs_sb_save();
 }
 
 static void fs_wipe_magic(void) {
@@ -113,7 +109,7 @@ int fs_load_status(void) {
 
     fs_load();
 
-    for (int i = 0; i < MAX_FILES; i++) {
+    for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].parent == 0 &&
             strcmp(directory[i].name, "death.bsod") == 0) {
             return 2;

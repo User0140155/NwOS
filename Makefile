@@ -22,27 +22,32 @@ GUEST_HEIGHT := 720
 GUI_WIDTH := 1280
 GUI_HEIGHT := 720
 
+# Limine is NOT installed by this Makefile. Install it yourself.
+#   LIMINE_TOOL  – path to the `limine` host utility (default: `limine` on PATH).
+#   LIMINE_SHARE – directory with boot assets (default: /usr/share/limine),
+#                  must contain: limine-bios.sys, limine-bios-cd.bin,
+#                  limine-uefi-cd.bin, BOOTX64.EFI
+# LIMINE_VERSION is only for the informational success message.
 LIMINE_VERSION ?= 12.9.6
-LIMINE_URL := https://github.com/Limine-Bootloader/Limine/releases/download/v$(LIMINE_VERSION)/limine-binary.tar.gz
-LIMINE_SHA256 ?= b38aabb042b0c0f9f562b7741be3c1204838d7bbacfa78bb411c674bd5b984ee
-LIMINE_ARCHIVE := $(BUILD)/limine-binary-v$(LIMINE_VERSION).tar.gz
-LIMINE_DIR := $(BUILD)/limine-v$(LIMINE_VERSION)
-LIMINE_STAMP := $(LIMINE_DIR)/.ready
-LIMINE_TOOL := $(LIMINE_DIR)/bin/limine
+LIMINE_TOOL ?= limine
+LIMINE_SHARE ?= /usr/share/limine
+
+LIMINE_BIOS_SYS := $(LIMINE_SHARE)/limine-bios.sys
+LIMINE_BIOS_CD := $(LIMINE_SHARE)/limine-bios-cd.bin
+LIMINE_UEFI_CD := $(LIMINE_SHARE)/limine-uefi-cd.bin
+LIMINE_BOOTX64 := $(LIMINE_SHARE)/BOOTX64.EFI
 
 CLANG ?= clang
 LD_LLD ?= ld.lld
 NASM ?= nasm
 PYTHON ?= python3
-CURL ?= curl
-TAR ?= tar
 SHA256SUM ?= sha256sum
 XORRISO ?= xorriso
 FILE ?= file
 
 # Set CHECK_MULTIBOOT=0 only if grub-file is intentionally unavailable.
 CHECK_MULTIBOOT ?= 1
-REQUIRED_TOOLS := $(CLANG) $(LD_LLD) $(NASM) $(PYTHON) $(CURL) $(TAR) \
+REQUIRED_TOOLS := $(CLANG) $(LD_LLD) $(NASM) $(PYTHON) \
                   $(SHA256SUM) $(XORRISO) $(FILE)
 ifeq ($(CHECK_MULTIBOOT),1)
 REQUIRED_TOOLS += grub-file
@@ -82,6 +87,10 @@ SOURCES_REL := \
     sys/kernel/config/settings_load.c \
     sys/kernel/config/settings_save.c \
     sys/kernel/config/shell_prompt_text.c \
+    sys/kernel/audio/hda.c \
+    sys/kernel/audio/listen.c \
+    sys/kernel/audio/startup_sound.c \
+    sys/kernel/fs/chain.c \
     sys/kernel/fs/create.c \
     sys/kernel/fs/current_path.c \
     sys/kernel/fs/delete_file_path.c \
@@ -100,6 +109,8 @@ SOURCES_REL := \
     sys/kernel/fs/read_text.c \
     sys/kernel/fs/resolve_dir_path.c \
     sys/kernel/fs/rm_one.c \
+	sys/kernel/sysinfo/uname.c \
+	sys/kernel/sysinfo/date_create.c \
     sys/kernel/fs/split_file_path.c \
     sys/kernel/games/game_guess.c \
     sys/kernel/games/game_word.c \
@@ -148,6 +159,7 @@ SOURCES_REL := \
     sys/kernel/sysinfo/date_set.c \
     sys/kernel/sysinfo/nwfetch.c \
     sys/kernel/sysinfo/print_gpu.c \
+    sys/kernel/term/gui_term.c \
     sys/kernel/term/new_line.c \
     sys/kernel/term/print.c \
     sys/kernel/term/putchar_os.c \
@@ -156,6 +168,7 @@ SOURCES_REL := \
     sys/kernel/panic/kernelpanic.c \
     sys/kernel/nwoloader/nwo_vm.c \
     sys/kernel/nwoloader/nwo_runner.c \
+    sys/kernel/nwoloader/nwo_native.c \
     sys/kernel/Apps/Games/slot.c \
     sys/kernel/Apps/Games/game_memory.c \
     sys/kernel/Apps/fileStats/filestats.c \
@@ -239,7 +252,7 @@ ifeq ($(NWBIBLE_ENABLED),1)
 NWBIBLE_ISO_DEPS += $(NWBIBLE_MODULE) $(NWBIBLE_NOTICE)
 endif
 
-.PHONY: all iso kernel boot-sector clean check-tools help
+.PHONY: all iso kernel boot-sector clean check-tools check-limine help
 
 all: iso boot-sector
 
@@ -256,7 +269,11 @@ help:
 	  '  make kernel      Build and validate build/kernel.elf' \
 	  '  make iso         Build NwOS.iso' \
 	  '  make boot-sector Assemble build/boot.bin (auxiliary; not added to ISO)' \
-	  '  make clean       Remove build/ and NwOS.iso'
+	  '  make clean       Remove build/ and NwOS.iso' \
+	  '' \
+	  'Requires Limine to be installed separately:' \
+	  '  LIMINE_TOOL   path to the limine utility   (default: limine on PATH)' \
+	  '  LIMINE_SHARE  directory with boot assets    (default: /usr/share/limine)'
 
 check-tools:
 	@missing=(); \
@@ -265,7 +282,21 @@ check-tools:
 	done; \
 	if (( $${#missing[@]} )); then \
 	  printf '\nMissing build tools: %s\n' "$${missing[*]}" >&2; \
-	  printf 'On Debian/Ubuntu install: sudo apt install clang lld nasm xorriso python3 curl tar coreutils file grub-common make\n' >&2; \
+	  printf 'On Debian/Ubuntu install: sudo apt install clang lld nasm xorriso python3 coreutils file grub-common make\n' >&2; \
+	  exit 1; \
+	fi
+
+check-limine:
+	@missing=(); \
+	command -v "$(LIMINE_TOOL)" >/dev/null 2>&1 || missing+=("$(LIMINE_TOOL)"); \
+	for f in "$(LIMINE_BIOS_SYS)" "$(LIMINE_BIOS_CD)" "$(LIMINE_UEFI_CD)" "$(LIMINE_BOOTX64)"; do \
+	  [[ -e "$$f" ]] || missing+=("$$f"); \
+	done; \
+	if (( $${#missing[@]} )); then \
+	  printf '\nLimine is not installed. This Makefile no longer downloads it automatically.\n' >&2; \
+	  printf 'Install Limine v%s or newer and/or set LIMINE_TOOL / LIMINE_SHARE.\n' "$(LIMINE_VERSION)" >&2; \
+	  printf 'Missing: %s\n' "$${missing[*]}" >&2; \
+	  printf '\nExample: make LIMINE_TOOL=/opt/limine/bin/limine LIMINE_SHARE=/opt/limine/share/limine\n' >&2; \
 	  exit 1; \
 	fi
 
@@ -353,54 +384,6 @@ else
 	@echo 'WARNING: grub-file check disabled (CHECK_MULTIBOOT=0).'
 endif
 
-$(LIMINE_ARCHIVE): | $(BUILD) check-tools
-	@set -eu; \
-	if [[ -f "$@" ]] && printf '%s  %s\n' '$(LIMINE_SHA256)' "$@" | $(SHA256SUM) --check --status; then \
-	  echo 'Using verified Limine archive: $@'; \
- 	else \
- 	  rm -f "$@" "$@.tmp"; \
- 	  echo 'Downloading Limine v$(LIMINE_VERSION)...'; \
- 	  $(CURL) --fail --location --retry 3 --output "$@.tmp" '$(LIMINE_URL)'; \
- 	  printf '%s  %s\n' '$(LIMINE_SHA256)' "$@.tmp" | $(SHA256SUM) --check -; \
- 	  mv "$@.tmp" "$@"; \
- 	fi
-
-$(LIMINE_STAMP): $(LIMINE_ARCHIVE) | check-tools
-	@set -eu; \
-	rm -rf "$(LIMINE_DIR)"; \
-	mkdir -p "$(LIMINE_DIR)/bin"; \
-	$(TAR) -xzf "$<" -C "$(LIMINE_DIR)"; \
-	find_asset() { find "$(LIMINE_DIR)" -type f -iname "$$1" -print -quit; }; \
-	bios_sys="$$(find_asset limine-bios.sys)"; \
-	bios_cd="$$(find_asset limine-bios-cd.bin)"; \
-	uefi_cd="$$(find_asset limine-uefi-cd.bin)"; \
-	efi64="$$(find_asset BOOTX64.EFI)"; \
-	for spec in "limine-bios.sys:$$bios_sys" "limine-bios-cd.bin:$$bios_cd" "limine-uefi-cd.bin:$$uefi_cd" "BOOTX64.EFI:$$efi64"; do \
-	  name="$${spec%%:*}"; path="$${spec#*:}"; \
-	  [[ -n "$$path" && -f "$$path" ]] || { echo "Limine v$(LIMINE_VERSION): missing $$name" >&2; exit 1; }; \
-	done; \
-	$(FILE) "$$efi64" | tee "$(LIMINE_DIR)/bin/efi-file-type.txt"; \
-	$(FILE) "$$efi64" | grep -Eiq 'PE32\+.*(x86-64|x86_64)' || { echo 'BOOTX64.EFI is not an x86-64 EFI application' >&2; exit 1; }; \
-	install -m 0644 "$$bios_sys" "$(LIMINE_DIR)/bin/limine-bios.sys"; \
-	install -m 0644 "$$bios_cd" "$(LIMINE_DIR)/bin/limine-bios-cd.bin"; \
-	install -m 0644 "$$uefi_cd" "$(LIMINE_DIR)/bin/limine-uefi-cd.bin"; \
-	install -m 0644 "$$efi64" "$(LIMINE_DIR)/bin/BOOTX64.EFI"; \
-	tool="$$(find "$(LIMINE_DIR)" -type f -name limine -perm /111 -print -quit)"; \
-	if [[ -z "$$tool" ]]; then \
-	  mkfile="$$(find "$(LIMINE_DIR)" -type f \( -name Makefile -o -name makefile -o -name GNUmakefile \) -print -quit)"; \
-	  [[ -n "$$mkfile" ]] || { echo 'No Makefile found in Limine binary package' >&2; exit 1; }; \
-	  make_dir="$$(dirname "$$mkfile")"; \
-	  echo "Building Limine host utility in: $$make_dir"; \
-	  make -C "$$make_dir" CC='$(CLANG)'; \
-	  tool="$$(find "$(LIMINE_DIR)" -type f -name limine -perm /111 -print -quit)"; \
-	fi; \
-	[[ -n "$$tool" && -x "$$tool" ]] || { echo 'Could not find/build Limine host utility' >&2; exit 1; }; \
-	install -m 0755 "$$tool" "$(LIMINE_TOOL)"; \
-	touch "$@"
-
-$(LIMINE_TOOL): $(LIMINE_STAMP)
-	@test -x "$@"
-
 # Limine configuration is generated here; do not edit build/limine.conf manually.
 $(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
@@ -450,7 +433,7 @@ $(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_MODULE) $(NWWD_NOTICE) $(NWBIBLE_ISO_DEPS) $(LIMINE_STAMP) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools
+$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_MODULE) $(NWWD_NOTICE) $(NWBIBLE_ISO_DEPS) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
 	@set -eu; \
 	rm -rf "$(ISO_ROOT)"; \
 	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses" "$(ISO_ROOT)/EFI/BOOT"; \
@@ -461,17 +444,17 @@ $(ISO_STAMP): $(KERNEL_ELF) $(NWWD_MODULE) $(NWWD_NOTICE) $(NWBIBLE_ISO_DEPS) $(
 	  install -m 0644 "$(NWBIBLE_MODULE)" "$(ISO_ROOT)/boot/nwos/world_english_bible.txt"; \
 	  install -m 0644 "$(NWBIBLE_NOTICE)" "$(ISO_ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt"; \
 	fi; \
-	install -m 0644 "$(LIMINE_DIR)/bin/limine-bios.sys" "$(ISO_ROOT)/boot/limine/limine-bios.sys"; \
-	install -m 0644 "$(LIMINE_DIR)/bin/limine-bios-cd.bin" "$(ISO_ROOT)/boot/limine/limine-bios-cd.bin"; \
-	install -m 0644 "$(LIMINE_DIR)/bin/limine-uefi-cd.bin" "$(ISO_ROOT)/boot/limine/limine-uefi-cd.bin"; \
-	install -m 0644 "$(LIMINE_DIR)/bin/BOOTX64.EFI" "$(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI"; \
-	install -m 0644 "$(LIMINE_CONF)" "$(ISO_ROOT)/boot/limine/limine.conf"; \
+	install -m 0644 "$(LIMINE_BIOS_SYS)" "$(ISO_ROOT)/boot/limine/limine-bios.sys"; \
+	install -m 0644 "$(LIMINE_BIOS_CD)"  "$(ISO_ROOT)/boot/limine/limine-bios-cd.bin"; \
+	install -m 0644 "$(LIMINE_UEFI_CD)"  "$(ISO_ROOT)/boot/limine/limine-uefi-cd.bin"; \
+	install -m 0644 "$(LIMINE_BOOTX64)"  "$(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI"; \
+	install -m 0644 "$(LIMINE_CONF)"     "$(ISO_ROOT)/boot/limine/limine.conf"; \
 	install -m 0644 "$(VENTOY_GRUB_CONF)" "$(ISO_ROOT)/boot/grub/grub.cfg"; \
 	touch "$@"
 
 # Hybrid BIOS/UEFI ISO. --efi-boot-part exposes Limine's UEFI El Torito FAT image as a GPT EFI System Partition.
 # Do not add -partition_offset here: this xorriso mkisofs invocation treats its argument as a source path.
-$(ISO_OUT): $(ISO_STAMP) $(LIMINE_TOOL) $(ROOT)/Makefile | check-tools
+$(ISO_OUT): $(ISO_STAMP) $(ROOT)/Makefile | check-tools check-limine
 	@set -eu; \
 	rm -f "$(ISO_TMP)"; \
 	$(XORRISO) -as mkisofs \

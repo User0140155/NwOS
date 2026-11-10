@@ -126,11 +126,27 @@ void cmd_disks(void)
 
         if (fs_drive_has_fs(i))
         {
+            fs_usage_t usage;
+
             set_color(TERM_COLOR_LIGHT_CYAN);
             print("  [");
             print(OS_NAME);
             print("]");
             set_color(base_color);
+
+            if (fs_drive_usage(i, &usage))
+            {
+                putchar_os('\n');
+                print("      FS: ");
+                print_int((int)usage.used_percent);
+                print("% used, ");
+                print_size_human(usage.used_bytes);
+                print(" / ");
+                print_size_human(usage.capacity_bytes);
+                print(", ");
+                print_size_human(usage.free_bytes);
+                print(" free");
+            }
         }
 
         putchar_os('\n');

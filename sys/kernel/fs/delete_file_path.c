@@ -71,9 +71,8 @@ int fs_delete_file_path(const char* path)
         return 0;
     }
 
-    directory[index].used = 0;
-    directory[index].name[0] = '\0';
-    directory[index].size = 0;
+    fs_file_release(index);
+    fs_entry_clear(index);
     fs_save_directory();
     current_dir = saved_dir;
 

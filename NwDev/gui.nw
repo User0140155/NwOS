@@ -1,17 +1,54 @@
 #include <nwc.h>
 
 1A accent(1A t) {
-    if (t == 1) return 0x002ECC9A;
-    if (t == 2) return 0x00B48EFF;
-    if (t == 3) return 0x00F6B64A;
-    return 0x003DAEE9;
+    if (t == 1) return 0x004CB52C;
+    if (t == 2) return 0x008F6BE0;
+    if (t == 3) return 0x00F29A2E;
+    return 0x002BA3E6;
+}
+
+1A accent_lt(1A t) {
+    if (t == 1) return 0x00B4EE8A;
+    if (t == 2) return 0x00D0BAFF;
+    if (t == 3) return 0x00FFDDA0;
+    return 0x008FDBFF;
 }
 
 1A accent_dim(1A t) {
-    if (t == 1) return 0x00197A5D;
-    if (t == 2) return 0x006B5599;
-    if (t == 3) return 0x00946D2C;
-    return 0x00256A8C;
+    if (t == 1) return 0x002A6E1A;
+    if (t == 2) return 0x004F33A0;
+    if (t == 3) return 0x00A5560C;
+    return 0x0014689E;
+}
+
+1A tone_top(1A k) {
+    if (k == 1) return 0x009BE46A;
+    if (k == 2) return 0x00C4A8FF;
+    if (k == 3) return 0x00FFD07A;
+    if (k == 4) return 0x00FFFFFF;
+    if (k == 5) return 0x00FF9A84;
+    if (k == 6) return 0x004A6C86;
+    return 0x007FD6FF;
+}
+
+1A tone_bot(1A k) {
+    if (k == 1) return 0x003E9E26;
+    if (k == 2) return 0x007A52D0;
+    if (k == 3) return 0x00E6841C;
+    if (k == 4) return 0x00C4D9E8;
+    if (k == 5) return 0x00D0301C;
+    if (k == 6) return 0x000E2233;
+    return 0x001C93DC;
+}
+
+1A tone_bd(1A k) {
+    if (k == 1) return 0x002A6E1A;
+    if (k == 2) return 0x004F33A0;
+    if (k == 3) return 0x00A5560C;
+    if (k == 4) return 0x007C9DB5;
+    if (k == 5) return 0x008C1A0E;
+    if (k == 6) return 0x0006121C;
+    return 0x0014689E;
 }
 
 1A inside(1A mx, 1A my, 1A x, 1A y, 1A w, 1A h) {
@@ -23,1101 +60,1480 @@
     return inside(mx, my, x + w - 38, y + 8, 26, 22);
 }
 
-0A box(1A x, 1A y, 1A w, 1A h, 1A fill, 1A ln) {
-    nw::rect(x + 6, y + 8, w, h, 0x000C0F12);
-    nw::rect(x - 1, y - 1, w + 2, h + 2, ln);
-    nw::rect(x, y, w, h, fill);
+1A clampi(1A v, 1A lo, 1A hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
 }
 
-0A seg(1A x, 1A y, 1A w, 1A h, 1A c) {
-    if (w > 0 && h > 0) nw::rect(x, y, w, h, c);
+// text with a soft drop shadow (for text on glass)
+0A tx(1A x, 1A y, 1A c, str s) {
+    str s2 = s;
+    nw::text(x + 1, y + 1, 0x00083352, s2);
+    nw::text(x, y, c, s2);
 }
 
-0A big_digit(1A x, 1A y, 1A d, 1A c) {
-    1A m = 0;
-    1A t = 5;
-    1A w = 34;
-    1A h = 58;
-    if (d == 0) m = 63;
-    if (d == 1) m = 6;
-    if (d == 2) m = 91;
-    if (d == 3) m = 79;
-    if (d == 4) m = 102;
-    if (d == 5) m = 109;
-    if (d == 6) m = 125;
-    if (d == 7) m = 7;
-    if (d == 8) m = 127;
-    if (d == 9) m = 111;
-    if (m >= 1) call seg(x + t, y, w - t * 2, t, c);
-    if (m >= 2) call seg(x + w - t, y + t, t, h / 2 - t, c);
-    if (m >= 4) call seg(x + w - t, y + h / 2, t, h / 2 - t, c);
-    if (m >= 8) call seg(x + t, y + h - t, w - t * 2, t, c);
-    if (m >= 16) call seg(x, y + h / 2, t, h / 2 - t, c);
-    if (m >= 32) call seg(x, y + t, t, h / 2 - t, c);
-    if (m >= 64) call seg(x + t, y + h / 2 - t / 2, w - t * 2, t, c);
+// glossy button: k = tone (0-3 accent themes, 4 silver, 5 red, 6 dark glass)
+0A gbtn(1A x, 1A y, 1A w, 1A h, 1A k, 1A hot) {
+    nw::rgrad(x, y, w, h, 7, tone_bd(k), tone_bd(k));
+    nw::rgrad(x + 1, y + 1, w - 2, h - 2, 6, tone_top(k), tone_bot(k));
+    nw::glass(x + 2, y + 2, w - 4, (h - 4) / 2, 5, 0x00FFFFFF, 105);
+    if (hot == 1) nw::glass(x + 1, y + 1, w - 2, h - 2, 6, 0x00FFFFFF, 55);
 }
 
-0A clock_big(1A x, 1A y, 1A c) {
-    1A hh = nw::hour();
-    1A mm = nw::minute();
-    call big_digit(x, y, hh / 10, c);
-    call big_digit(x + 40, y, hh - (hh / 10) * 10, c);
-    nw::rect(x + 82, y + 14, 6, 6, c);
-    nw::rect(x + 82, y + 38, 6, 6, c);
-    call big_digit(x + 96, y, mm / 10, c);
-    call big_digit(x + 136, y, mm - (mm / 10) * 10, c);
+// translucent dark-blue glass panel (desktop widgets, bars)
+0A gpanel(1A x, 1A y, 1A w, 1A h, 1A r) {
+    nw::glass(x - 1, y - 1, w + 2, h + 2, r + 1, 0x00FFFFFF, 95);
+    nw::glass(x, y, w, h, r, 0x000A3A63, 150);
+    nw::glass(x + 2, y + 2, w - 4, h / 2 - 2, r - 1, 0x00FFFFFF, 55);
 }
 
 0A clock_small(1A x, 1A y, 1A c) {
     1A hh = nw::hour();
     1A mm = nw::minute();
-    if (hh < 10) nw::text(x, y, c, "0");
-    nw::number(x + 8, y, c, hh);
+    if (hh < 10) {
+        nw::text(x, y, c, "0");
+        nw::number(x + 8, y, c, hh);
+    } else {
+        nw::number(x, y, c, hh);
+    }
     nw::text(x + 16, y, c, ":");
-    if (mm < 10) nw::text(x + 24, y, c, "0");
-    nw::number(x + 32, y, c, mm);
+    if (mm < 10) {
+        nw::text(x + 24, y, c, "0");
+        nw::number(x + 32, y, c, mm);
+    } else {
+        nw::number(x + 24, y, c, mm);
+    }
 }
 
+// glossy app icons
 0A icon(1A k, 1A x, 1A y, 1A s, 1A c) {
     if (k == 0) {
-        nw::rect(x, y, s, s, 0x00171D23);
-        nw::rect(x, y, s, 2, c);
-        nw::text(x + s / 4, y + s / 3 + 1, 0x00EEF2F5, ">_");
+        nw::rgrad(x, y, s, s, 5, 0x004B6A82, 0x000B1B28);
+        nw::text(x + s / 4, y + s / 3 + 3, 0x007CFFB0, ">_");
     }
     if (k == 1) {
-        nw::rect(x, y + s / 5, s / 2, s / 4, c);
-        nw::rect(x, y + s / 2, s, s / 2, c);
-        nw::rect(x + 2, y + s / 2 + 2, s - 4, s / 2 - 4, 0x00F0C674);
+        nw::rgrad(x, y + s / 5, s / 2, s / 4, 3, 0x00E9B84A, 0x00D79A22);
+        nw::rgrad(x, y + s / 3, s, s * 2 / 3, 4, 0x00FFE9A0, 0x00F0B030);
     }
     if (k == 2) {
-        nw::rect(x + s / 5, y, s * 3 / 5, s, 0x00E8ECEF);
-        nw::rect(x + s / 3, y + s / 5, s / 3, 2, 0x005A6570);
-        nw::rect(x + s / 3, y + s / 3, s / 3, 2, 0x005A6570);
-        nw::rect(x + s / 3, y + s / 2, s / 4, 2, c);
+        nw::rgrad(x + s / 5, y, s * 3 / 5, s, 3, 0x00FFFFFF, 0x00B9D0E0);
+        nw::rect(x + s / 3, y + s / 3, s / 3, 2, c);
+        nw::rect(x + s / 3, y + s / 2, s / 3, 2, c);
+        nw::rect(x + s / 3, y + s * 2 / 3, s / 4, 2, c);
     }
     if (k == 3) {
-        nw::rect(x, y, s, s, c);
-        nw::rect(x + s / 6, y + s / 6, s * 2 / 3, s / 4, 0x00151A1F);
-        nw::rect(x + s / 6, y + s / 2, s / 4, s / 5, 0x00151A1F);
-        nw::rect(x + s * 2 / 3, y + s / 2, s / 4, s / 5, 0x00151A1F);
+        nw::rgrad(x, y, s, s, 5, 0x00EAF4FB, 0x009DBFD6);
+        nw::rgrad(x + s / 6, y + s / 6, s * 2 / 3, s / 4, 2, 0x00355B78, 0x00163048);
+        nw::rgrad(x + s / 6, y + s / 2, s * 2 / 3, s / 4, 2, 0x00FFFFFF, c);
     }
     if (k == 4) {
-        nw::rect(x, y + s / 4, s, 2, c);
-        nw::rect(x + s / 3, y + s / 4 - 4, 5, 10, 0x00EEF2F5);
-        nw::rect(x, y + s / 2, s, 2, c);
-        nw::rect(x + s * 2 / 3, y + s / 2 - 4, 5, 10, 0x00EEF2F5);
-        nw::rect(x, y + s * 3 / 4, s, 2, c);
-        nw::rect(x + s / 5, y + s * 3 / 4 - 4, 5, 10, 0x00EEF2F5);
+        nw::rgrad(x, y, s, s, 5, 0x00FFFFFF, 0x00CFE2EF);
+        nw::rect(x + 3, y + s / 3, s - 6, 2, 0x008FB0C8);
+        nw::rect(x + 3, y + s * 2 / 3, s - 6, 2, 0x008FB0C8);
+        nw::orb(x + s / 3, y + s / 3 + 1, 4, c);
+        nw::orb(x + s * 2 / 3, y + s * 2 / 3 + 1, 4, c);
     }
     if (k == 5) {
-        nw::rect(x, y, s, s, 0x00171D23);
-        nw::rect(x + 2, y + 2, s - 4, s - 4, 0x000E1216);
-        nw::rect(x + s / 5, y + s * 2 / 3, s / 6, s / 5, c);
-        nw::rect(x + s / 2 - s / 12, y + s / 2, s / 6, s / 3, c);
-        nw::rect(x + s * 3 / 4 - s / 6, y + s / 3, s / 6, s / 2, c);
+        nw::rgrad(x, y, s, s, 5, 0x002D4A60, 0x000C1B27);
+        nw::rgrad(x + s / 5, y + s / 2, s / 5, s / 3, 1, 0x00C9F0FF, c);
+        nw::rgrad(x + s * 3 / 5, y + s / 4, s / 5, s * 7 / 12, 1, 0x00C9F0FF, c);
     }
+    if (k == 6) {
+        nw::rgrad(x, y, s, s, 5, 0x00FFFFFF, 0x00C7E0F0);
+        nw::rgrad(x + s / 8, y + s / 8, s * 3 / 4, s / 4, 3, c, c);
+        nw::text(x + s / 6, y + s / 2 + 1, 0x000E3A5C, "Ab");
+    }
+    nw::glass(x + 1, y + 1, s - 2, s / 2 - 1, 4, 0x00FFFFFF, 60);
 }
 
-0A dock_item(1A k, 1A x, 1A c) {
-    1A y = 652;
-    1A mx = nw::mouse_x();
-    1A my = nw::mouse_y();
-    1A hov = inside(mx, my, x, y, 58, 48);
-    if (hov == 1) {
-        nw::rect(x, y, 58, 48, 0x00323B43);
-        nw::rect(x, y, 58, 2, c);
-    } else {
-        nw::rect(x, y, 58, 48, 0x00252B31);
-    }
-    call icon(k, x + 15, y + 5, 28, c);
-    if (k == 0) nw::text(x + 15, y + 36, 0x00D7DEE5, "Term");
-    if (k == 1) nw::text(x + 11, y + 36, 0x00D7DEE5, "Files");
-    if (k == 2) nw::text(x + 15, y + 36, 0x00D7DEE5, "Edit");
-    if (k == 3) nw::text(x + 15, y + 36, 0x00D7DEE5, "Calc");
-    if (k == 4) nw::text(x + 19, y + 36, 0x00D7DEE5, "Set");
-    if (k == 5) nw::text(x + 17, y + 36, 0x00D7DEE5, "Mon");
+
+// sky, clouds, meadow hills and floating bubbles
+0A backdrop() {
+    nw::gradient(0, 0, 1280, 300, 0x002A96E0, 0x007ACBF5);
+    nw::gradient(0, 300, 1280, 220, 0x007ACBF5, 0x00CDEFFF);
+    nw::gradient(0, 520, 1280, 200, 0x00CDEFFF, 0x00E9F9FF);
+    nw::ellipse(760, -300, 1000, 560, 0x00FFFFFF, 0x00D8F2FF, 70);
+    nw::ellipse(150, 78, 200, 56, 0x00FFFFFF, 0x00E4F4FF, 170);
+    nw::ellipse(960, 128, 190, 50, 0x00FFFFFF, 0x00E4F4FF, 150);
+    nw::ellipse(-500, 478, 1500, 900, 0x00B2E88A, 0x0080CC5E, 255);
+    nw::ellipse(420, 520, 1700, 980, 0x0088D856, 0x0050B03A, 255);
+    nw::ellipse(-700, 610, 1700, 900, 0x0068C640, 0x00379A2A, 255);
+    nw::ellipse(640, 650, 1400, 800, 0x0056B83A, 0x002A8A24, 255);
+    nw::bubble(140, 420, 38, 210);
+    nw::bubble(262, 520, 20, 200);
+    nw::bubble(980, 380, 54, 200);
 }
 
-0A app_tile(1A k, 1A x, 1A y, 1A c) {
-    1A mx = nw::mouse_x();
-    1A my = nw::mouse_y();
-    if (inside(mx, my, x, y, 168, 76) == 1) {
-        nw::rect(x, y, 168, 76, 0x00313A42);
-        nw::rect(x, y, 3, 76, c);
-    } else {
-        nw::rect(x, y, 168, 76, 0x00252B31);
+
+// ---------- window geometry tables ----------
+// f: 0 x, 1 y, 2 width, 3 height
+1A dflt(1A id, 1A f) {
+    1A v = 0;
+    if (id == 0) {
+        if (f == 0) v = 100;
+        if (f == 1) v = 70;
+        if (f == 2) v = 1080;
+        if (f == 3) v = 560;
     }
-    call icon(k, x + 14, y + 22, 32, c);
-    if (k == 0) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "NwOS Terminal");
+    if (id == 1) {
+        if (f == 0) v = 120;
+        if (f == 1) v = 66;
+        if (f == 2) v = 1040;
+        if (f == 3) v = 568;
     }
-    if (k == 1) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "File Manager");
+    if (id == 2) {
+        if (f == 0) v = 160;
+        if (f == 1) v = 74;
+        if (f == 2) v = 960;
+        if (f == 3) v = 552;
     }
-    if (k == 2) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "Text Editor");
+    if (id == 3) {
+        if (f == 0) v = 460;
+        if (f == 1) v = 90;
+        if (f == 2) v = 360;
+        if (f == 3) v = 520;
     }
-    if (k == 3) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "Calculator");
+    if (id == 4) {
+        if (f == 0) v = 220;
+        if (f == 1) v = 74;
+        if (f == 2) v = 840;
+        if (f == 3) v = 552;
     }
-    if (k == 4) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "Settings");
+    if (id == 5) {
+        if (f == 0) v = 250;
+        if (f == 1) v = 94;
+        if (f == 2) v = 780;
+        if (f == 3) v = 500;
     }
-    if (k == 5) {
-        nw::text(x + 56, y + 24, 0x00EEF2F5, "System Monitor");
+    if (id == 6) {
+        if (f == 0) v = 390;
+        if (f == 1) v = 140;
+        if (f == 2) v = 500;
+        if (f == 3) v = 370;
     }
+    return v;
 }
 
-0A win(1A theme, 1A x, 1A y, 1A w, 1A h, str title) {
-    str title2 = title;
-    1A mx = nw::mouse_x();
-    1A my = nw::mouse_y();
-    nw::rect(x + 8, y + 10, w, h, 0x000C0F12);
-    nw::rect(x - 1, y - 1, w + 2, h + 2, 0x00434A52);
-    nw::rect(x, y, w, h, 0x0021262B);
-    nw::rect(x, y, w, 38, 0x002A3036);
-    nw::rect(x, y, w, 3, accent(theme));
-    nw::text(x + 18, y + 15, 0x00F2F4F6, title2);
-    if (inside(mx, my, x + w - 38, y + 8, 26, 22) == 1) {
-        nw::rect(x + w - 38, y + 8, 26, 22, 0x00C74B4B);
-    } else {
-        nw::rect(x + w - 38, y + 8, 26, 22, 0x00343A41);
-    }
-    nw::text(x + w - 31, y + 12, 0x00FFFFFF, "X");
-    nw::rect(x, y + 38, w, 1, 0x00383F46);
+// f: 0 minimum width, 1 minimum height
+1A minsz(1A id, 1A f) {
+    1A v = 0;
+    if (id == 0) { if (f == 0) v = 420; else v = 260; }
+    if (id == 1) { if (f == 0) v = 560; else v = 340; }
+    if (id == 2) { if (f == 0) v = 380; else v = 240; }
+    if (id == 3) { if (f == 0) v = 300; else v = 420; }
+    if (id == 4) { if (f == 0) v = 620; else v = 420; }
+    if (id == 5) { if (f == 0) v = 520; else v = 340; }
+    if (id == 6) { if (f == 0) v = 380; else v = 260; }
+    return v;
 }
 
-0A draw_desktop(1A theme, 1A menu) {
-    1A c = accent(theme);
-    1A i = 0;
-    1A x = 0;
-    nw::rect(0, 0, 1280, 240, 0x001B2229);
-    nw::rect(0, 240, 1280, 240, 0x00161C21);
-    nw::rect(0, 480, 1280, 240, 0x0012161A);
-    nw::wallpaper();
-
-    nw::rect(0, 0, 1280, 30, 0x00171B1F);
-    nw::rect(0, 30, 1280, 1, 0x002B3137);
-    nw::rect(16, 8, 14, 14, c);
-    nw::text(20, 11, 0x0010161A, "N");
-    nw::text(38, 11, 0x00E8ECEF, "NwOS");
-    nw::rect(566, 7, 148, 16, 0x0021272C);
-    nw::text(590, 11, 0x00C7CED5, "Desktop 1");
-    nw::text(716, 11, 0x009AA4AE, "CPU");
-    nw::number(748, 11, 0x00C7CED5, nw::cpu_load());
-    nw::text(776, 11, 0x009AA4AE, "%");
-    nw::text(810, 11, 0x009AA4AE, "RAM");
-    nw::number(842, 11, 0x00C7CED5, nw::ram_mb());
-    nw::text(886, 11, 0x009AA4AE, "MB");
-    call clock_small(1160, 11, 0x00E8ECEF);
-
-    call box(1030, 56, 210, 120, 0x001A1F24, 0x00343B42);
-    nw::rect(1030, 56, 4, 120, c);
-    nw::rect(1052, 78, 66, 44, 0x00313940);
-    nw::rect(1052, 78, 66, 2, c);
-    nw::text(1072, 94, c, "F7");
-    nw::text(1136, 86, 0x00E8ECEF, "Word");
-    nw::text(1136, 104, 0x009AA4AE, "Generator");
-    nw::text(1052, 144, 0x0088929A, "Click or press F7");
-
-    call box(414, 640, 452, 68, 0x001A1F24, 0x00343B42);
-    nw::rect(414, 640, 452, 2, c);
-    nw::rect(422, 648, 44, 48, 0x00252B31);
-    nw::rect(430, 656, 28, 24, c);
-    nw::text(433, 660, 0x0010161A, "N");
-    nw::text(431, 686, 0x00D7DEE5, "Start");
-    i = 0;
-    while (i < 6) {
-        x = 474 + i * 62;
-        call dock_item(i, x, c);
-        i = i + 1;
-    }
-
-    if (menu == 1) {
-        call box(30, 300, 560, 336, 0x001D2328, 0x00434A52);
-        nw::rect(30, 300, 560, 54, 0x00262D33);
-        nw::rect(30, 300, 560, 3, c);
-        nw::text(52, 318, 0x00F2F4F6, "Applications");
-        nw::text(156, 318, 0x009AA4AE, "NwOS");
-        nw::text(516, 318, 0x009AA4AE, "ESC");
-        call app_tile(0, 48, 372, c);
-        call app_tile(1, 224, 372, c);
-        call app_tile(2, 400, 372, c);
-        call app_tile(3, 48, 456, c);
-        call app_tile(4, 224, 456, c);
-        call app_tile(5, 400, 456, c);
-        nw::rect(48, 548, 524, 1, 0x00383F46);
-        nw::text(52, 566, 0x009AA4AE, "user@nwos");
-        nw::rect(342, 560, 72, 24, 0x00303840);
-        nw::text(354, 568, 0x00D7DEE5, "Restart");
-        nw::rect(422, 560, 72, 24, 0x00303840);
-        nw::text(432, 568, 0x00D7DEE5, "Log Out");
-        nw::rect(502, 560, 70, 24, 0x007A3038);
-        nw::text(512, 568, 0x00FFFFFF, "Power");
-    }
+1A trows(1A h) {
+    return (h - 120) / 14;
 }
 
-0A terminal_draw(1A theme, 1A mode) {
-    1A c = accent(theme);
-    1A x = 100;
-    1A y = 80;
-    1A w = 1080;
-    1A h = 560;
-    1A i = 0;
-    1A n = 0;
-    1A yy = 0;
-    call win(theme, x, y, w, h, "NwOS Terminal");
-    nw::rect(x + 22, y + 58, w - 44, h - 170, 0x0013181C);
-    nw::rect(x + 22, y + 58, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + 74, c, "user@nwos");
-    nw::text(x + 122, y + 74, 0x009AA4AE, nw::fs_path());
-    nw::text(x + 42, y + 98, 0x00E8ECEF, "NwOS Terminal");
-    yy = y + 126;
-    if (mode == 0) {
-        nw::text(x + 42, yy, 0x009AA4AE, "Type a command, press Enter.");
-        nw::text(x + 42, yy + 24, 0x009AA4AE, "help lists commands");
-        nw::text(x + 42, yy + 48, 0x009AA4AE, "Esc closes.");
-    }
-    if (mode == 1) {
-        nw::text(x + 42, yy, c, "COMMAND");
-        nw::text(x + 162, yy, c, "ACTION");
-        nw::text(x + 42, yy + 22, 0x00D7DEE5, "help");
-        nw::text(x + 162, yy + 22, 0x009AA4AE, "list");
-        nw::text(x + 42, yy + 44, 0x00D7DEE5, "ver");
-        nw::text(x + 162, yy + 44, 0x009AA4AE, "version");
-        nw::text(x + 42, yy + 66, 0x00D7DEE5, "time");
-        nw::text(x + 162, yy + 66, 0x009AA4AE, "time");
-        nw::text(x + 42, yy + 88, 0x00D7DEE5, "ls");
-        nw::text(x + 162, yy + 88, 0x009AA4AE, "files");
-        nw::text(x + 42, yy + 110, 0x00D7DEE5, "pwd");
-        nw::text(x + 162, yy + 110, 0x009AA4AE, "path");
-        nw::text(x + 42, yy + 132, 0x00D7DEE5, "up / root");
-        nw::text(x + 162, yy + 132, 0x009AA4AE, "navigate");
-        nw::text(x + 42, yy + 154, 0x00D7DEE5, "calc files editor settings");
-        nw::text(x + 162, yy + 154, 0x009AA4AE, "launch app");
-        nw::text(x + 42, yy + 176, 0x00D7DEE5, "clear / nwfetch");
-        nw::text(x + 162, yy + 176, 0x009AA4AE, "clear / info");
-    }
-    if (mode == 2) {
-        nw::text(x + 42, yy, c, "DIRECTORY");
-        nw::text(x + 162, yy, 0x009AA4AE, nw::fs_path());
-        n = nw::fs_count();
-        i = 0;
-        while (i < n && i < 15) {
-            if (nw::fs_type(i) == 1) {
-                nw::text(x + 42, yy + 26 + i * 20, 0x002ECC9A, "DIR");
-            } else {
-                nw::text(x + 42, yy + 26 + i * 20, 0x009AA4AE, "FILE");
-                nw::number(x + 100, yy + 26 + i * 20, 0x0088929A, nw::fs_size(i));
-                nw::text(x + 156, yy + 26 + i * 20, 0x0088929A, "B");
-            }
-            nw::text(x + 212, yy + 26 + i * 20, 0x00D7DEE5, nw::fs_name(i));
-            i = i + 1;
-        }
-        if (n == 0) nw::text(x + 42, yy + 26, 0x009AA4AE, "This directory is empty.");
-    }
-    if (mode == 3) {
-        nw::text(x + 42, yy, c, "CURRENT PATH");
-        nw::text(x + 42, yy + 28, 0x00D7DEE5, nw::fs_path());
-    }
-    if (mode == 4) {
-        nw::text(x + 42, yy, c, "LOCAL TIME");
-        call clock_big(x + 42, yy + 30, c);
-    }
-    if (mode == 5) {
-        nw::text(x + 42, yy, c, "NwOS");
-        nw::text(x + 42, yy + 26, 0x009AA4AE, "NwC desktop");
-        nw::text(x + 42, yy + 48, 0x009AA4AE, "1280x720");
-    }
-    if (mode == 9) {
-        nw::text(x + 42, yy, c, "NwOS 1.4.9 x86_64");
-        nw::text(x + 42, yy + 30, 0x00D7DEE5, "RAM:");
-        nw::number(x + 90, yy + 30, 0x00F2F4F6, nw::ram_mb());
-        nw::text(x + 146, yy + 30, 0x009AA4AE, "MB");
-        nw::text(x + 42, yy + 86, 0x00D7DEE5, "Uptime:");
-        nw::number(x + 120, yy + 86, 0x00F2F4F6, nw::uptime_sec());
-        nw::text(x + 190, yy + 86, 0x009AA4AE, "sec");
-        nw::text(x + 42, yy + 114, 0x00D7DEE5, "CPU:");
-        nw::number(x + 90, yy + 114, 0x00F2F4F6, nw::cpu_load());
-        nw::text(x + 118, yy + 114, 0x009AA4AE, "%");
-    }
-    if (mode == 7) {
-        nw::text(x + 42, yy, 0x00E06C75, "Command not found.");
-        nw::text(x + 42, yy + 26, 0x009AA4AE, "Type help.");
-    }
-    if (mode == 8) {
-        nw::text(x + 42, yy, c, "Returned to terminal.");
-    }
-    nw::text(x + 42, y + h - 82, c, "user@nwos$");
-    nw::text(x + 122, y + h - 82, 0x00E8ECEF, nw::buf_text());
-    nw::rect(x + 122 + nw::buf_len() * 8, y + h - 82, 7, 10, c);
-    nw::rect(x + 22, y + h - 54, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + h - 38, 0x009AA4AE, "Enter run   Esc close");
+1A tcols(1A w) {
+    return (w - 68) / 8;
 }
 
-1A terminal_app(1A theme) {
-    1A mode = 0;
-    1A key = 0;
-    1A done = 0;
-    while (done == 0) {
-        call terminal_draw(theme, mode);
-        nw::cursor(nw::mouse_x(), nw::mouse_y());
-        nw::flush();
-        key = nw::pollkey();
-        if (key == 255) done = 1;
-        if (key == 256) {
-            if (strcmp(nw::buf_text(), "help") == 0) mode = 1;
-            else if (strcmp(nw::buf_text(), "ver") == 0) mode = 5;
-            else if (strcmp(nw::buf_text(), "time") == 0) mode = 4;
-            else if (strcmp(nw::buf_text(), "ls") == 0) mode = 2;
-            else if (strcmp(nw::buf_text(), "pwd") == 0) mode = 3;
-            else if (strcmp(nw::buf_text(), "nwfetch") == 0) mode = 9;
-            else if (strcmp(nw::buf_text(), "up") == 0) {
-                nw::fs_up();
-                mode = 3;
-            }
-            else if (strcmp(nw::buf_text(), "root") == 0) {
-                nw::fs_enter("/");
-                mode = 3;
-            }
-            else if (strcmp(nw::buf_text(), "calc") == 0) {
-                call calculator_app(theme);
-                mode = 8;
-            }
-            else if (strcmp(nw::buf_text(), "files") == 0) {
-                call file_manager_app(theme);
-                mode = 8;
-            }
-            else if (strcmp(nw::buf_text(), "editor") == 0) {
-                call editor_app("note.txt", theme);
-                mode = 8;
-            }
-            else if (strcmp(nw::buf_text(), "settings") == 0) {
-                theme = settings_app(theme);
-                mode = 8;
-            }
-            else if (strcmp(nw::buf_text(), "clear") == 0) mode = 0;
-            else if (strcmp(nw::buf_text(), "exit") == 0) done = 1;
-            else mode = 7;
-            nw::buf_clear();
-        }
-        if (key == 257) nw::buf_back();
-        if (key >= 32 && key <= 126) {
-            if (nw::buf_len() < 60) nw::buf_put(key);
-        }
-        sleep(8);
-    }
-    return theme;
+1A card_w(1A w) {
+    return (w - 252) / 2;
 }
 
-0A calculator_draw(1A theme, 1A value, 1A error) {
-    1A c = accent(theme);
-    1A x = 460;
-    1A y = 100;
-    1A w = 360;
-    1A h = 520;
-    1A gx = x + 28;
-    1A gy = y + 174;
-    1A hit;
-    1A i = 0;
-    1A bx = 0;
-    call win(theme, x, y, w, h, "Calculator");
-    nw::rect(x + 24, y + 58, w - 48, 88, 0x0013181C);
-    nw::rect(x + 24, y + 58, w - 48, 1, 0x00383F46);
-    nw::text(x + 42, y + 74, 0x009AA4AE, "RESULT");
-    if (error == 1) {
-        nw::text(x + 42, y + 108, 0x00E06C75, "Error");
-    } else {
-        nw::number(x + 42, y + 108, 0x00F2F4F6, value);
-    }
-    hit = pad_hit(nw::mouse_x(), nw::mouse_y(), gx, gy);
-    i = 0;
-    while (i < 16) {
-        bx = gx + (i - (i / 4) * 4) * 78;
-        if (i == hit) {
-            nw::rect(bx, gy + (i / 4) * 62, 70, 52, c);
-        } else {
-            nw::rect(bx, gy + (i / 4) * 62, 70, 52, 0x00313940);
-        }
-        i = i + 1;
-    }
-    nw::text(gx + 28, gy + 19, 0x00F2F4F6, "7");
-    nw::text(gx + 106, gy + 19, 0x00F2F4F6, "8");
-    nw::text(gx + 184, gy + 19, 0x00F2F4F6, "9");
-    nw::text(gx + 262, gy + 19, 0x00F2F4F6, "/");
-    nw::text(gx + 28, gy + 81, 0x00F2F4F6, "4");
-    nw::text(gx + 106, gy + 81, 0x00F2F4F6, "5");
-    nw::text(gx + 184, gy + 81, 0x00F2F4F6, "6");
-    nw::text(gx + 262, gy + 81, 0x00F2F4F6, "*");
-    nw::text(gx + 28, gy + 143, 0x00F2F4F6, "1");
-    nw::text(gx + 106, gy + 143, 0x00F2F4F6, "2");
-    nw::text(gx + 184, gy + 143, 0x00F2F4F6, "3");
-    nw::text(gx + 262, gy + 143, 0x00F2F4F6, "-");
-    nw::text(gx + 20, gy + 205, 0x00FFB3B3, "C");
-    nw::text(gx + 106, gy + 205, 0x00F2F4F6, "0");
-    nw::text(gx + 184, gy + 205, 0x00F2F4F6, "=");
-    nw::text(gx + 262, gy + 205, 0x00F2F4F6, "+");
-    nw::text(x + 28, y + h - 34, 0x009AA4AE, "Click keys   X closes");
+1A card_x(1A w, 1A i) {
+    return 224 + (i - (i / 2) * 2) * (card_w(w) + 14);
 }
 
-1A pad_hit(1A mx, 1A my, 1A gx, 1A gy) {
+1A card_y(1A i) {
+    return 112 + (i / 2) * 128;
+}
+
+1A pad_hit(1A mx, 1A my, 1A gx, 1A gy, 1A pw, 1A ph) {
     1A col = 0;
     1A row = 0;
     if (mx < gx || my < gy) return -1;
-    col = (mx - gx) / 78;
-    row = (my - gy) / 62;
-    if (col < 0 || col > 3 || row < 0 || row > 3) return -1;
-    if (inside(mx, my, gx + col * 78, gy + row * 62, 70, 52) == 0) return -1;
+    col = (mx - gx) / pw;
+    row = (my - gy) / ph;
+    if (col > 3 || row > 3) return -1;
+    if (inside(mx, my, gx + col * pw, gy + row * ph, pw - 8, ph - 8) == 0) return -1;
     return row * 4 + col;
 }
 
+// 2000000000 means "error" (overflow or divide by zero)
 1A apply(1A a, 1A b, 1A o) {
-    if (o == 1) return a + b;
-    if (o == 2) return a - b;
-    if (o == 3) return a * b;
-    if (o == 4) return a / b;
-    return a;
+    1A r = a;
+    1A ab = a;
+    1A bb = b;
+    if (ab < 0) ab = 0 - ab;
+    if (bb < 0) bb = 0 - bb;
+    if (o == 1) r = a + b;
+    if (o == 2) r = a - b;
+    if (o == 3) {
+        if (ab > 0) {
+            if (bb > 99999999 / ab) return 2000000000;
+        }
+        r = a * b;
+    }
+    if (o == 4) {
+        if (b == 0) return 2000000000;
+        r = a / b;
+    }
+    if (r > 99999999 || r < 0 - 99999999) return 2000000000;
+    return r;
 }
 
-0A calculator_app(1A theme) {
-    1A open = 1;
+// ---------- window chrome ----------
+// k: 0 normal, 2 maximized, 3 fullscreen
+0A chrome(1A theme, 1A x, 1A y, 1A w, 1A h, str title, 1A act, 1A k) {
+    str t2 = title;
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    1A c = accent(theme);
+    1A bx = 0;
+    1A by = y + 8;
+    1A gx = 0;
+    1A gy = 0;
+    if (act == 0) c = 0x0090AEC2;
+    if (k == 0) {
+        nw::glass(x + 1, y + 7, w + 4, h + 9, 14, 0x0006223B, 30);
+        nw::glass(x - 1, y - 1, w + 2, h + 2, 11, 0x00FFFFFF, 200);
+        nw::glass(x, y, w, h, 10, c, 215);
+        nw::glass(x + 1, y + 1, w - 2, 20, 9, 0x00FFFFFF, 115);
+    } else {
+        nw::gradient(x, y, w, h, c, c);
+        nw::glass(x, y, w, 22, 0, 0x00FFFFFF, 110);
+    }
+    call tx(x + 18, y + 15, 0x00FFFFFF, t2);
+    nw::rgrad(x + 7, y + 37, w - 14, h - 44, 5, 0x005C97BE, 0x005C97BE);
+    nw::rgrad(x + 8, y + 38, w - 16, h - 46, 4, 0x00FBFEFF, 0x00E4F3FC);
+
+    // fullscreen
+    bx = x + w - 128;
+    call gbtn(bx, by, 26, 22, 6, inside(mx, my, bx, by, 26, 22));
+    gx = bx + 7;
+    gy = by + 6;
+    nw::rect(gx, gy, 4, 1, 0x00FFFFFF);
+    nw::rect(gx, gy, 1, 4, 0x00FFFFFF);
+    nw::rect(gx + 8, gy, 4, 1, 0x00FFFFFF);
+    nw::rect(gx + 11, gy, 1, 4, 0x00FFFFFF);
+    nw::rect(gx, gy + 9, 4, 1, 0x00FFFFFF);
+    nw::rect(gx, gy + 6, 1, 4, 0x00FFFFFF);
+    nw::rect(gx + 8, gy + 9, 4, 1, 0x00FFFFFF);
+    nw::rect(gx + 11, gy + 6, 1, 4, 0x00FFFFFF);
+    // minimize
+    bx = x + w - 98;
+    call gbtn(bx, by, 26, 22, 6, inside(mx, my, bx, by, 26, 22));
+    nw::rect(bx + 8, by + 13, 10, 2, 0x00FFFFFF);
+    // maximize / restore
+    bx = x + w - 68;
+    call gbtn(bx, by, 26, 22, 6, inside(mx, my, bx, by, 26, 22));
+    if (k == 2) {
+        nw::rect(bx + 10, by + 5, 8, 2, 0x00FFFFFF);
+        nw::rect(bx + 16, by + 5, 2, 7, 0x00FFFFFF);
+        nw::rect(bx + 8, by + 9, 8, 2, 0x00FFFFFF);
+        nw::rect(bx + 8, by + 9, 2, 6, 0x00FFFFFF);
+        nw::rect(bx + 14, by + 9, 2, 6, 0x00FFFFFF);
+        nw::rect(bx + 8, by + 13, 8, 2, 0x00FFFFFF);
+    } else {
+        nw::rect(bx + 8, by + 6, 10, 2, 0x00FFFFFF);
+        nw::rect(bx + 8, by + 6, 2, 10, 0x00FFFFFF);
+        nw::rect(bx + 16, by + 6, 2, 10, 0x00FFFFFF);
+        nw::rect(bx + 8, by + 14, 10, 2, 0x00FFFFFF);
+    }
+    // close
+    bx = x + w - 38;
+    call gbtn(bx, by, 26, 22, 5, inside(mx, my, bx, by, 26, 22));
+    call tx(bx + 9, by + 7, 0x00FFFFFF, "X");
+}
+
+// ---------- desktop ----------
+0A dicon(1A k, 1A x, 1A y, 1A lw, 1A c, str label) {
+    str l2 = label;
+    if (inside(nw::mouse_x(), nw::mouse_y(), x - 8, y - 6, 76, 84) == 1) {
+        nw::glass(x - 8, y - 6, 76, 84, 8, 0x00FFFFFF, 70);
+        nw::rect(x - 8, y - 6, 76, 1, 0x00D8F2FF);
+    }
+    call icon(k, x + 8, y, 40, c);
+    call tx(x + 28 - lw * 4, y + 50, 0x00FFFFFF, l2);
+}
+
+0A desk(1A theme) {
+    1A c = accent(theme);
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    call backdrop();
+    nw::wallpaper();
+    call dicon(0, 24, 24, 4, c, "Term");
+    call dicon(1, 24, 112, 5, c, "Files");
+    call dicon(2, 24, 200, 4, c, "Edit");
+    call dicon(3, 24, 288, 4, c, "Calc");
+    call dicon(4, 24, 376, 8, c, "Settings");
+    call dicon(5, 24, 464, 7, c, "Monitor");
+    call gpanel(1030, 40, 210, 120, 12);
+    call gbtn(1052, 62, 66, 44, theme, inside(mx, my, 1030, 40, 210, 120));
+    call tx(1072, 80, 0x00FFFFFF, "F7");
+    call tx(1136, 70, 0x00FFFFFF, "Word");
+    nw::text(1136, 88, 0x00CBEBFF, "Generator");
+}
+
+// ---------- taskbar (Windows 7 style) ----------
+// ts holds 2 bits per app: 0 closed, 1 open, 2 active, 3 minimized
+0A taskbar(1A theme, 1A ts, 1A menu) {
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    1A c = accent(theme);
+    1A i = 0;
+    1A p = 1;
+    1A st = 0;
+    1A bx = 0;
+    1A hot = 0;
+    nw::gradient(0, 680, 1280, 40, 0x002A5F8C, 0x000B2540);
+    nw::glass(0, 680, 1280, 18, 0, 0x00FFFFFF, 52);
+    nw::rect(0, 680, 1280, 1, 0x00A6DCFA);
+    nw::rect(0, 719, 1280, 1, 0x00051018);
+
+    // tray
+    nw::glass(1010, 685, 246, 30, 8, 0x00FFFFFF, 26);
+    nw::text(1026, 696, 0x00B7E3FF, "CPU");
+    nw::number(1058, 696, 0x00FFFFFF, nw::cpu_load());
+    nw::text(1096, 696, 0x00B7E3FF, "RAM");
+    nw::number(1128, 696, 0x00FFFFFF, nw::ram_mb());
+    call clock_small(1196, 696, 0x00FFFFFF);
+    // show desktop sliver
+    if (inside(mx, my, 1262, 680, 18, 40) == 1) nw::glass(1262, 682, 18, 36, 0, 0x00FFFFFF, 90);
+    else nw::glass(1262, 682, 18, 36, 0, 0x00FFFFFF, 34);
+    nw::rect(1262, 682, 1, 36, 0x00A6DCFA);
+
+    // applications
+    while (i < 7) {
+        st = (ts / p) - ((ts / p) / 4) * 4;
+        p = p * 4;
+        bx = 76 + i * 52;
+        hot = inside(mx, my, bx, 683, 48, 36);
+        if (st == 2) {
+            nw::glass(bx, 683, 48, 36, 7, 0x00FFFFFF, 105);
+            nw::glass(bx + 2, 685, 44, 14, 5, 0x00FFFFFF, 60);
+        } else if (st == 1) {
+            nw::glass(bx, 683, 48, 36, 7, 0x00FFFFFF, 55);
+        } else if (st == 3) {
+            nw::glass(bx, 683, 48, 36, 7, 0x00FFFFFF, 28);
+        }
+        if (hot == 1) nw::glass(bx, 683, 48, 36, 7, 0x00FFFFFF, 55);
+        call icon(i, bx + 11, 688, 26, c);
+        if (st > 0) nw::glass(bx + 8, 715, 32, 4, 1, 0x00BFEFFF, 220);
+        i = i + 1;
+    }
+
+    // start orb
+    if (menu == 1) nw::glass(5, 680, 58, 40, 14, 0x00FFFFFF, 80);
+    else if (inside(mx, my, 5, 680, 58, 40) == 1) nw::glass(5, 680, 58, 40, 14, 0x00FFFFFF, 46);
+    nw::orb(34, 699, 20, 0x0040C040);
+    nw::glass(22, 682, 24, 14, 7, 0x00FFFFFF, 120);
+    call tx(30, 694, 0x00FFFFFF, "N");
+}
+
+0A mrow(1A k, 1A x, 1A y, 1A c, str label) {
+    str l2 = label;
+    if (inside(nw::mouse_x(), nw::mouse_y(), x, y, 216, 42) == 1) {
+        nw::rgrad(x, y, 216, 42, 6, 0x00E8F8FF, 0x009FD8F6);
+    }
+    call icon(k, x + 8, y + 7, 28, c);
+    nw::text(x + 50, y + 17, 0x000E3A5C, l2);
+}
+
+0A mlink(1A x, 1A y, str label) {
+    str l2 = label;
+    if (inside(nw::mouse_x(), nw::mouse_y(), x, y, 128, 34) == 1) {
+        nw::glass(x, y, 128, 34, 6, 0x00FFFFFF, 80);
+    }
+    call tx(x + 12, y + 13, 0x00FFFFFF, l2);
+}
+
+0A startmenu(1A theme) {
+    1A c = accent(theme);
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    nw::glass(2, 228, 388, 452, 14, 0x0006223B, 40);
+    nw::glass(5, 231, 382, 446, 12, 0x00FFFFFF, 205);
+    nw::glass(6, 232, 380, 444, 11, c, 228);
+    nw::glass(7, 233, 378, 22, 10, 0x00FFFFFF, 90);
+    call tx(20, 240, 0x00FFFFFF, "NwOS");
+    nw::rgrad(13, 257, 226, 336, 6, 0x005C97BE, 0x005C97BE);
+    nw::rgrad(14, 258, 224, 334, 5, 0x00FBFEFF, 0x00E4F3FC);
+    call mrow(0, 18, 266, c, "NwOS Terminal");
+    call mrow(1, 18, 312, c, "File Manager");
+    call mrow(2, 18, 358, c, "Text Editor");
+    call mrow(3, 18, 404, c, "Calculator");
+    call mrow(4, 18, 450, c, "Settings");
+    call mrow(5, 18, 496, c, "System Monitor");
+    call mrow(6, 18, 542, c, "Word Generator");
+    nw::orb(274, 282, 16, c);
+    call tx(298, 277, 0x00FFFFFF, "user");
+    nw::rect(250, 308, 128, 1, 0x00B7E3FF);
+    call mlink(250, 316, "Computer");
+    call mlink(250, 356, "Home");
+    call mlink(250, 396, "Control Panel");
+    call mlink(250, 436, "Task Manager");
+    call gbtn(16, 616, 100, 34, 4, inside(mx, my, 16, 616, 100, 34));
+    nw::text(40, 629, 0x000E3A5C, "Restart");
+    call gbtn(124, 616, 100, 34, 4, inside(mx, my, 124, 616, 100, 34));
+    nw::text(150, 629, 0x000E3A5C, "Log out");
+    call gbtn(250, 616, 128, 34, 5, inside(mx, my, 250, 616, 128, 34));
+    call tx(276, 629, 0x00FFFFFF, "Shut down");
+}
+
+// ---------- terminal ----------
+0A term_draw(1A theme, 1A x, 1A y, 1A w, 1A h, 1A sc) {
+    1A c = accent_lt(theme);
+    1A px = x + 14;
+    1A py = y + 42;
+    1A pw = w - 28;
+    1A ph = h - 104;
+    1A rows = trows(h);
+    1A cols = tcols(w);
+    1A n = nw::shi(0, 0);
+    1A first = 0;
+    1A i = 0;
+    1A idx = 0;
+    1A mxs = 0;
+    1A tl = ph - 12;
+    1A th = 0;
+    1A tp = 0;
+    nw::rgrad(px - 1, py - 1, pw + 2, ph + 2, 7, 0x002F6C94, 0x002F6C94);
+    nw::rgrad(px, py, pw, ph, 6, 0x00123049, 0x00061622);
+    nw::glass(px + 1, py + 1, pw - 2, 20, 5, 0x00FFFFFF, 18);
+    first = n - rows - sc;
+    if (first < 0) first = 0;
+    i = 0;
+    while (i < rows) {
+        idx = first + i;
+        if (idx < n) nw::text(px + 12, py + 8 + i * 14, nw::shi(1, idx), nw::shs(5, idx + cols * 4096));
+        i = i + 1;
+    }
+    mxs = n - rows;
+    nw::rgrad(px + pw - 16, py + 6, 10, tl, 4, 0x00071826, 0x00071826);
+    if (mxs > 0) {
+        th = tl * rows / n;
+        if (th < 24) th = 24;
+        tp = (tl - th) * (mxs - sc) / mxs;
+        nw::rgrad(px + pw - 16, py + 6 + tp, 10, th, 4, accent_lt(theme), accent(theme));
+        nw::glass(px + pw - 15, py + 7 + tp, 8, th / 2, 3, 0x00FFFFFF, 80);
+    } else {
+        nw::rgrad(px + pw - 16, py + 6, 10, tl, 4, 0x00183A56, 0x00183A56);
+    }
+    nw::rgrad(px - 1, y + h - 53, pw + 2, 34, 7, 0x002F6C94, 0x002F6C94);
+    nw::rgrad(px, y + h - 52, pw, 32, 6, 0x00123049, 0x00061622);
+    nw::text(px + 12, y + h - 42, c, "user@nwos$");
+    nw::text(px + 100, y + h - 42, 0x00FFFFFF, nw::shs(1, 0));
+    nw::rect(px + 100 + nw::shi(3, 0) * 8, y + h - 44, 7, 12, c);
+}
+
+// ---------- calculator ----------
+0A key_label(1A i, 1A bx, 1A by, 1A bw, 1A bh) {
+    1A col = i - (i / 4) * 4;
+    1A row = i / 4;
+    1A lx = bx + bw / 2 - 4;
+    1A ly = by + bh / 2 - 4;
+    if (col < 3 && row < 3) nw::number(lx, ly, 0x000E3A5C, (2 - row) * 3 + col + 1);
+    if (i == 13) nw::number(lx, ly, 0x000E3A5C, 0);
+    if (i == 3) call tx(lx, ly, 0x00FFFFFF, "/");
+    if (i == 7) call tx(lx, ly, 0x00FFFFFF, "*");
+    if (i == 11) call tx(lx, ly, 0x00FFFFFF, "-");
+    if (i == 12) call tx(lx, ly, 0x00FFFFFF, "C");
+    if (i == 14) call tx(lx, ly, 0x00FFFFFF, "=");
+    if (i == 15) call tx(lx, ly, 0x00FFFFFF, "+");
+}
+
+0A calc_draw(1A theme, 1A x, 1A y, 1A w, 1A h, 1A value, 1A error) {
+    1A gx = x + 16;
+    1A gy = y + 146;
+    1A pw = (w - 32) / 4;
+    1A ph = (h - 160) / 4;
+    1A hit = pad_hit(nw::mouse_x(), nw::mouse_y(), gx, gy, pw, ph);
+    1A i = 0;
+    1A bx = 0;
+    1A by = 0;
+    1A col = 0;
+    1A tone = 4;
+    nw::rgrad(x + 15, y + 45, w - 30, 92, 8, 0x007FA9C4, 0x007FA9C4);
+    nw::rgrad(x + 16, y + 46, w - 32, 90, 7, 0x00F8FDFF, 0x00D2E8F5);
+    nw::text(x + 32, y + 60, 0x004F7896, "RESULT");
+    if (error == 1) {
+        nw::text(x + 32, y + 100, 0x00C0392B, "Error");
+    } else {
+        nw::number(x + 32, y + 100, 0x000E3A5C, value);
+    }
+    i = 0;
+    while (i < 16) {
+        col = i - (i / 4) * 4;
+        bx = gx + col * pw;
+        by = gy + (i / 4) * ph;
+        tone = 4;
+        if (col == 3) tone = theme;
+        if (i == 12) tone = 5;
+        if (i == 14) tone = 1;
+        if (i == hit) call gbtn(bx, by, pw - 8, ph - 8, tone, 1);
+        else call gbtn(bx, by, pw - 8, ph - 8, tone, 0);
+        call key_label(i, bx, by, pw - 8, ph - 8);
+        i = i + 1;
+    }
+}
+
+// ---------- file manager ----------
+0A place(1A x, 1A y, 1A sel, str label) {
+    str l2 = label;
+    if (sel == 1) nw::rgrad(x, y, 150, 24, 5, 0x00E8F8FF, 0x009FD8F6);
+    else nw::rgrad(x, y, 150, 24, 5, 0x00F7FBFE, 0x00E3EFF7);
+    nw::text(x + 14, y + 8, 0x000E3A5C, l2);
+}
+
+0A files_draw(1A theme, 1A x, 1A y, 1A w, 1A h, 1A selected, 1A notice, 1A top) {
+    1A n = nw::fs_count();
+    1A rv = (h - 184 - 24) / 23;
+    1A i = 0;
+    1A idx = 0;
+    1A yy = 0;
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    nw::text(x + 24, y + 58, 0x004F7896, nw::fs_path());
+    call gbtn(x + 24, y + 80, 92, 28, 4, inside(mx, my, x + 24, y + 80, 92, 28));
+    nw::text(x + 52, y + 90, 0x000E3A5C, "Up");
+    call gbtn(x + 126, y + 80, 104, 28, 4, inside(mx, my, x + 126, y + 80, 104, 28));
+    nw::text(x + 160, y + 90, 0x000E3A5C, "Root");
+    call gbtn(x + 240, y + 80, 116, 28, theme, inside(mx, my, x + 240, y + 80, 116, 28));
+    call tx(x + 262, y + 90, 0x00FFFFFF, "Open file");
+    nw::text(x + 24, y + 128, accent_dim(theme), "PLACES");
+    call place(x + 24, y + 150, 1, "Root  /");
+    call place(x + 24, y + 178, 0, "Home  /home");
+    call place(x + 24, y + 206, 0, "System  /sys");
+    call place(x + 24, y + 234, 0, "Bin  /bin");
+    if (notice == 1) nw::text(x + 24, y + 278, 0x00C0392B, "File too large.");
+    nw::rgrad(x + 198, y + 126, w - 222, 38, 5, 0x00FFFFFF, 0x00D6E8F4);
+    nw::text(x + 210, y + 144, 0x004F7896, "TYPE");
+    nw::text(x + 280, y + 144, 0x004F7896, "NAME");
+    nw::text(x + w - 158, y + 144, 0x004F7896, "SIZE");
+    i = 0;
+    while (i < rv) {
+        idx = top + i;
+        yy = y + 184 + i * 23;
+        if (idx < n) {
+            if (idx == selected) {
+                nw::rgrad(x + 198, yy, w - 222, 22, 4, 0x00BFE8FC, 0x008FD0F4);
+            } else if (i - (i / 2) * 2 == 0) {
+                nw::rect(x + 198, yy, w - 222, 22, 0x00FFFFFF);
+            } else {
+                nw::rect(x + 198, yy, w - 222, 22, 0x00EEF6FB);
+            }
+            if (nw::fs_type(idx) == 1) {
+                nw::text(x + 210, yy + 7, 0x002E9E4F, "DIR");
+            } else {
+                nw::text(x + 210, yy + 7, 0x004F7896, "FILE");
+                nw::number(x + w - 158, yy + 7, 0x004F7896, nw::fs_size(idx));
+            }
+            nw::text(x + 280, yy + 7, 0x000E3A5C, nw::fs_name(idx));
+        }
+        i = i + 1;
+    }
+    if (n == 0) nw::text(x + 210, y + 188, 0x004F7896, "This directory is empty.");
+}
+
+// ---------- editor ----------
+0A edit_draw(1A theme, 1A x, 1A y, 1A w, 1A h, str name, 1A cl, 1A cc) {
+    1A c = accent(theme);
+    str n2 = name;
+    if (cc > (w - 100) / 8) cc = (w - 100) / 8;
+    if (cl > (h - 160) / 8) cl = (h - 160) / 8;
+    nw::rgrad(x + 21, y + 57, w - 42, h - 150, 6, 0x007FA9C4, 0x007FA9C4);
+    nw::rgrad(x + 22, y + 58, w - 44, h - 152, 5, 0x00FFFFFF, 0x00F3F9FD);
+    nw::rgrad(x + 22, y + 58, 14, h - 152, 5, 0x00E1EFF8, 0x00D2E6F2);
+    nw::text(x + 42, y + 74, accent_dim(theme), n2);
+    nw::text(x + 42, y + 100, 0x000E3A5C, nw::buf_text());
+    nw::rgrad(x + 22, y + h - 82, w - 44, 30, 6, 0x00F4FAFE, 0x00D2E6F2);
+    nw::text(x + 42, y + h - 72, 0x004F7896, "Type, Enter, Ctrl+S saves");
+    nw::rect(x + 42 + cc * 8, y + 100 + (cl - 1) * 8, 7, 10, c);
+}
+
+// ---------- settings ----------
+0A theme_card(1A cur, 1A t, 1A x, 1A y, 1A cw, str name) {
+    str nm = name;
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    if (cur == t) nw::rgrad(x - 2, y - 2, cw + 4, 116, 10, accent(t), accent(t));
+    else nw::rgrad(x - 1, y - 1, cw + 2, 114, 9, 0x00B9D6E8, 0x00B9D6E8);
+    if (inside(mx, my, x, y, cw, 112) == 1) {
+        nw::rgrad(x, y, cw, 112, 8, 0x00F0FAFF, 0x00C9E8F8);
+    } else {
+        nw::rgrad(x, y, cw, 112, 8, 0x00FFFFFF, 0x00E3EFF7);
+    }
+    nw::glass(x + 1, y + 1, cw - 2, 30, 7, 0x00FFFFFF, 90);
+    nw::orb(x + 42, y + 42, 24, accent(t));
+    nw::text(x + 82, y + 26, 0x000E3A5C, nm);
+    nw::text(x + 82, y + 50, 0x004F7896, "Preset");
+    if (cur == t) nw::text(x + 82, y + 74, accent_dim(t), "ACTIVE");
+    else nw::text(x + 82, y + 74, 0x004F7896, "Apply");
+}
+
+0A set_draw(1A theme, 1A x, 1A y, 1A w, 1A h) {
+    1A c = accent(theme);
+    1A cw = card_w(w);
+    nw::rgrad(x + 22, y + 58, 190, h - 96, 7, 0x00F4FAFE, 0x00D9EAF5);
+    nw::text(x + 40, y + 78, accent_dim(theme), "APPEARANCE");
+    nw::rgrad(x + 24, y + 98, 186, 30, 6, 0x00E8F8FF, 0x009FD8F6);
+    nw::glass(x + 25, y + 99, 184, 12, 5, 0x00FFFFFF, 90);
+    nw::text(x + 40, y + 108, 0x000E3A5C, "Accent color");
+    nw::rgrad(x + 36, y + 150, 158, 118, 9, 0x007FA9C4, 0x007FA9C4);
+    nw::rgrad(x + 37, y + 151, 156, 116, 8, accent_lt(theme), 0x00FFFFFF);
+    nw::orb(x + 115, y + 209, 34, c);
+    nw::text(x + 232, y + 62, 0x000E3A5C, "Accent color");
+    nw::text(x + 232, y + 84, 0x004F7896, "Pick an accent color.");
+    call theme_card(theme, 0, x + card_x(w, 0), y + card_y(0), cw, "Aqua");
+    call theme_card(theme, 1, x + card_x(w, 1), y + card_y(1), cw, "Meadow");
+    call theme_card(theme, 2, x + card_x(w, 2), y + card_y(2), cw, "Orchid");
+    call theme_card(theme, 3, x + card_x(w, 3), y + card_y(3), cw, "Sunset");
+    nw::rect(x + 232, y + 372, w - 262, 1, 0x00B9D6E8);
+    nw::text(x + 232, y + 390, 0x000E3A5C, "Wallpaper");
+    nw::text(x + 232, y + 410, 0x004F7896, "Edit sys/wallpaper.png.");
+}
+
+// ---------- system monitor ----------
+0A meter(1A x, 1A y, 1A mw, 1A v, 1A theme) {
+    1A bar = v * mw / 100;
+    if (bar > mw) bar = mw;
+    nw::rgrad(x, y, mw, 64, 6, 0x00CFE3F0, 0x00EFF7FC);
+    if (bar > 6) {
+        nw::rgrad(x, y, bar, 64, 6, accent_lt(theme), accent(theme));
+        nw::glass(x + 1, y + 1, bar - 2, 28, 5, 0x00FFFFFF, 85);
+    }
+}
+
+0A monitor_panel(1A x, 1A y, 1A w, 1A h) {
+    nw::rgrad(x, y, w, h, 8, 0x00FFFFFF, 0x00DCEBF5);
+}
+
+0A mon_draw(1A theme, 1A x, 1A y, 1A w, 1A h) {
+    1A c = accent_dim(theme);
+    1A cpu = nw::cpu_load();
+    1A gpu = nw::gpu_load();
+    1A up = nw::uptime_sec();
+    1A cw = (w - 78) / 2;
+    1A rx = x + 52 + cw;
+    1A lx = x + 26;
+    nw::text(lx, y + 64, 0x000E3A5C, "Performance");
+    call monitor_panel(lx, y + 92, cw, 142);
+    nw::text(lx + 18, y + 110, c, "CPU");
+    nw::number(lx + cw - 70, y + 110, 0x000E3A5C, cpu);
+    nw::text(lx + cw - 40, y + 110, 0x004F7896, "%");
+    call meter(lx + 18, y + 140, cw - 36, cpu, theme);
+    call monitor_panel(rx, y + 92, cw, 142);
+    nw::text(rx + 18, y + 110, c, "GPU");
+    nw::number(rx + cw - 70, y + 110, 0x000E3A5C, gpu);
+    nw::text(rx + cw - 40, y + 110, 0x004F7896, "%");
+    call meter(rx + 18, y + 140, cw - 36, gpu, theme);
+    call monitor_panel(lx, y + 254, cw, 168);
+    nw::text(lx + 18, y + 272, c, "MEMORY");
+    nw::text(lx + 18, y + 302, 0x000E3A5C, "RAM");
+    nw::number(lx + cw - 100, y + 302, 0x000E3A5C, nw::ram_mb());
+    nw::text(lx + cw - 46, y + 302, 0x004F7896, "MB");
+    nw::text(lx + 18, y + 332, 0x000E3A5C, "Disk used");
+    nw::number(lx + cw - 100, y + 332, 0x000E3A5C, nw::disk_used_kb());
+    nw::text(lx + cw - 46, y + 332, 0x004F7896, "KB");
+    call monitor_panel(rx, y + 254, cw, 168);
+    nw::text(rx + 18, y + 272, c, "SYSTEM");
+    nw::text(rx + 18, y + 302, 0x000E3A5C, "Uptime");
+    nw::number(rx + cw - 100, y + 302, 0x000E3A5C, up / 60);
+    nw::text(rx + cw - 46, y + 302, 0x004F7896, "MIN");
+    nw::number(rx + cw - 100, y + 326, 0x004F7896, up - (up / 60) * 60);
+    nw::text(rx + cw - 68, y + 326, 0x004F7896, "SEC");
+}
+
+// ============================================================
+//  window manager
+//  w[] : 7 windows x 24 ints
+//   +0 open  +1 mode(0 normal,2 maximized,3 fullscreen)
+//   +2..5 normal rect  +6..9 effective rect  +10 minimized
+//   +11 z-order stamp  +12.. per-app state
+//  ids: 0 terminal 1 files 2 editor 3 calculator 4 settings
+//       5 monitor 6 word generator
+// ============================================================
+1A main() {
+    1A w[200];
+    str words[15];
+    str ename = "note.txt";
+    str ttl = "";
+    1A running = 1;
+    1A theme = 0;
+    1A menu = 0;
     1A dirty = 1;
+    1A tick = 0;
     1A mx = 0;
     1A my = 0;
     1A lmx = -1;
     1A lmy = -1;
     1A btn = 0;
     1A lastbtn = 0;
-    1A hit = -1;
+    1A key = 0;
+    1A i = 0;
+    1A j = 0;
+    1A b = 0;
+    1A zc = 0;
+    1A foc = -1;
+    1A fz = 0;
+    1A mzv = 0;
+    1A fs = 0;
+    1A req = -1;
+    1A ldreq = 0;
+    1A wadd = 0;
+    1A fopen = 0;
+    1A act = 0;
+    1A aid = 0;
+    1A ox = 0;
+    1A oy = 0;
+    1A rl = 0;
+    1A rr = 0;
+    1A rt = 0;
+    1A rb = 0;
+    1A x0 = 0;
+    1A y0 = 0;
+    1A w0 = 0;
+    1A h0 = 0;
+    1A sx = 0;
+    1A sy = 0;
+    1A cx = 0;
+    1A cy = 0;
+    1A cw = 0;
+    1A ch = 0;
+    1A md = 0;
+    1A top = -1;
+    1A tz = 0;
+    1A hitf = 0;
+    1A ts = 0;
+    1A p = 1;
+    1A st = 0;
+    1A last = 0;
+    1A pass = 0;
+    1A best = 0;
+    1A bz = 0;
+    1A act2 = 0;
+    1A n = 0;
+    1A rows = 0;
+    1A mxs = 0;
+    1A cp = -1;
+    1A r = 0;
     1A value = 0;
     1A acc = 0;
     1A op = 0;
     1A fresh = 1;
     1A error = 0;
-    1A digit = 0;
     1A nop = 0;
-    while (open == 1) {
-        mx = nw::mouse_x();
-        my = nw::mouse_y();
-        btn = nw::mouse_buttons();
-        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
-        if (btn == 1 && lastbtn == 0) {
-            if (close_hit(mx, my, 460, 100, 360) == 1) open = 0;
-            hit = pad_hit(mx, my, 488, 274);
-            if (hit >= 0) {
-                if (hit == 12) {
-                    value = 0;
-                    acc = 0;
-                    op = 0;
-                    fresh = 1;
-                    error = 0;
-                }
-                else if (hit == 14) {
-                    if (op != 0 && fresh == 0 && error == 0) {
-                        if (op == 4 && value == 0) {
-                            error = 1;
-                            value = 0;
-                        } else {
-                            value = apply(acc, value, op);
-                        }
-                    }
-                    op = 0;
-                    fresh = 1;
-                }
-                else if (hit == 3 || hit == 7 || hit == 11 || hit == 15) {
-                    nop = 0;
-                    if (hit == 3) nop = 4;
-                    if (hit == 7) nop = 3;
-                    if (hit == 11) nop = 2;
-                    if (hit == 15) nop = 1;
-                    if (op != 0 && fresh == 0 && error == 0) {
-                        if (op == 4 && value == 0) {
-                            error = 1;
-                            value = 0;
-                        } else {
-                            value = apply(acc, value, op);
-                        }
-                    }
-                    acc = value;
-                    op = nop;
-                    fresh = 1;
-                }
-                else {
-                    digit = 0;
-                    if (hit <= 2) digit = hit + 7;
-                    if (hit >= 4 && hit <= 6) digit = hit;
-                    if (hit >= 8 && hit <= 10) digit = hit - 7;
-                    if (hit == 13) digit = 0;
-                    if (fresh == 1 || error == 1) {
-                        value = digit;
-                        fresh = 0;
-                        error = 0;
-                    } else {
-                        value = value * 10 + digit;
-                    }
-                }
-                dirty = 1;
-            }
-        }
-        if (dirty == 1) {
-            call calculator_draw(theme, value, error);
-            nw::cursor(mx, my);
-            nw::flush();
-            dirty = 0;
-        }
-        lmx = mx;
-        lmy = my;
-        lastbtn = btn;
-        sleep(8);
-    }
-}
-
-0A file_manager_draw(1A theme, 1A selected, 1A notice) {
-    1A c = accent(theme);
-    1A x = 120;
-    1A y = 76;
-    1A w = 1040;
-    1A h = 568;
-    1A i = 0;
-    1A n = nw::fs_count();
-    1A yy = y + 184;
-    1A mx = nw::mouse_x();
-    1A my = nw::mouse_y();
-    call win(theme, x, y, w, h, "File Manager");
-    nw::text(x + 24, y + 58, 0x009AA4AE, nw::fs_path());
-    nw::rect(x + 24, y + 80, 92, 28, 0x00313940);
-    nw::text(x + 42, y + 90, 0x00D7DEE5, "Up");
-    nw::rect(x + 126, y + 80, 104, 28, 0x00313940);
-    nw::text(x + 142, y + 90, 0x00D7DEE5, "Root");
-    nw::rect(x + 240, y + 80, 116, 28, c);
-    nw::text(x + 256, y + 90, 0x0010161A, "Open file");
-    nw::text(x + 24, y + 128, c, "PLACES");
-    nw::rect(x + 24, y + 150, 150, 24, 0x00313A42);
-    nw::text(x + 38, y + 158, 0x00D7DEE5, "Root  /");
-    nw::rect(x + 24, y + 178, 150, 24, 0x002A3036);
-    nw::text(x + 38, y + 186, 0x009AA4AE, "Home  /home");
-    nw::rect(x + 24, y + 206, 150, 24, 0x002A3036);
-    nw::text(x + 38, y + 214, 0x009AA4AE, "System  /sys");
-    nw::rect(x + 24, y + 234, 150, 24, 0x002A3036);
-    nw::text(x + 38, y + 242, 0x009AA4AE, "Bin  /bin");
-    if (notice == 1) nw::text(x + 24, y + 278, 0x00E06C75, "File too large.");
-    nw::rect(x + 198, y + 128, w - 222, 1, 0x00383F46);
-    nw::text(x + 210, y + 144, 0x009AA4AE, "TYPE");
-    nw::text(x + 280, y + 144, 0x009AA4AE, "NAME");
-    nw::text(x + w - 158, y + 144, 0x009AA4AE, "SIZE");
-    nw::rect(x + 198, y + 164, w - 222, 1, 0x00383F46);
+    1A digit = 0;
+    1A dx = 0;
+    1A dy = 0;
+    1A nx = 0;
+    1A ny = 0;
+    1A nww = 0;
+    1A nhh = 0;
+    1A mw = 0;
+    1A mh = 0;
+    1A qx = 0;
+    1A qy = 0;
+    1A chg = 0;
     i = 0;
-    while (i < n && i < 15) {
-        yy = y + 184 + i * 23;
-        if (i == selected) {
-            nw::rect(x + 198, yy, w - 222, 22, 0x00313A42);
-        } else if (inside(mx, my, x + 198, yy, w - 222, 22) == 1) {
-            nw::rect(x + 198, yy, w - 222, 22, 0x002A3036);
-        } else {
-            nw::rect(x + 198, yy, w - 222, 22, 0x0024292E);
-        }
-        if (nw::fs_type(i) == 1) {
-            nw::text(x + 210, yy + 7, 0x002ECC9A, "DIR");
-        } else {
-            nw::text(x + 210, yy + 7, 0x009AA4AE, "FILE");
-            nw::number(x + w - 158, yy + 7, 0x0088929A, nw::fs_size(i));
-        }
-        nw::text(x + 280, yy + 7, 0x00D7DEE5, nw::fs_name(i));
+    while (i < 200) {
+        w[i] = 0;
         i = i + 1;
     }
-    if (n == 0) nw::text(x + 210, y + 188, 0x009AA4AE, "This directory is empty.");
-    nw::text(x + 24, y + h - 34, 0x009AA4AE, "Click folder   Open file");
-}
-
-0A file_manager_app(1A theme) {
-    1A open = 1;
-    1A dirty = 1;
-    1A mx = 0;
-    1A my = 0;
-    1A lmx = -1;
-    1A lmy = -1;
-    1A btn = 0;
-    1A lastbtn = 0;
-    1A selected = 99;
-    1A notice = 0;
-    1A idx = 0;
-    1A n = 0;
-    while (open == 1) {
-        mx = nw::mouse_x();
-        my = nw::mouse_y();
-        btn = nw::mouse_buttons();
-        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
-        if (btn == 1 && lastbtn == 0) {
-            if (close_hit(mx, my, 120, 76, 1040) == 1) open = 0;
-            if (inside(mx, my, 144, 156, 92, 28) == 1) {
-                nw::fs_up();
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (inside(mx, my, 246, 156, 104, 28) == 1) {
-                nw::fs_enter("/");
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (inside(mx, my, 360, 156, 116, 28) == 1) {
-                n = nw::fs_count();
-                if (selected < n) {
-                    if (nw::fs_type(selected) == 1) {
-                        nw::fs_enter(nw::fs_name(selected));
-                        selected = 99;
-                    } else if (nw::fs_size(selected) > 4096) {
-                        notice = 1;
-                    } else {
-                        call editor_app(nw::fs_name(selected), theme);
-                    }
-                }
-                dirty = 1;
-            }
-            if (inside(mx, my, 144, 226, 150, 24) == 1) {
-                nw::fs_enter("/");
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (inside(mx, my, 144, 254, 150, 24) == 1) {
-                nw::fs_enter("/home");
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (inside(mx, my, 144, 282, 150, 24) == 1) {
-                nw::fs_enter("/sys");
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (inside(mx, my, 144, 310, 150, 24) == 1) {
-                nw::fs_enter("/bin");
-                selected = 99;
-                notice = 0;
-                dirty = 1;
-            }
-            if (my >= 260 && my <= 604 && mx >= 318 && mx <= 1140) {
-                idx = (my - 260) / 23;
-                n = nw::fs_count();
-                if (idx < n) {
-                    notice = 0;
-                    if (nw::fs_type(idx) == 1) {
-                        nw::fs_enter(nw::fs_name(idx));
-                        selected = 99;
-                    } else {
-                        selected = idx;
-                    }
-                    dirty = 1;
-                }
-            }
-        }
-        if (dirty == 1) {
-            call file_manager_draw(theme, selected, notice);
-            nw::cursor(mx, my);
-            nw::flush();
-            dirty = 0;
-        }
-        lmx = mx;
-        lmy = my;
-        lastbtn = btn;
-        sleep(8);
-    }
-}
-
-0A editor_draw(1A theme, str name, 1A cl, 1A cc) {
-    1A c = accent(theme);
-    1A x = 160;
-    1A y = 84;
-    1A w = 960;
-    1A h = 552;
-    if (cc > 108) cc = 108;
-    if (cl > 40) cl = 40;
-    call win(theme, x, y, w, h, "Text Editor");
-    nw::rect(x + 22, y + 58, w - 44, h - 152, 0x0013181C);
-    nw::rect(x + 22, y + 58, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + 74, c, name);
-    nw::text(x + 42, y + 100, 0x00D7DEE5, nw::buf_text());
-    nw::rect(x + 22, y + h - 72, w - 44, 1, 0x00383F46);
-    nw::text(x + 42, y + h - 54, 0x009AA4AE, "Type, Enter, Ctrl+S, Esc");
-    nw::rect(x + 42 + cc * 8, y + 100 + (cl - 1) * 8, 7, 10, c);
-}
-
-0A editor_app(str name, 1A theme) {
-    1A key = 0;
-    1A done = 0;
-    1A cl = 1;
-    1A cc = 0;
-    nw::buf_load(name);
-    cc = nw::buf_len();
-    if (cc > 108) cc = 108;
-    while (done == 0) {
-        call editor_draw(theme, name, cl, cc);
-        nw::cursor(nw::mouse_x(), nw::mouse_y());
-        nw::flush();
-        key = nw::pollkey();
-        if (key == 255) done = 1;
-        if (key == 19) nw::buf_save(name);
-        if (key == 256) {
-            if (nw::buf_len() < 3900) {
-                nw::buf_put(10);
-                cl = cl + 1;
-                cc = 0;
-            }
-        }
-        if (key == 257) {
-            nw::buf_back();
-            if (cc > 0) cc = cc - 1;
-            else if (cl > 1) {
-                cl = cl - 1;
-                cc = 0;
-            }
-        }
-        if (key >= 32 && key <= 126) {
-            if (nw::buf_len() < 3900) {
-                nw::buf_put(key);
-                cc = cc + 1;
-            }
-        }
-        sleep(8);
-    }
-}
-
-0A settings_draw(1A theme) {
-    1A c = accent(theme);
-    1A x = 220;
-    1A y = 84;
-    1A w = 840;
-    1A h = 552;
-    1A i = 0;
-    1A yy = 0;
-    1A mx = nw::mouse_x();
-    1A my = nw::mouse_y();
-    call win(theme, x, y, w, h, "System Settings");
-    nw::rect(x + 22, y + 58, 200, h - 96, 0x001A1F24);
-    nw::text(x + 40, y + 78, c, "APPEARANCE");
-    nw::rect(x + 22, y + 98, 200, 30, 0x00313A42);
-    nw::text(x + 40, y + 108, 0x00D7DEE5, "Accent color");
-    nw::rect(x + 40, y + 150, 164, 118, 0x0013181C);
-    nw::rect(x + 56, y + 166, 132, 86, accent(theme));
-    nw::rect(x + 56, y + 166, 132, 10, accent_dim(theme));
-    nw::text(x + 252, y + 78, 0x00E8ECEF, "Accent color");
-    nw::text(x + 252, y + 102, 0x009AA4AE, "Pick an accent color.");
-    i = 0;
-    while (i < 4) {
-        yy = y + 140 + (i / 2) * 132;
-        if (i == 0) call theme_card(theme, 0, x + 252 + (i - (i / 2) * 2) * 274, yy, c, mx, my);
-        if (i == 1) call theme_card(theme, 1, x + 252 + (i - (i / 2) * 2) * 274, yy, c, mx, my);
-        if (i == 2) call theme_card(theme, 2, x + 252 + (i - (i / 2) * 2) * 274, yy, c, mx, my);
-        if (i == 3) call theme_card(theme, 3, x + 252 + (i - (i / 2) * 2) * 274, yy, c, mx, my);
-        i = i + 1;
-    }
-    nw::rect(x + 252, y + 412, 520, 1, 0x00383F46);
-    nw::text(x + 252, y + 434, 0x00E8ECEF, "Wallpaper");
-    nw::text(x + 252, y + 458, 0x009AA4AE, "Edit sys/wallpaper.png.");
-    nw::text(x + 252, y + 482, 0x009AA4AE, "It renders behind panels.");
-    nw::text(x + 252, y + 516, 0x0088929A, "X closes");
-}
-
-0A theme_card(1A cur, 1A t, 1A x, 1A y, 1A c, 1A mx, 1A my) {
-    if (inside(mx, my, x, y, 250, 112) == 1) {
-        nw::rect(x, y, 250, 112, 0x00313A42);
-    } else {
-        nw::rect(x, y, 250, 112, 0x00252B31);
-    }
-    if (cur == t) nw::rect(x, y, 250, 2, accent(t));
-    nw::rect(x + 18, y + 18, 48, 48, accent(t));
-    nw::rect(x + 18, y + 18, 48, 6, accent_dim(t));
-    if (t == 0) nw::text(x + 82, y + 26, 0x00E8ECEF, "Breeze");
-    if (t == 1) nw::text(x + 82, y + 26, 0x00E8ECEF, "Emerald");
-    if (t == 2) nw::text(x + 82, y + 26, 0x00E8ECEF, "Violet");
-    if (t == 3) nw::text(x + 82, y + 26, 0x00E8ECEF, "Amber");
-    nw::text(x + 82, y + 50, 0x009AA4AE, "Preset");
-    if (cur == t) nw::text(x + 82, y + 74, accent(t), "ACTIVE");
-    else nw::text(x + 82, y + 74, 0x0088929A, "Apply");
-}
-
-1A settings_app(1A theme) {
-    1A open = 1;
-    1A dirty = 1;
-    1A mx = 0;
-    1A my = 0;
-    1A lmx = -1;
-    1A lmy = -1;
-    1A btn = 0;
-    1A lastbtn = 0;
-    1A i = 0;
-    1A x = 0;
-    1A y = 0;
-    while (open == 1) {
-        mx = nw::mouse_x();
-        my = nw::mouse_y();
-        btn = nw::mouse_buttons();
-        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
-        if (btn == 1 && lastbtn == 0) {
-            if (close_hit(mx, my, 220, 84, 840) == 1) open = 0;
-            i = 0;
-            while (i < 4) {
-                x = 472 + (i - (i / 2) * 2) * 274;
-                y = 224 + (i / 2) * 132;
-                if (inside(mx, my, x, y, 250, 112) == 1) {
-                    theme = i;
-                    dirty = 1;
-                }
-                i = i + 1;
-            }
-        }
-        if (dirty == 1) {
-            call settings_draw(theme);
-            nw::cursor(mx, my);
-            nw::flush();
-            dirty = 0;
-        }
-        lmx = mx;
-        lmy = my;
-        lastbtn = btn;
-        sleep(8);
-    }
-    return theme;
-}
-
-0A monitor_draw(1A theme) {
-    1A c = accent(theme);
-    1A x = 250;
-    1A y = 104;
-    1A w = 780;
-    1A h = 500;
-    1A cpu = nw::cpu_load();
-    1A gpu = nw::gpu_load();
-    1A up = nw::uptime_sec();
-    1A bar = 0;
-    call win(theme, x, y, w, h, "System Monitor");
-    nw::text(x + 26, y + 64, 0x00E8ECEF, "Performance");
-    nw::text(x + 620, y + 64, 0x009AA4AE, "LIVE");
-    nw::rect(x + 26, y + 92, 340, 142, 0x0013181C);
-    nw::text(x + 44, y + 110, c, "CPU");
-    nw::number(x + 300, y + 110, 0x00F2F4F6, cpu);
-    nw::text(x + 330, y + 110, 0x009AA4AE, "%");
-    nw::rect(x + 44, y + 140, 300, 64, 0x00242B31);
-    bar = cpu * 3;
-    if (bar > 300) bar = 300;
-    nw::rect(x + 44, y + 140, bar, 64, c);
-    nw::text(x + 44, y + 212, 0x009AA4AE, "CPU load");
-    nw::rect(x + 388, y + 92, 340, 142, 0x0013181C);
-    nw::text(x + 406, y + 110, c, "GPU");
-    nw::number(x + 662, y + 110, 0x00F2F4F6, gpu);
-    nw::text(x + 692, y + 110, 0x009AA4AE, "%");
-    nw::rect(x + 406, y + 140, 300, 64, 0x00242B31);
-    bar = gpu * 3;
-    if (bar > 300) bar = 300;
-    nw::rect(x + 406, y + 140, bar, 64, c);
-    nw::text(x + 406, y + 212, 0x009AA4AE, "GPU load");
-    nw::rect(x + 26, y + 254, 340, 168, 0x0013181C);
-    nw::text(x + 44, y + 272, c, "MEMORY");
-    nw::text(x + 44, y + 302, 0x00D7DEE5, "RAM");
-    nw::number(x + 244, y + 302, 0x00F2F4F6, nw::ram_mb());
-    nw::text(x + 300, y + 302, 0x009AA4AE, "MB");
-    nw::text(x + 44, y + 332, 0x00D7DEE5, "Disk used");
-    nw::number(x + 244, y + 332, 0x00F2F4F6, nw::disk_used_kb());
-    nw::text(x + 314, y + 332, 0x009AA4AE, "KB");
-    nw::text(x + 44, y + 362, 0x00D7DEE5, "Files");
-    nw::number(x + 244, y + 362, 0x00F2F4F6, nw::disk_files());
-    nw::rect(x + 388, y + 254, 340, 168, 0x0013181C);
-    nw::text(x + 406, y + 272, c, "SYSTEM");
-    nw::text(x + 406, y + 302, 0x00D7DEE5, "Uptime");
-    nw::number(x + 586, y + 302, 0x00F2F4F6, up / 60);
-    nw::text(x + 650, y + 302, 0x009AA4AE, "MIN");
-    nw::number(x + 586, y + 326, 0x0088929A, up - (up / 60) * 60);
-    nw::text(x + 618, y + 326, 0x009AA4AE, "SEC");
-    nw::text(x + 406, y + 356, 0x00D7DEE5, "Display");
-    nw::text(x + 406, y + 380, 0x009AA4AE, "1280 x 720 / 32-bit");
-    nw::text(x + 26, y + h - 36, 0x009AA4AE, "Live   X close");
-}
-
-0A monitor_app(1A theme) {
-    1A open = 1;
-    1A mx = 0;
-    1A my = 0;
-    1A btn = 0;
-    1A lastbtn = 0;
-    while (open == 1) {
-        mx = nw::mouse_x();
-        my = nw::mouse_y();
-        btn = nw::mouse_buttons();
-        if (btn == 1 && lastbtn == 0 && close_hit(mx, my, 250, 104, 780) == 1) open = 0;
-        if (open == 1) {
-            call monitor_draw(theme);
-            nw::cursor(mx, my);
-            nw::flush();
-        }
-        lastbtn = btn;
-        sleep(200);
-    }
-}
-
-1A word_app(1A theme) {
-    str words[15];
-    1A count = 0;
-    1A open = 1;
-    1A key = 0;
-    1A mx = 0;
-    1A my = 0;
-    1A btn = 0;
-    1A lastbtn = 0;
-    1A i = 0;
-    1A c = accent(theme);
-    1A x = 390;
-    1A y = 150;
-    1A w = 500;
-    1A h = 370;
-    while (open == 1) {
-        call win(theme, x, y, w, h, "Word Generator");
-        nw::text(x + 24, y + 58, 0x009AA4AE, "F7 adds a word");
-        nw::number(x + w - 62, y + 58, c, count);
-        nw::text(x + w - 36, y + 58, 0x009AA4AE, "/15");
-        i = 0;
-        while (i < count) {
-            if (i < 5) {
-                nw::text(x + 24, y + 92 + i * 34, 0x00D7DEE5, words[i]);
-            }
-            else if (i < 10) {
-                nw::text(x + 190, y + 92 + (i - 5) * 34, 0x00D7DEE5, words[i]);
-            }
-            else {
-                nw::text(x + 356, y + 92 + (i - 10) * 34, 0x00D7DEE5, words[i]);
-            }
-            i = i + 1;
-        }
-        if (count == 0) nw::text(x + 24, y + 100, 0x009AA4AE, "Press F7 to generate.");
-        nw::text(x + 24, y + h - 32, 0x009AA4AE, "F7 new   Esc close");
-        mx = nw::mouse_x();
-        my = nw::mouse_y();
-        btn = nw::mouse_buttons();
-        nw::cursor(mx, my);
-        nw::flush();
-        key = nw::pollkey();
-        if (key == 255) open = 0;
-        if (key == KEY_F7) {
-            if (count >= 15) count = 0;
-            words[count] = nw::random_word();
-            count = count + 1;
-        }
-        if (btn == 1 && lastbtn == 0 && close_hit(mx, my, x, y, w) == 1) open = 0;
-        lastbtn = btn;
-        sleep(8);
-    }
-    return 0;
-}
-1A main() {
-    1A running = 1;
-    1A theme = 0;
-    1A menu = 0;
-    1A dirty = 1;
-    1A mx = 0;
-    1A my = 0;
-    1A lmx = -1;
-    1A lmy = -1;
-    1A btn = 0;
-    1A lastbtn = 0;
-    1A i = 0;
-    1A x = 0;
-    1A key = 0;
     nw::buf_clear();
     while (running == 1) {
         mx = nw::mouse_x();
         my = nw::mouse_y();
         btn = nw::mouse_buttons();
         key = nw::pollkey();
-        if (key == KEY_F7) {
-            call word_app(theme);
-            dirty = 1;
+        cp = -1;
+
+        // ---- effective rects, focus, maximized stack ----
+        foc = -1;
+        fz = 0;
+        mzv = 0;
+        i = 0;
+        while (i < 7) {
+            b = i * 24;
+            if (w[b] == 1) {
+                w[b + 6] = w[b + 2];
+                w[b + 7] = w[b + 3];
+                w[b + 8] = w[b + 4];
+                w[b + 9] = w[b + 5];
+                if (w[b + 1] == 2) {
+                    w[b + 6] = 0;
+                    w[b + 7] = 0;
+                    w[b + 8] = 1280;
+                    w[b + 9] = 680;
+                }
+                if (w[b + 1] == 3) {
+                    w[b + 6] = 0;
+                    w[b + 7] = 0;
+                    w[b + 8] = 1280;
+                    w[b + 9] = 720;
+                }
+                if (w[b + 10] == 0) {
+                    if (w[b + 11] > fz) {
+                        fz = w[b + 11];
+                        foc = i;
+                    }
+                    if (w[b + 1] >= 2) {
+                        if (w[b + 11] > mzv) mzv = w[b + 11];
+                    }
+                }
+            }
+            i = i + 1;
         }
-        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
+        fs = 0;
+        if (foc >= 0) {
+            if (w[foc * 24 + 1] == 3) fs = 1;
+        }
+
+        // ---- mouse press ----
         if (btn == 1 && lastbtn == 0) {
+            dirty = 1;
+            chg = 1;
+            hitf = 0;
             if (menu == 1) {
-                if (inside(mx, my, 48, 372, 168, 76) == 1) {
+                hitf = 1;
+                if (inside(mx, my, 6, 232, 380, 444) == 1) {
+                    j = 0;
+                    while (j < 7) {
+                        if (inside(mx, my, 18, 266 + j * 46, 216, 42) == 1) req = j;
+                        j = j + 1;
+                    }
+                    if (inside(mx, my, 250, 316, 128, 34) == 1) {
+                        nw::fs_enter("/");
+                        req = 1;
+                        w[36] = 99;
+                        w[38] = 0;
+                    }
+                    if (inside(mx, my, 250, 356, 128, 34) == 1) {
+                        nw::fs_enter("/home");
+                        req = 1;
+                        w[36] = 99;
+                        w[38] = 0;
+                    }
+                    if (inside(mx, my, 250, 396, 128, 34) == 1) req = 4;
+                    if (inside(mx, my, 250, 436, 128, 34) == 1) req = 5;
+                    if (inside(mx, my, 16, 616, 100, 34) == 1) nw::reboot();
+                    if (inside(mx, my, 124, 616, 100, 34) == 1) running = 0;
+                    if (inside(mx, my, 250, 616, 128, 34) == 1) nw::poweroff();
+                } else if (inside(mx, my, 5, 680, 58, 40) == 1) {
+                    hitf = 0;
+                } else {
                     menu = 0;
-                    theme = terminal_app(theme);
-                    dirty = 1;
                 }
-                else if (inside(mx, my, 224, 372, 168, 76) == 1) {
+            }
+            if (hitf == 0 && fs == 0 && my >= 680) {
+                hitf = 1;
+                if (inside(mx, my, 5, 680, 58, 40) == 1) {
+                    menu = 1 - menu;
+                } else {
                     menu = 0;
-                    call file_manager_app(theme);
-                    dirty = 1;
+                    j = 0;
+                    while (j < 7) {
+                        if (inside(mx, my, 76 + j * 52, 683, 48, 36) == 1) {
+                            b = j * 24;
+                            if (w[b] == 0) {
+                                req = j;
+                            } else if (w[b + 10] == 1) {
+                                w[b + 10] = 0;
+                                zc = zc + 1;
+                                w[b + 11] = zc;
+                            } else if (j == foc) {
+                                w[b + 10] = 1;
+                            } else {
+                                zc = zc + 1;
+                                w[b + 11] = zc;
+                            }
+                        }
+                        j = j + 1;
+                    }
+                    if (inside(mx, my, 1262, 680, 18, 40) == 1) {
+                        j = 0;
+                        while (j < 7) {
+                            if (w[j * 24] == 1) w[j * 24 + 10] = 1;
+                            j = j + 1;
+                        }
+                    }
                 }
-                else if (inside(mx, my, 400, 372, 168, 76) == 1) {
+            }
+            if (hitf == 0) {
+                top = -1;
+                tz = 0;
+                j = 0;
+                while (j < 7) {
+                    b = j * 24;
+                    if (w[b] == 1) {
+                        if (w[b + 10] == 0) {
+                            if (w[b + 11] > tz) {
+                                if (w[b + 1] == 0) {
+                                    if (inside(mx, my, w[b + 6] - 5, w[b + 7] - 5, w[b + 8] + 10, w[b + 9] + 10) == 1) {
+                                        top = j;
+                                        tz = w[b + 11];
+                                    }
+                                } else {
+                                    if (inside(mx, my, w[b + 6], w[b + 7], w[b + 8], w[b + 9]) == 1) {
+                                        top = j;
+                                        tz = w[b + 11];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    j = j + 1;
+                }
+                if (top >= 0) {
+                    b = top * 24;
+                    zc = zc + 1;
+                    w[b + 11] = zc;
+                    cx = w[b + 6];
+                    cy = w[b + 7];
+                    cw = w[b + 8];
+                    ch = w[b + 9];
+                    md = w[b + 1];
+                    if (inside(mx, my, cx + cw - 38, cy + 8, 26, 22) == 1) {
+                        w[b] = 0;
+                    } else if (inside(mx, my, cx + cw - 68, cy + 8, 26, 22) == 1) {
+                        if (md == 2) w[b + 1] = 0;
+                        else w[b + 1] = 2;
+                    } else if (inside(mx, my, cx + cw - 98, cy + 8, 26, 22) == 1) {
+                        w[b + 10] = 1;
+                    } else if (inside(mx, my, cx + cw - 128, cy + 8, 26, 22) == 1) {
+                        if (md == 3) w[b + 1] = 0;
+                        else w[b + 1] = 3;
+                    } else {
+                        rl = 0;
+                        rr = 0;
+                        rt = 0;
+                        rb = 0;
+                        if (md == 0) {
+                            if (mx <= cx + 5) rl = 1;
+                            if (mx >= cx + cw - 5) rr = 1;
+                            if (my <= cy + 5) rt = 1;
+                            if (my >= cy + ch - 5) rb = 1;
+                        }
+                        if (rl + rr + rt + rb > 0) {
+                            act = 2;
+                            aid = top;
+                            x0 = cx;
+                            y0 = cy;
+                            w0 = cw;
+                            h0 = ch;
+                            sx = mx;
+                            sy = my;
+                        } else if (inside(mx, my, cx, cy, cw - 134, 34) == 1) {
+                            if (md == 0) {
+                                act = 1;
+                                aid = top;
+                                ox = mx - cx;
+                                oy = my - cy;
+                            }
+                        } else {
+                            // ---- clicks inside the window ----
+                            if (top == 0) {
+                                if (inside(mx, my, cx + cw - 34, cy + 42, 20, ch - 104) == 1) {
+                                    act = 3;
+                                    aid = 0;
+                                }
+                            }
+                            if (top == 1) {
+                                if (inside(mx, my, cx + 24, cy + 80, 92, 28) == 1) {
+                                    nw::fs_up();
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                if (inside(mx, my, cx + 126, cy + 80, 104, 28) == 1) {
+                                    nw::fs_enter("/");
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                if (inside(mx, my, cx + 240, cy + 80, 116, 28) == 1) fopen = 1;
+                                if (inside(mx, my, cx + 24, cy + 150, 150, 24) == 1) {
+                                    nw::fs_enter("/");
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                if (inside(mx, my, cx + 24, cy + 178, 150, 24) == 1) {
+                                    nw::fs_enter("/home");
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                if (inside(mx, my, cx + 24, cy + 206, 150, 24) == 1) {
+                                    nw::fs_enter("/sys");
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                if (inside(mx, my, cx + 24, cy + 234, 150, 24) == 1) {
+                                    nw::fs_enter("/bin");
+                                    w[b + 12] = 99;
+                                    w[b + 13] = 0;
+                                    w[b + 14] = 0;
+                                }
+                                rows = (ch - 184 - 24) / 23;
+                                if (mx >= cx + 198 && mx <= cx + cw - 24 && my >= cy + 184 && my < cy + 184 + rows * 23) {
+                                    j = w[b + 14] + (my - cy - 184) / 23;
+                                    n = nw::fs_count();
+                                    if (j < n) {
+                                        w[b + 13] = 0;
+                                        if (nw::fs_type(j) == 1) {
+                                            nw::fs_enter(nw::fs_name(j));
+                                            w[b + 12] = 99;
+                                            w[b + 14] = 0;
+                                        } else {
+                                            w[b + 12] = j;
+                                        }
+                                    }
+                                }
+                            }
+                            if (top == 3) {
+                                cp = pad_hit(mx, my, cx + 16, cy + 146, (cw - 32) / 4, (ch - 160) / 4);
+                            }
+                            if (top == 4) {
+                                j = 0;
+                                while (j < 4) {
+                                    if (inside(mx, my, cx + card_x(cw, j), cy + card_y(j), card_w(cw), 112) == 1) theme = j;
+                                    j = j + 1;
+                                }
+                            }
+                        }
+                    }
+                } else {
                     menu = 0;
-                    call editor_app("note.txt", theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 48, 456, 168, 76) == 1) {
-                    menu = 0;
-                    call calculator_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 224, 456, 168, 76) == 1) {
-                    menu = 0;
-                    theme = settings_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 400, 456, 168, 76) == 1) {
-                    menu = 0;
-                    call monitor_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 342, 560, 72, 24) == 1) {
-                    nw::reboot();
-                }
-                else if (inside(mx, my, 422, 560, 72, 24) == 1) {
-                    menu = 0;
-                    running = 0;
-                }
-                else if (inside(mx, my, 502, 560, 70, 24) == 1) {
-                    nw::poweroff();
-                }
-                else if (inside(mx, my, 30, 300, 560, 336) == 0) {
-                    menu = 0;
-                    dirty = 1;
-                }
-            } else {
-                if (inside(mx, my, 1030, 56, 210, 120) == 1) {
-                    call word_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 422, 648, 44, 48) == 1) {
-                    menu = 1;
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 474, 652, 58, 48) == 1) {
-                    theme = terminal_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 536, 652, 58, 48) == 1) {
-                    call file_manager_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 598, 652, 58, 48) == 1) {
-                    call editor_app("note.txt", theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 660, 652, 58, 48) == 1) {
-                    call calculator_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 722, 652, 58, 48) == 1) {
-                    theme = settings_app(theme);
-                    dirty = 1;
-                }
-                else if (inside(mx, my, 784, 652, 58, 48) == 1) {
-                    call monitor_app(theme);
-                    dirty = 1;
+                    j = 0;
+                    while (j < 6) {
+                        if (inside(mx, my, 16, 18 + j * 88, 76, 84) == 1) req = j;
+                        j = j + 1;
+                    }
+                    if (inside(mx, my, 1030, 40, 210, 120) == 1) req = 6;
                 }
             }
         }
-        if (dirty == 1) {
-            call draw_desktop(theme, menu);
+
+        // ---- drag / resize / scrollbar while the button is held ----
+        if (btn == 0) act = 0;
+        if (act == 1) {
+            b = aid * 24;
+            w[b + 2] = clampi(mx - ox, 140 - w[b + 4], 1220);
+            w[b + 3] = clampi(my - oy, 0, 650);
+        }
+        if (act == 2) {
+            b = aid * 24;
+            mw = minsz(aid, 0);
+            mh = minsz(aid, 1);
+            dx = mx - sx;
+            dy = my - sy;
+            nx = x0;
+            ny = y0;
+            nww = w0;
+            nhh = h0;
+            if (rl == 1) {
+                nww = w0 - dx;
+                if (nww < mw) nww = mw;
+                nx = x0 + w0 - nww;
+            }
+            if (rr == 1) {
+                nww = w0 + dx;
+                if (nww < mw) nww = mw;
+            }
+            if (rt == 1) {
+                nhh = h0 - dy;
+                if (nhh < mh) nhh = mh;
+                ny = y0 + h0 - nhh;
+                if (ny < 0) {
+                    nhh = nhh + ny;
+                    ny = 0;
+                }
+            }
+            if (rb == 1) {
+                nhh = h0 + dy;
+                if (nhh < mh) nhh = mh;
+            }
+            if (nww > 1280) nww = 1280;
+            if (nhh > 680) nhh = 680;
+            w[b + 2] = nx;
+            w[b + 3] = ny;
+            w[b + 4] = nww;
+            w[b + 5] = nhh;
+        }
+        if (act == 3) {
+            rows = trows(w[9]);
+            n = nw::shi(0, 0);
+            mxs = n - rows;
+            if (mxs > 0) {
+                dy = w[9] - 116;
+                dx = clampi(my - (w[7] + 48), 0, dy);
+                w[12] = mxs - (dx * mxs) / dy;
+            }
+        }
+
+        // ---- keyboard ----
+        if (key != 0) {
+            dirty = 1;
+            chg = 1;
+            if (key == 267) {
+                req = 6;
+                wadd = 1;
+            }
+            if (key == 276) {
+                if (foc >= 0) {
+                    b = foc * 24;
+                    if (w[b + 1] == 3) w[b + 1] = 0;
+                    else w[b + 1] = 3;
+                }
+            }
+            if (key == 263) menu = 1 - menu;
+            if (key == 255) {
+                if (menu == 1) {
+                    menu = 0;
+                } else if (foc >= 0) {
+                    w[foc * 24] = 0;
+                }
+            }
+            if (foc == 0) {
+                rows = trows(w[9]);
+                if (key >= 32 && key <= 126) {
+                    if (nw::shi(3, 0) < tcols(w[8]) - 14) nw::shi(4, key);
+                    w[12] = 0;
+                }
+                if (key == 257) nw::shi(5, 0);
+                if (key == 256) {
+                    r = nw::shi(6, 0);
+                    w[12] = 0;
+                    if (r == 10) req = 3;
+                    if (r == 11) {
+                        ename = nw::shs(2, 0);
+                        ldreq = 1;
+                        req = 2;
+                    }
+                    if (r == 12) req = 1;
+                    if (r == 13) req = 4;
+                    if (r == 14) w[0] = 0;
+                    if (r == 15) req = 5;
+                }
+                if (key == 259) nw::shi(7, 0);
+                if (key == 260) nw::shi(8, 0);
+                if (key == 280) w[12] = w[12] + rows - 1;
+                if (key == 281) w[12] = w[12] - rows + 1;
+                if (key == 278) w[12] = 100000;
+                if (key == 279) w[12] = 0;
+            }
+            if (foc == 1) {
+                n = nw::fs_count();
+                rows = (w[33] - 184 - 24) / 23;
+                if (key == 259) {
+                    if (w[36] >= 99) w[36] = 0;
+                    else if (w[36] > 0) w[36] = w[36] - 1;
+                }
+                if (key == 260) {
+                    if (w[36] >= 99) w[36] = 0;
+                    else if (w[36] < n - 1) w[36] = w[36] + 1;
+                }
+                if (w[36] < w[38]) w[38] = w[36];
+                if (w[36] < 99) {
+                    if (w[36] >= w[38] + rows) w[38] = w[36] - rows + 1;
+                }
+                if (key == 256) fopen = 1;
+                if (key == 257) {
+                    nw::fs_up();
+                    w[36] = 99;
+                    w[37] = 0;
+                    w[38] = 0;
+                }
+            }
+            if (foc == 2) {
+                if (key == 19) nw::buf_save(ename);
+                if (key == 256) {
+                    if (nw::buf_len() < 3900) {
+                        nw::buf_put(10);
+                        w[60] = w[60] + 1;
+                        w[61] = 0;
+                    }
+                }
+                if (key == 257) {
+                    nw::buf_back();
+                    if (w[61] > 0) {
+                        w[61] = w[61] - 1;
+                    } else if (w[60] > 1) {
+                        w[60] = w[60] - 1;
+                        w[61] = 0;
+                    }
+                }
+                if (key >= 32 && key <= 126) {
+                    if (nw::buf_len() < 3900) {
+                        nw::buf_put(key);
+                        w[61] = w[61] + 1;
+                    }
+                }
+            }
+            if (foc == 3) {
+                digit = key - 48;
+                if (digit >= 0 && digit <= 9) {
+                    if (digit == 0) cp = 13;
+                    if (digit >= 7) cp = digit - 7;
+                    if (digit >= 4 && digit <= 6) cp = digit;
+                    if (digit >= 1 && digit <= 3) cp = digit + 7;
+                }
+                if (key == 47) cp = 3;
+                if (key == 42) cp = 7;
+                if (key == 45) cp = 11;
+                if (key == 43) cp = 15;
+                if (key == 61 || key == 256) cp = 14;
+                if (key == 99 || key == 67 || key == 257) cp = 12;
+            }
+        }
+
+        // ---- calculator ----
+        if (cp >= 0) {
+            value = w[84];
+            acc = w[85];
+            op = w[86];
+            fresh = w[87];
+            error = w[88];
+            if (cp == 12) {
+                value = 0;
+                acc = 0;
+                op = 0;
+                fresh = 1;
+                error = 0;
+            } else if (cp == 14) {
+                if (op != 0 && fresh == 0 && error == 0) {
+                    value = apply(acc, value, op);
+                    if (value == 2000000000) {
+                        error = 1;
+                        value = 0;
+                    }
+                }
+                op = 0;
+                fresh = 1;
+            } else if (cp == 3 || cp == 7 || cp == 11 || cp == 15) {
+                nop = 0;
+                if (cp == 3) nop = 4;
+                if (cp == 7) nop = 3;
+                if (cp == 11) nop = 2;
+                if (cp == 15) nop = 1;
+                if (op != 0 && fresh == 0 && error == 0) {
+                    value = apply(acc, value, op);
+                    if (value == 2000000000) {
+                        error = 1;
+                        value = 0;
+                    }
+                }
+                acc = value;
+                op = nop;
+                fresh = 1;
+            } else {
+                digit = 0;
+                if (cp <= 2) digit = cp + 7;
+                if (cp >= 4 && cp <= 6) digit = cp;
+                if (cp >= 8 && cp <= 10) digit = cp - 7;
+                if (cp == 13) digit = 0;
+                if (fresh == 1 || error == 1) {
+                    value = digit;
+                    fresh = 0;
+                    error = 0;
+                } else if (value < 10000000) {
+                    value = value * 10 + digit;
+                }
+            }
+            w[84] = value;
+            w[85] = acc;
+            w[86] = op;
+            w[87] = fresh;
+            w[88] = error;
+            dirty = 1;
+            chg = 1;
+        }
+
+        // ---- file manager: open the selected item ----
+        if (fopen == 1) {
+            fopen = 0;
+            n = nw::fs_count();
+            j = w[36];
+            if (j < n) {
+                if (nw::fs_type(j) == 1) {
+                    nw::fs_enter(nw::fs_name(j));
+                    w[36] = 99;
+                    w[37] = 0;
+                    w[38] = 0;
+                } else if (nw::fs_size(j) > 4096) {
+                    w[37] = 1;
+                } else {
+                    ename = nw::fs_name(j);
+                    ldreq = 1;
+                    req = 2;
+                }
+            }
+            dirty = 1;
+            chg = 1;
+        }
+
+        // ---- open / focus an application ----
+        if (req >= 0) {
+            b = req * 24;
+            menu = 0;
+            dirty = 1;
+            chg = 1;
+            if (w[b] == 0) {
+                w[b] = 1;
+                w[b + 1] = 0;
+                w[b + 2] = dflt(req, 0);
+                w[b + 3] = dflt(req, 1);
+                w[b + 4] = dflt(req, 2);
+                w[b + 5] = dflt(req, 3);
+                j = 10;
+                while (j < 24) {
+                    w[b + j] = 0;
+                    j = j + 1;
+                }
+                if (req == 1) w[b + 12] = 99;
+                if (req == 3) w[b + 15] = 1;
+                if (req == 0) {
+                    if (nw::shi(0, 0) <= 1) nw::shi(11, 0);
+                }
+                if (req == 2) {
+                    if (ldreq == 0) ename = "note.txt";
+                    ldreq = 1;
+                }
+            }
+            if (req == 2) {
+                if (ldreq == 1) {
+                    nw::buf_load(ename);
+                    w[b + 12] = 1;
+                    w[b + 13] = nw::buf_len();
+                    if (w[b + 13] > 100) w[b + 13] = 100;
+                }
+            }
+            w[b + 10] = 0;
+            zc = zc + 1;
+            w[b + 11] = zc;
+            req = -1;
+            ldreq = 0;
+        }
+        if (wadd == 1) {
+            wadd = 0;
+            if (w[156] >= 15) w[156] = 0;
+            words[w[156]] = nw::random_word();
+            w[156] = w[156] + 1;
+        }
+
+        // ---- terminal scroll limits ----
+        if (w[0] == 1) {
+            rows = trows(w[9]);
+            mxs = nw::shi(0, 0) - rows;
+            if (mxs < 0) mxs = 0;
+            if (w[12] > mxs) w[12] = mxs;
+            if (w[12] < 0) w[12] = 0;
+        }
+
+        // ---- periodic refresh (clock, monitor) ----
+        tick = tick + 1;
+        if (tick >= 240) {
+            tick = 0;
+            dirty = 1;
+        }
+        if (w[120] == 1) {
+            if (w[130] == 0) {
+                if (tick - (tick / 12) * 12 == 0) dirty = 1;
+            }
+        }
+        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
+
+        // ---- draw ----
+        if (dirty == 1 && chg == 1) {
+            chg = 0;
+        } else if (dirty == 1) {
+            if (mzv == 0) call desk(theme);
+            last = 0;
+            if (mzv > 0) last = mzv - 1;
+            pass = 0;
+            while (pass < 7) {
+                best = -1;
+                bz = 1000000000;
+                i = 0;
+                while (i < 7) {
+                    b = i * 24;
+                    if (w[b] == 1) {
+                        if (w[b + 10] == 0) {
+                            if (w[b + 11] > last) {
+                                if (w[b + 11] < bz) {
+                                    bz = w[b + 11];
+                                    best = i;
+                                }
+                            }
+                        }
+                    }
+                    i = i + 1;
+                }
+                if (best < 0) {
+                    pass = 7;
+                } else {
+                    b = best * 24;
+                    cx = w[b + 6];
+                    cy = w[b + 7];
+                    cw = w[b + 8];
+                    ch = w[b + 9];
+                    act2 = 0;
+                    if (best == foc) act2 = 1;
+                    if (best == 0) ttl = "NwOS Terminal";
+                    if (best == 1) ttl = "File Manager";
+                    if (best == 2) ttl = "Text Editor";
+                    if (best == 3) ttl = "Calculator";
+                    if (best == 4) ttl = "System Settings";
+                    if (best == 5) ttl = "System Monitor";
+                    if (best == 6) ttl = "Word Generator";
+                    call chrome(theme, cx, cy, cw, ch, ttl, act2, w[b + 1]);
+                    if (best == 0) call term_draw(theme, cx, cy, cw, ch, w[b + 12]);
+                    if (best == 1) call files_draw(theme, cx, cy, cw, ch, w[b + 12], w[b + 13], w[b + 14]);
+                    if (best == 2) call edit_draw(theme, cx, cy, cw, ch, ename, w[b + 12], w[b + 13]);
+                    if (best == 3) call calc_draw(theme, cx, cy, cw, ch, w[b + 12], w[b + 16]);
+                    if (best == 4) call set_draw(theme, cx, cy, cw, ch);
+                    if (best == 5) call mon_draw(theme, cx, cy, cw, ch);
+                    if (best == 6) {
+                        nw::text(cx + 24, cy + 58, 0x004F7896, "F7 adds a word");
+                        nw::number(cx + cw - 62, cy + 58, accent_dim(theme), w[b + 12]);
+                        nw::text(cx + cw - 36, cy + 58, 0x004F7896, "/15");
+                        j = 0;
+                        while (j < w[b + 12]) {
+                            qx = cx + 24 + (j / 5) * ((cw - 48) / 3);
+                            qy = cy + 92 + (j - (j / 5) * 5) * 34;
+                            nw::rgrad(qx - 8, qy - 8, (cw - 48) / 3 - 10, 24, 8, 0x00FFFFFF, 0x00C7E0F0);
+                            nw::text(qx, qy, 0x000E3A5C, words[j]);
+                            j = j + 1;
+                        }
+                        if (w[b + 12] == 0) nw::text(cx + 24, cy + 100, 0x004F7896, "Press F7 to generate.");
+                    }
+                    last = bz;
+                    pass = pass + 1;
+                }
+            }
+            if (fs == 0) {
+                ts = 0;
+                p = 1;
+                i = 0;
+                while (i < 7) {
+                    b = i * 24;
+                    st = 0;
+                    if (w[b] == 1) {
+                        st = 1;
+                        if (w[b + 10] == 1) st = 3;
+                        else if (i == foc) st = 2;
+                    }
+                    ts = ts + st * p;
+                    p = p * 4;
+                    i = i + 1;
+                }
+                call taskbar(theme, ts, menu);
+                if (menu == 1) call startmenu(theme);
+            }
             nw::cursor(mx, my);
             nw::flush();
             dirty = 0;

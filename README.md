@@ -10,7 +10,7 @@
 
 <img width="638" height="479" alt="nwfetch" src="https://github.com/user-attachments/assets/febfe88c-9a03-4a39-b7d3-1f21a3ac1d9c" />
 
-x86_64 operating system written in C and NASM
+x64 operating system written in C and NASM
 
 ## Features
 
@@ -147,6 +147,13 @@ Network stack:
 - Basic IPv4 only (ARP, ICMP, UDP, DNS)
 
 **Do not expose NwOS to untrusted networks.** Use only in QEMU or isolated lab environments.
+
+## Screenshots
+
+Check:
+```bash
+screenshots/(any version)/
+```
 
 ## NwC
 

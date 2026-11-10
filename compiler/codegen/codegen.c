@@ -261,6 +261,14 @@ typedef enum
     OP_BUF_SAVE  = 0xBD,
     OP_POLLKEY   = 0xBE,
     OP_RANDOM_WORD = 0xBF,
+    OP_GRADIENT  = 0xC0,
+    OP_RGRAD     = 0xC1,
+    OP_GLASS     = 0xC2,
+    OP_ORB       = 0xC3,
+    OP_ELLIPSE   = 0xC4,
+    OP_BUBBLE    = 0xC5,
+    OP_SHI       = 0xC6,
+    OP_SHS       = 0xC7,
 
     OP_HALT         = 0xFF
 
@@ -1026,6 +1034,53 @@ static int cg_call(Codegen* cg, ASTNode* node)
 
         cg_emit_byte(cg, OP_RECT);
         return 0;
+    }
+
+    if (strcmp(node->text, "nw::gradient") == 0 ||
+        strcmp(node->text, "nw::rgrad") == 0 ||
+        strcmp(node->text, "nw::glass") == 0 ||
+        strcmp(node->text, "nw::orb") == 0 ||
+        strcmp(node->text, "nw::ellipse") == 0 ||
+        strcmp(node->text, "nw::bubble") == 0)
+    {
+        int expect = 6;
+        int op = OP_GRADIENT;
+        ASTNode* arg = node->child;
+        int count = 0;
+
+        if (strcmp(node->text, "nw::rgrad") == 0) { expect = 7; op = OP_RGRAD; }
+        else if (strcmp(node->text, "nw::glass") == 0) { expect = 7; op = OP_GLASS; }
+        else if (strcmp(node->text, "nw::orb") == 0) { expect = 4; op = OP_ORB; }
+        else if (strcmp(node->text, "nw::ellipse") == 0) { expect = 7; op = OP_ELLIPSE; }
+        else if (strcmp(node->text, "nw::bubble") == 0) { expect = 4; op = OP_BUBBLE; }
+
+        while (arg != NULL) { count++; arg = arg->next; }
+        if (count != expect)
+        {
+            cg_error(cg, "wrong argument count for aero primitive (gradient x,y,w,h,c1,c2 | rgrad x,y,w,h,r,c1,c2 | glass x,y,w,h,r,color,alpha | orb cx,cy,r,color | ellipse x,y,w,h,c1,c2,alpha | bubble cx,cy,r,alpha)");
+            return 0;
+        }
+        arg = node->child;
+        while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_emit_byte(cg, op);
+        return 0;
+    }
+
+    if (strcmp(node->text, "nw::shi") == 0 || strcmp(node->text, "nw::shs") == 0)
+    {
+        ASTNode* arg = node->child;
+        int count = 0;
+
+        while (arg != NULL) { count++; arg = arg->next; }
+        if (count != 2)
+        {
+            cg_error(cg, "nw::shi / nw::shs take 2 arguments (op, value)");
+            return 0;
+        }
+        arg = node->child;
+        while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_emit_byte(cg, strcmp(node->text, "nw::shi") == 0 ? OP_SHI : OP_SHS);
+        return 1;
     }
 
     if (strcmp(node->text, "nw::fs_count") == 0) { cg_emit_byte(cg, OP_FS_COUNT); return 1; }

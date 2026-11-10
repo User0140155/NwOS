@@ -13,12 +13,20 @@ int installer_collect_setup(void)
     int old_shell_p = shell_p;
     int old_setup_complete = cfg_setup_complete;
     int old_require_login = cfg_require_login;
+    int w = 700, h = 500;
+    int x = ((int)fb_get_width() - w) / 2;
+    int y = ((int)fb_get_height() - h) / 2;
 
     cfg_strcpy(old_user, cfg_user, sizeof(old_user));
     cfg_strcpy(old_hostname, cfg_hostname, sizeof(old_hostname));
     cfg_strcpy(old_salt, cfg_root_salt, sizeof(old_salt));
     cfg_strcpy(old_hash, cfg_root_hash, sizeof(old_hash));
     cfg_strcpy(old_invite, invite_user, sizeof(old_invite));
+
+    gui_draw_text(x + 202, y + 580,
+                  "copyright (c) User0140155 2026", COLOR_WHITE);
+    gui_draw_text(x + 276, y + 595,
+                  "NwOS", COLOR_WHITE);
 
     while (1)
     {
@@ -27,6 +35,11 @@ int installer_collect_setup(void)
                 "Hostname [nwos]:", input, sizeof(input),
                 "Use lowercase letters, digits and hyphens."))
             goto cancel_setup;
+
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
 
         if (input[0] == '\0')
         {
@@ -43,6 +56,10 @@ int installer_collect_setup(void)
 
     while (1)
     {
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         if (!installer_read_setup_field(
                 "Account setup - Username",
                 "Username [user]:", input, sizeof(input),
@@ -64,6 +81,10 @@ int installer_collect_setup(void)
 
     while (1)
     {
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         if (!installer_read_secret_field(
                 "Account setup - Password",
                 "Account / administrator password:", password,
@@ -136,6 +157,10 @@ int installer_collect_setup(void)
         prompt_append(prompt_preview, sizeof(prompt_preview), &prompt_pos, ":~/path$ ");
 
         gui_draw_window(x, y, w, h, "Account setup complete");
+        gui_draw_text(x + 202, y + 580,
+                    "copyright (c) User0140155 2026", COLOR_WHITE);
+        gui_draw_text(x + 276, y + 595,
+                    "NwOS", COLOR_WHITE);
         gui_draw_text(x + 24, y + 65, "Hostname:", COLOR_DARK_GRAY);
         gui_draw_text(x + 160, y + 65, cfg_hostname, COLOR_BLACK);
         gui_draw_text(x + 24, y + 100, "Username:", COLOR_DARK_GRAY);

@@ -35,6 +35,7 @@ static const Command commands[] =
     CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> -o <file.nwo> - compile NwC source"),
     CMD_ARG("nw",          package_handler, "nw list|install|remove|update|run - local package manager"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
+    CMD_ARG("listen",      cmd_listen,      "listen <file.wav> - play a WAV file"),
     CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
     CMD_ARG("edit",         redactor,        "edit <file> - edit a file"),
@@ -92,6 +93,11 @@ static const Command commands[] =
     CMD    ("rps",          game_rps,        0),
     CMD    ("hangman",      game_hangman,    0),
     CMD    ("tictactoe",    game_tictactoe, 0),
+    CMD    ("uname",        uname,          0),
+    CMD    ("uname -r",     uname_r,        0),
+    CMD    ("uname -p",     uname_p,        0),
+    CMD    ("uname -o",     uname_o,        0),
+    CMD    ("uname -a",     uname_a,        0),
 };
 
 static void cmd_help(void)
