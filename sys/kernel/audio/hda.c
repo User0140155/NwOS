@@ -193,6 +193,7 @@ static int codec_cmd(uint32_t cmd, uint32_t* response)
             if (response)
                 *response = (uint32_t)(g_rirb[g_rirb_rp] & 0xFFFFFFFFull);
 
+            hda_w8(R_RIRBSTS, 0x01);
             return 1;
         }
 
@@ -321,13 +322,13 @@ static void unmute_widget(unsigned nid, unsigned caps, unsigned in_index,
 {
     uint32_t amp_caps;
 
-    if (caps & 0x02u)               /* output amplifier */
+    if (caps & 0x04u)               /* output amplifier */
     {
         amp_caps = (caps & 0x08u) ? get_param(nid, 0x12) : get_param(afg, 0x12);
         set_verb16(nid, 0x3, 0xB000u | (amp_caps & 0x7Fu));
     }
 
-    if (caps & 0x04u)               /* input amplifier */
+    if (caps & 0x02u)               /* input amplifier */
     {
         amp_caps = (caps & 0x08u) ? get_param(nid, 0x0D) : get_param(afg, 0x0D);
         set_verb16(nid, 0x3, 0x7000u | (in_index << 8) | (amp_caps & 0x7Fu));
@@ -533,7 +534,7 @@ static int rings_init(void)
     g_rirb_rp = 0;
     hda_w16(R_RINTCNT, 1);
 
-    hda_w8(R_RIRBCTL, 0x02);
+    hda_w8(R_RIRBCTL, 0x03);
     hda_w8(R_CORBCTL, 0x02);
 
     return 1;
@@ -866,14 +867,24 @@ int wav_parse(const uint8_t* wav, uint32_t size, wav_info_t* info)
     return info->frames != 0;
 }
 
-uint32_t wav_output_frames(const wav_info_t* info)
+uint32_t wav_output_frames_at(const wav_info_t* info, uint32_t out_rate)
 {
-    uint64_t n = ((uint64_t)info->frames * HDA_RATE_OUT + info->rate - 1u) / info->rate;
+    uint64_t n;
+
+    if (!info || out_rate == 0)
+        return 0;
+
+    n = ((uint64_t)info->frames * out_rate + info->rate - 1u) / info->rate;
 
     if (n > 0xFFFFFFFFull)
         return 0;
 
     return (uint32_t)n;
+}
+
+uint32_t wav_output_frames(const wav_info_t* info)
+{
+    return wav_output_frames_at(info, HDA_RATE_OUT);
 }
 
 static int32_t sample_at(const wav_info_t* info, uint32_t frame, uint32_t ch)
@@ -891,14 +902,19 @@ static int32_t sample_at(const wav_info_t* info, uint32_t frame, uint32_t ch)
     return (int16_t)(p[2] | (p[3] << 8));
 }
 
-uint32_t wav_convert_48k_stereo16(const wav_info_t* info, int16_t* out,
-                                  uint32_t out_frames)
+uint32_t wav_convert_stereo16(const wav_info_t* info, int16_t* out,
+                              uint32_t out_frames, uint32_t out_rate)
 {
-    uint32_t right = info->channels > 1 ? 1u : 0u;
+    uint32_t right;
+
+    if (!info || !out || out_rate == 0 || info->frames == 0)
+        return 0;
+
+    right = info->channels > 1 ? 1u : 0u;
 
     for (uint32_t i = 0; i < out_frames; i++)
     {
-        uint64_t pos = ((uint64_t)i * info->rate << 16) / HDA_RATE_OUT;
+        uint64_t pos = ((uint64_t)i * info->rate << 16) / out_rate;
         uint32_t idx = (uint32_t)(pos >> 16);
         int32_t frac = (int32_t)(pos & 0xFFFFu);
         uint32_t next = idx + 1 < info->frames ? idx + 1 : idx;
@@ -919,4 +935,10 @@ uint32_t wav_convert_48k_stereo16(const wav_info_t* info, int16_t* out,
     }
 
     return out_frames;
+}
+
+uint32_t wav_convert_48k_stereo16(const wav_info_t* info, int16_t* out,
+                                  uint32_t out_frames)
+{
+    return wav_convert_stereo16(info, out, out_frames, HDA_RATE_OUT);
 }

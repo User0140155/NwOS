@@ -14,11 +14,14 @@ void game_hangman(void)
 {
     static const char* words[] =
     {
-        "KERNEL", "MEMORY", "POINTER", "COMPILE",
-        "BINARY", "ARRAY", "LINKER", "BOOTLOADER"
+        "NUMBER", "TODAY", "TOMMOROW", "SCHOOL",
+        "ALWAYS", "WHEN", "YOU", "IM", "ALREADY",
+        "CAR", "AUTOBUS", "COSMOS", "KERNEL", "LINUX",
+        "TIME", "YEAR", "MINUTE", "SECOND", "HOUSE",
+        "WINDOW"
     };
 
-    const int word_count = 8;
+    const int word_count = 20;
 
     const char* word = words[random_range(0, word_count - 1)];
 

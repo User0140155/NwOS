@@ -26,6 +26,7 @@ void ata_read_sector_d(
 
 #define NWO_VERSION_1        1
 #define NWO_VERSION_2        2
+#define NWO_VERSION_3        3
 
 #define NWO_MAX_FILE_SIZE    (16u * 1024u * 1024u)
 #define NWO_MAX_CODE_SIZE    NWO_MAX_FILE_SIZE
@@ -84,7 +85,8 @@ int nwo_validate(
         return 0;
     }
     if (buffer[4] != NWO_VERSION_1 &&
-        buffer[4] != NWO_VERSION_2)
+        buffer[4] != NWO_VERSION_2 &&
+        buffer[4] != NWO_VERSION_3)
         return 0;
     code_size = nwo_read_u32(buffer + 8);
     data_size = nwo_read_u32(buffer + 12);

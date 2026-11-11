@@ -20,11 +20,11 @@ typedef enum
 #define ERR_PAGE_FAULT          0x00000898
 #define ERR_BAD_STATE           0x00010013
 #define ERR_TRIPLE_FAULT        0x05400068
+#define ERR_GUI_LAG             0x00015169
+#define ERR_VIRUS               0x66601666
 
 #define DISK_DEATH              0x19992888
-
 #define ERR_UNKNOW              0x00000000
-
 #define ERR_DEATH               0x01111111
 
 void kernel_panic(const char* message, unsigned int code, const char* file, int line, PanicLevel level);

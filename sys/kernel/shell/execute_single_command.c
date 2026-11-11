@@ -36,6 +36,7 @@ static const Command commands[] =
     CMD_ARG("nw",          package_handler, "nw list|install|remove|update|run - local package manager"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
     CMD_ARG("listen",      cmd_listen,      "listen <file.wav> - play a WAV file"),
+    CMD    ("sound",       cmd_audio,       "sound - show the active audio device"),
     CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
     CMD_ARG("edit",         redactor,        "edit <file> - edit a file"),

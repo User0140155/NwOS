@@ -161,7 +161,7 @@ _start:
     jmp .halt
 
 msg_no_long_mode:
-    db "NwOS: this CPU has no 64-bit mode (QEMU: use qemu-system-x86_64)", 0
+    db "NwOS: this CPU has no 64-bit mode (QEMU: use qemu-system-x86_64), REALPC: Try to find old version (<1.3.5) in Releases of: https://github.com/User0140155/NwOS/ , make sure there's correct drivers and legacy BIOS for previous versions", 0
 
 align 16
 gdt64:

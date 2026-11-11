@@ -5,6 +5,7 @@
 /* The bootstrap identity map covers 4 TiB (eight PML4 entries). */
 #define PMM_PHYS_LIMIT       0x40000000000ull
 #define PMM_DMA32_LIMIT      0x100000000ull
+#define PMM_DMA16_LIMIT      0x01000000ull
 #define PMM_PAGE_COUNT       (PMM_PHYS_LIMIT >> PMM_PAGE_SHIFT)
 #define PMM_BITMAP_BYTES     (PMM_PAGE_COUNT / 8ull)
 #define PMM_MIN_ALLOC_ADDR   0x00100000ull
@@ -419,8 +420,8 @@ uintptr_t pmm_alloc_contiguous_pages(size_t page_count,
     return (uintptr_t)(found << PMM_PAGE_SHIFT);
 }
 
-void *pmm_alloc_dma32(size_t size_bytes, size_t align_bytes,
-                      uint64_t *phys_out)
+static void *pmm_alloc_dma_below(size_t size_bytes, size_t align_bytes,
+                                 uint64_t *phys_out, uint64_t limit)
 {
     uint64_t pages;
     uint64_t align_pages;
@@ -441,10 +442,9 @@ void *pmm_alloc_dma32(size_t size_bytes, size_t align_bytes,
     if ((align_pages & (align_pages - 1u)) != 0)
         return 0;
 
-    /* DMA32 users still require buffers below 4 GiB. */
     address = pmm_alloc_contiguous_pages((size_t)pages,
                                          (size_t)align_pages,
-                                         PMM_DMA32_LIMIT);
+                                         limit);
     if (address == 0)
         return 0;
 
@@ -455,6 +455,20 @@ void *pmm_alloc_dma32(size_t size_bytes, size_t align_bytes,
     if (phys_out)
         *phys_out = (uint64_t)address;
     return (void *)address;
+}
+
+void *pmm_alloc_dma32(size_t size_bytes, size_t align_bytes,
+                      uint64_t *phys_out)
+{
+    return pmm_alloc_dma_below(size_bytes, align_bytes, phys_out,
+                               PMM_DMA32_LIMIT);
+}
+
+void *pmm_alloc_dma16(size_t size_bytes, size_t align_bytes,
+                      uint64_t *phys_out)
+{
+    return pmm_alloc_dma_below(size_bytes, align_bytes, phys_out,
+                               PMM_DMA16_LIMIT);
 }
 
 void pmm_free_pages(uintptr_t address, size_t page_count)

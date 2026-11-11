@@ -2,6 +2,7 @@
 
 #include "../kernel.h"
 #include "../../../drivers/keyboard.h"
+#include "nwos_internal.h"
 
 void reboot(void);
 
@@ -26,8 +27,8 @@ static void panic_clear(void) {
     p_y = 0;
     
     if (fb_is_available()) {
-        for (int y = 0; y < 50; y++) {
-            for (int x = 0; x < 80; x++) {
+        for (int y = 0; y < 500; y++) { // 50
+            for (int x = 0; x < 800; x++) { // 80
                 fb_draw_char(x, y, ' ', PANIC_BG);
             }
         }
@@ -118,10 +119,18 @@ static void panic_fatal(const char* message, unsigned int code, const char* file
         panic_puts("   * You just deleted the root filesystem. Why? *\n\n");
     }
 
-    panic_puts("   The system has halted to prevent data corruption.\n");
-    panic_puts("   Please restart your computer or virtual machine.\n\n");
+    panic_puts("   The system has halted to prevent data corruption.\n\n");
+    panic_puts("   If this is the first time you seen this screen,\n");
+    panic_puts("   Restart your computer (from button or press R),\n");
+    panic_puts("   If the panic appears again, Try do this:\n");
+    panic_puts("   1. Check your memory (Recommended is 600M+).\n");
+    panic_puts("   2. Check your PC.\n");
+    panic_puts("   3. Make issue, Explain what happened.\n\n");
+    panic_puts("   To contact, message in tiktok: (@csplayer421)\n");
+    panic_puts("   Or make issue: https://github.com/User0140155/NwOS/\n\n");
 
     panic_puts("   * Press Ctrl+Alt+Del in QEMU to restart. *\n");
+    panic_puts("   * Press power button or press R to restart on PC. *\n");
 
     for (;;)
     {

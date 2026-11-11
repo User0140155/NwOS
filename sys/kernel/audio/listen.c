@@ -1,5 +1,5 @@
 #include "nwos_internal.h"
-#include "audio/hda.h"
+#include "audio/audio.h"
 
 static int find_audio_file(int dir, const char* name)
 {
@@ -82,7 +82,7 @@ void cmd_listen(const char* args)
         return;
     }
 
-    if (!hda_init())
+    if (!audio_init())
     {
         print_error("Audio device is unavailable.\n");
         return;
@@ -107,7 +107,7 @@ void cmd_listen(const char* args)
     print(leaf);
     print("...\n");
 
-    int started = hda_play_wav(wav, size);
+    int started = audio_play_wav(wav, size);
 
     fs_mem_free(wav, size);
 
@@ -117,7 +117,7 @@ void cmd_listen(const char* args)
         return;
     }
 
-    hda_wait();
+    audio_wait();
 
     print_success("Playback finished.\n");
 }

@@ -28,6 +28,38 @@ static inline void pci_io_outw(uint16_t port, uint16_t val)
 #ifndef TEST_MOCK_HARDWARE
 #endif
 
+uint8_t pci_inb(uint16_t port)
+{
+    uint8_t value;
+    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
+    return value;
+}
+
+void pci_outb(uint16_t port, uint8_t value)
+{
+    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+uint16_t pci_inw(uint16_t port)
+{
+    return pci_io_inw(port);
+}
+
+void pci_outw(uint16_t port, uint16_t value)
+{
+    pci_io_outw(port, value);
+}
+
+uint32_t pci_inl(uint16_t port)
+{
+    return pci_io_inl(port);
+}
+
+void pci_outl(uint16_t port, uint32_t value)
+{
+    pci_io_outl(port, value);
+}
+
 static uint32_t pci_read_dword(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset)
 {
     uint32_t address = 0x80000000u |
@@ -278,6 +310,29 @@ int pci_enable_mem_busmaster(const pci_dev_t *dev)
     pci_write_word(dev->bus, dev->slot, dev->func, 0x04, cmd);
     uint16_t after = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
     return (after & 0x6u) == 0x6u;
+}
+
+int pci_enable_io_busmaster(const pci_dev_t *dev)
+{
+    if (!dev) return 0;
+    uint16_t cmd = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
+    cmd |= (1u << 0) | (1u << 2);
+    pci_write_word(dev->bus, dev->slot, dev->func, 0x04, cmd);
+    uint16_t after = pci_read_word(dev->bus, dev->slot, dev->func, 0x04);
+    return (after & 0x5u) == 0x5u;
+}
+
+int pci_get_io_bar(const pci_dev_t *dev, unsigned int bar_idx, uint16_t *port_out)
+{
+    if (!dev || bar_idx >= 6u || !port_out) return 0;
+    uint8_t offset = (uint8_t)(0x10u + bar_idx * 4u);
+    uint32_t bar = pci_read_dword(dev->bus, dev->slot, dev->func, offset);
+
+    if (!(bar & 1u)) return 0;
+    if ((bar & 0xFFFFFC00u) == 0) return 0;
+
+    *port_out = (uint16_t)(bar & 0xFFFCu);
+    return 1;
 }
 
 int pci_get_mmio_bar(const pci_dev_t *dev, unsigned int bar_idx, uint64_t *bar_out, int *is_64_out)

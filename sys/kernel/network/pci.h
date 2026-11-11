@@ -24,9 +24,18 @@ int pci_find_class(uint8_t class_code, uint8_t subclass, uint8_t prog_if, pci_de
 
 int pci_scan_xhci(pci_dev_t *controllers, int max_controllers);
 int pci_enable_mem_busmaster(const pci_dev_t *dev);
+int pci_enable_io_busmaster(const pci_dev_t *dev);
 int pci_get_mmio_bar(const pci_dev_t *dev, unsigned int bar_idx, uint64_t *bar_out, int *is_64_out);
+int pci_get_io_bar(const pci_dev_t *dev, unsigned int bar_idx, uint16_t *port_out);
 static void pci_write_word(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset, uint16_t value);
 static uint16_t pci_read_word(uint8_t bus, uint8_t slot, uint8_t func, uint8_t offset);
 int pci_set_power_d0(const pci_dev_t *dev);
+
+uint8_t pci_inb(uint16_t port);
+void pci_outb(uint16_t port, uint8_t value);
+uint16_t pci_inw(uint16_t port);
+void pci_outw(uint16_t port, uint16_t value);
+uint32_t pci_inl(uint16_t port);
+void pci_outl(uint16_t port, uint32_t value);
 
 #endif

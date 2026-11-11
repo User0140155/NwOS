@@ -101,8 +101,10 @@ unsigned long long timer_ms(void);
 #define OP_JUMP_FALSE   0x81
 
 #define NWO_STACK_SIZE      128
-#define NWO_VARIABLES       128
+#define NWO_VARIABLES       768
 #define NWO_ARRAY_POOL_SIZE 4096
+#define NWO_MAX_FUNCTIONS   128
+#define NWO_SHADOW_POOL     2048
 
 extern int  fs_dir_count(void);
 extern int  fs_dir_entry(int, const char**, int*, unsigned int*);
@@ -237,18 +239,34 @@ typedef struct
 
 typedef struct
 {
-    int used;
-    char name[NWO_NAME_SIZE];
+    int active;
     unsigned char declared_type;
     int is_array;
-    int scope;
-    VmValue value;
     int array_start;
     unsigned int array_size;
+    int binding_frame;
+    VmValue value;
 } VmVariable;
 
 static VmValue vm_array_pool[NWO_ARRAY_POOL_SIZE];
 static int     vm_array_pool_used = 0;
+
+/* Shadow records keep the previous binding of a slot so that recursion
+   restores outer values when a frame returns (stack-disciplined pool). */
+typedef struct
+{
+    int slot;
+    int prev_active;
+    unsigned char prev_declared_type;
+    int prev_is_array;
+    int prev_array_start;
+    unsigned int prev_array_size;
+    int prev_binding_frame;
+    VmValue prev_value;
+} VmShadow;
+
+static VmShadow vm_shadow_pool[NWO_SHADOW_POOL];
+static int vm_shadow_used = 0;
 
 #define NWO_TYPE_VOID   0
 #define NWO_TYPE_STRING 7
@@ -261,19 +279,26 @@ typedef struct
     unsigned int return_ip;
     int array_pool_mark;
     int array_string_mark;
+    int shadow_mark;
 
 } VmCallFrame;
 
 typedef struct
 {
     unsigned int body_ip;
-    unsigned int param_count;
+    unsigned char param_count;
 
-    char param_names[NWO_MAX_PARAMS][NWO_NAME_SIZE];
+    unsigned int param_slots[NWO_MAX_PARAMS];
     unsigned char param_types[NWO_MAX_PARAMS];
     unsigned char param_arrays[NWO_MAX_PARAMS];
 
-} VmFunctionInfo;
+    char name[NWO_NAME_SIZE];
+
+} VmFunctionEntry;
+
+static VmFunctionEntry vm_functions[NWO_MAX_FUNCTIONS];
+static int vm_function_count = 0;
+static int vm_main_index = -1;
 
 typedef struct
 {
@@ -288,7 +313,6 @@ typedef struct
 
     VmCallFrame call_stack[NWO_MAX_CALL_DEPTH];
     int call_sp;
-    int scope_depth;
 
     int running;
 
@@ -530,14 +554,12 @@ static void vm_clear_variables(
 
     for (i = 0; i < NWO_VARIABLES; i++)
     {
-        vm->variables[i].used = 0;
+        vm->variables[i].active = 0;
         vm->variables[i].declared_type = 0;
         vm->variables[i].is_array = 0;
-        vm->variables[i].scope = 0;
         vm->variables[i].array_start = -1;
         vm->variables[i].array_size = 0;
-
-        vm->variables[i].name[0] = '\0';
+        vm->variables[i].binding_frame = -1;
 
         vm->variables[i].value.type =
             VM_NONE;
@@ -545,153 +567,113 @@ static void vm_clear_variables(
         vm->variables[i].value.string_length = 0;
         vm->variables[i].value.as.integer = 0;
     }
+
+    vm_shadow_used = 0;
 }
 
-
-static void vm_release_scope(
+/* Restore every binding created by the frame that is being popped. */
+static void vm_restore_shadows(
     NwoVM* vm,
-    int scope)
+    int mark)
 {
     int i;
 
-    for (i = 0; i < NWO_VARIABLES; i++)
+    for (i = vm_shadow_used - 1; i >= mark; i--)
     {
-        if (vm->variables[i].used &&
-            vm->variables[i].scope == scope)
-        {
-            vm->variables[i].used = 0;
-            vm->variables[i].declared_type = 0;
-            vm->variables[i].is_array = 0;
-            vm->variables[i].name[0] = '\0';
-            vm->variables[i].value.type = VM_NONE;
-            vm->variables[i].value.string_length = 0;
-            vm->variables[i].value.as.integer = 0;
-        }
+        VmShadow* rec = &vm_shadow_pool[i];
+        VmVariable* var = &vm->variables[rec->slot];
+
+        var->active = rec->prev_active;
+        var->declared_type = rec->prev_declared_type;
+        var->is_array = rec->prev_is_array;
+        var->array_start = rec->prev_array_start;
+        var->array_size = rec->prev_array_size;
+        var->binding_frame = rec->prev_binding_frame;
+        var->value = rec->prev_value;
     }
+
+    vm_shadow_used = mark;
 }
 
-
-static int vm_name_equals(
-    const char* a,
-    const char* b)
+static int vm_push_shadow(
+    NwoVM* vm,
+    unsigned int slot)
 {
-    int i = 0;
+    VmVariable* var;
+    VmShadow* rec;
 
-    if (a == 0 || b == 0)
+    if (vm_shadow_used >= NWO_SHADOW_POOL)
+    {
+        print("[NWO VM] Shadow pool exhausted.\n");
+        return 0;
+    }
+
+    var = &vm->variables[slot];
+    rec = &vm_shadow_pool[vm_shadow_used++];
+
+    rec->slot = (int)slot;
+    rec->prev_active = var->active;
+    rec->prev_declared_type = var->declared_type;
+    rec->prev_is_array = var->is_array;
+    rec->prev_array_start = var->array_start;
+    rec->prev_array_size = var->array_size;
+    rec->prev_binding_frame = var->binding_frame;
+    rec->prev_value = var->value;
+
+    return 1;
+}
+
+/* Bind a slot for the current call frame.
+   - inactive slot: activate it (recorded so the frame return releases it)
+   - same frame: reuse the existing binding (value kept)
+   - other frame (recursion): save the old binding and rebind
+   Returns 1 on success, 0 on pool overflow. */
+static int vm_bind_slot(
+    NwoVM* vm,
+    unsigned int slot)
+{
+    VmVariable* var;
+
+    if (slot >= NWO_VARIABLES)
+    {
+        print("[NWO VM] Invalid variable slot.\n");
+        return 0;
+    }
+
+    var = &vm->variables[slot];
+
+    if (!var->active)
+    {
+        if (vm->call_sp > 0)
+        {
+            if (!vm_push_shadow(vm, slot))
+                return 0;
+        }
+
+        var->active = 1;
+        var->is_array = 0;
+        var->array_start = -1;
+        var->array_size = 0;
+        var->binding_frame = vm->call_sp;
+        var->value.type = VM_NONE;
+        var->value.string_length = 0;
+        var->value.as.integer = 0;
+
+        return 1;
+    }
+
+    if (var->binding_frame == vm->call_sp)
+        return 1;
+
+    if (!vm_push_shadow(vm, slot))
         return 0;
 
-    while (a[i] != '\0' &&
-           b[i] != '\0')
-    {
-        if (a[i] != b[i])
-            return 0;
+    var->binding_frame = vm->call_sp;
+    var->value.type = VM_NONE;
+    var->value.string_length = 0;
+    var->value.as.integer = 0;
 
-        i++;
-    }
-
-    return a[i] == '\0' &&
-           b[i] == '\0';
-}
-
-
-static int vm_find_variable_in_scope(
-    NwoVM* vm,
-    const char* name,
-    int scope)
-{
-    int i;
-
-    for (i = 0; i < NWO_VARIABLES; i++)
-    {
-        if (vm->variables[i].used &&
-            vm->variables[i].scope == scope &&
-            vm_name_equals(
-                vm->variables[i].name,
-                name))
-        {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-
-static int vm_find_variable(
-    NwoVM* vm,
-    const char* name)
-{
-    int i = vm_find_variable_in_scope(
-        vm,
-        name,
-        vm->scope_depth);
-
-    if (i != -1)
-        return i;
-
-    if (vm->scope_depth > 0)
-        return vm_find_variable_in_scope(vm, name, 0);
-
-    return -1;
-}
-
-
-static int vm_declare_variable(
-    NwoVM* vm,
-    const char* name,
-    unsigned char type)
-{
-    int i;
-    int slot = -1;
-
-    if (name == 0)
-        return -1;
-    i = vm_find_variable_in_scope(vm, name, vm->scope_depth);
-    if (i != -1)
-        return i;
-    for (i = 0; i < NWO_VARIABLES; i++)
-    {
-        if (!vm->variables[i].used)
-        {
-            slot = i;
-            break;
-        }
-    }
-
-    if (slot == -1)
-    {
-        print("[NWO VM] Too many variables.\n");
-        return -1;
-    }
-
-    vm->variables[slot].used = 1;
-    vm->variables[slot].declared_type = type;
-    vm->variables[slot].is_array = 0;
-    vm->variables[slot].scope = vm->scope_depth;
-
-    i = 0;
-
-    while (name[i] != '\0' &&
-           i < NWO_NAME_SIZE - 1)
-    {
-        vm->variables[slot].name[i] =
-            name[i];
-
-        i++;
-    }
-
-    vm->variables[slot].name[i] = '\0';
-
-    vm->variables[slot].value.type =
-        VM_NONE;
-
-    vm->variables[slot].value.string_length =
-        0;
-
-    vm->variables[slot].value.as.integer =
-        0;
-
-    return slot;
+    return 1;
 }
 
 static int vm_to_int(
@@ -1041,33 +1023,31 @@ static int vm_skip_name(
     return 1;
 }
 
-static int vm_code_name_equals(
-    NwoProgram* program,
-    unsigned int start,
-    unsigned int len,
-    const char* target)
+/* freestanding name check (no libc in kernel build) */
+static int vm_name_is(const char* a, const char* b)
 {
-    unsigned int i;
+    int i = 0;
 
-    if (len >= NWO_NAME_SIZE)
-        return 0;
-
-    for (i = 0; i < len; i++)
+    while (a[i] != '\0' && b[i] != '\0')
     {
-        if (program->code[start + i] !=
-            (unsigned char)target[i])
+        if (a[i] != b[i])
             return 0;
+        i++;
     }
 
-    return target[len] == '\0';
+    return a[i] == '\0' && b[i] == '\0';
 }
 
-static int vm_find_function(
-    NwoProgram* program,
-    const char* target,
-    VmFunctionInfo* info)
+/* v3: single startup pass over the bytecode that collects the function
+   table.  The compiler assigns indices in emission order, so the scan
+   order matches.  Also resolves main(). */
+static int vm_scan_functions(
+    NwoProgram* program)
 {
     unsigned int ip = 0;
+
+    vm_function_count = 0;
+    vm_main_index = -1;
 
     while (ip < program->code_size)
     {
@@ -1077,89 +1057,87 @@ static int vm_find_function(
         {
             case OP_FUNC_BEGIN:
             {
-                unsigned int len;
-                unsigned int name_start;
+                VmFunctionEntry* entry;
+                unsigned char name_len;
                 unsigned char return_type;
                 unsigned char param_count;
                 unsigned int i;
-                VmFunctionInfo found;
 
-                if (!vm_read_len_at(program, &ip, &len))
+                if (ip + 4 > program->code_size)
                     return 0;
 
-                name_start = ip;
+                /* u32 func_index must match the scan order */
+                {
+                    unsigned int func_index =
+                        ((unsigned int)program->code[ip]) |
+                        ((unsigned int)program->code[ip + 1] << 8) |
+                        ((unsigned int)program->code[ip + 2] << 16) |
+                        ((unsigned int)program->code[ip + 3] << 24);
+                    ip += 4;
 
-                if (len > program->code_size - ip)
-                    return 0;
+                    if (func_index != (unsigned int)vm_function_count ||
+                        func_index >= NWO_MAX_FUNCTIONS)
+                    {
+                        print("[NWO VM] Corrupt function index.\n");
+                        return 0;
+                    }
+                }
 
-                ip += len;
+                entry = &vm_functions[vm_function_count];
 
                 if (ip >= program->code_size)
+                    return 0;
+
+                name_len = program->code[ip++];
+
+                if (name_len >= NWO_NAME_SIZE ||
+                    name_len > program->code_size - ip)
+                    return 0;
+
+                for (i = 0; i < name_len; i++)
+                    entry->name[i] = (char)program->code[ip + i];
+                entry->name[name_len] = '\0';
+                ip += name_len;
+
+                if (ip + 2 > program->code_size)
                     return 0;
 
                 return_type = program->code[ip++];
                 (void)return_type;
-
-                if (ip >= program->code_size)
-                    return 0;
 
                 param_count = program->code[ip++];
 
                 if (param_count > NWO_MAX_PARAMS)
                     return 0;
 
-                found.body_ip = 0;
-                found.param_count = param_count;
+                entry->param_count = param_count;
+                entry->body_ip = 0;
 
                 for (i = 0; i < param_count; i++)
                 {
-                    unsigned int plen;
-                    unsigned int pstart;
-                    unsigned int j;
-
-                    if (!vm_read_len_at(program, &ip, &plen))
+                    if (ip + 6 > program->code_size)
                         return 0;
 
-                    pstart = ip;
+                    entry->param_slots[i] =
+                        ((unsigned int)program->code[ip]) |
+                        ((unsigned int)program->code[ip + 1] << 8) |
+                        ((unsigned int)program->code[ip + 2] << 16) |
+                        ((unsigned int)program->code[ip + 3] << 24);
+                    ip += 4;
 
-                    if (plen > program->code_size - ip)
+                    if (entry->param_slots[i] >= NWO_VARIABLES)
                         return 0;
 
-                    ip += plen;
-
-                    if (ip >= program->code_size)
-                        return 0;
-
-                    found.param_types[i] = program->code[ip++];
-
-                    if (ip >= program->code_size)
-                        return 0;
-
-                    found.param_arrays[i] = program->code[ip++];
-
-                    for (j = 0;
-                         j < plen &&
-                         j < NWO_NAME_SIZE - 1;
-                         j++)
-                    {
-                        found.param_names[i][j] =
-                            (char)program->code[pstart + j];
-                    }
-
-                    found.param_names[i][j] = '\0';
+                    entry->param_types[i] = program->code[ip++];
+                    entry->param_arrays[i] = program->code[ip++];
                 }
 
-                if (vm_code_name_equals(
-                        program,
-                        name_start,
-                        len,
-                        target))
-                {
-                    found.body_ip = ip;
-                    *info = found;
-                    return 1;
-                }
+                entry->body_ip = ip;
 
+                if (vm_name_is(entry->name, "main"))
+                    vm_main_index = vm_function_count;
+
+                vm_function_count++;
                 break;
             }
 
@@ -1177,11 +1155,6 @@ static int vm_find_function(
                 break;
 
             case OP_PUSH_INT32:
-                if (ip + 4 > program->code_size)
-                    return 0;
-                ip += 4;
-                break;
-
             case OP_PUSH_CHAR:
                 if (ip + 4 > program->code_size)
                     return 0;
@@ -1199,51 +1172,32 @@ static int vm_find_function(
                     return 0;
                 break;
 
-            case OP_FS_COUNT:
-            case OP_FS_NAME:
-            case OP_FS_TYPE:
-            case OP_FS_SIZE:
-            case OP_FS_ENTER:
-            case OP_FS_UP:
-            case OP_FS_PATH:
-            case OP_RAM_MB:
-            case OP_UPTIME_SEC:
-            case OP_DISK_KB:
-            case OP_DISK_FILES:
-            case OP_POLLKEY:
-            case OP_RANDOM_WORD:
-                break;
             case OP_LOAD:
             case OP_STORE:
             case OP_IN_STORE:
             case OP_LOAD_ARR:
             case OP_STORE_ARR:
-                if (!vm_skip_name(program, &ip))
-                    return 0;
-                break;
-
-            case OP_CALL:
-                if (!vm_skip_name(program, &ip))
-                    return 0;
                 if (ip + 4 > program->code_size)
                     return 0;
                 ip += 4;
                 break;
 
-            case OP_DECLARE:
-                if (!vm_skip_name(program, &ip))
+            case OP_CALL:
+                if (ip + 8 > program->code_size)
                     return 0;
-                if (ip + 1 > program->code_size)
-                    return 0;
-                ip += 1;
+                ip += 8;
                 break;
 
-            case OP_DECLARE_ARR:
-                if (!vm_skip_name(program, &ip))
-                    return 0;
+            case OP_DECLARE:
                 if (ip + 5 > program->code_size)
                     return 0;
                 ip += 5;
+                break;
+
+            case OP_DECLARE_ARR:
+                if (ip + 9 > program->code_size)
+                    return 0;
+                ip += 9;
                 break;
 
             case OP_LINE_IN:
@@ -1262,10 +1216,14 @@ static int vm_find_function(
 
                 ip += 4;
 
+                if (count > NWO_VARIABLES)
+                    return 0;
+
                 for (i = 0; i < count; i++)
                 {
-                    if (!vm_skip_name(program, &ip))
+                    if (ip + 4 > program->code_size)
                         return 0;
+                    ip += 4;
                 }
 
                 break;
@@ -1283,19 +1241,11 @@ static int vm_find_function(
         }
     }
 
-    return 0;
-}
-
-static int vm_find_main(
-    NwoProgram* program,
-    unsigned int* main_ip)
-{
-    VmFunctionInfo info;
-
-    if (!vm_find_function(program, "main", &info))
+    if (vm_main_index == -1)
+    {
+        print("[NWO VM] main() not found.\n");
         return 0;
-
-    *main_ip = info.body_ip;
+    }
 
     return 1;
 }
@@ -1306,10 +1256,14 @@ int nwo_execute(
     fb_set_backbuffer_enabled(program->version >= 2);
     NwoVM vm;
 
-    unsigned int main_ip;
-
     if (program == 0)
         return -1;
+
+    if (program->version != 3)
+    {
+        print("[NWO VM] Unsupported NWO version (need 3, recompile the program).\n");
+        return -1;
+    }
 
     if (program->code == 0 ||
         program->code_size == 0)
@@ -1323,7 +1277,6 @@ int nwo_execute(
 
     vm.sp = 0;
     vm.call_sp = 0;
-    vm.scope_depth = 0;
 
     vm.running = 1;
     vm.result = 0;
@@ -1337,14 +1290,11 @@ int nwo_execute(
     vm.text_color = 7;
     set_color(vm.text_color);
 
-    if (!vm_find_main(
-            program,
-            &main_ip))
+    if (!vm_scan_functions(program))
     {
-        print("[NWO VM] main() not found.\n");
         return -1;
     }
-    vm.ip = main_ip;
+    vm.ip = vm_functions[vm_main_index].body_ip;
 
 
     while (vm.running)
@@ -1589,92 +1539,40 @@ int nwo_execute(
 
             case OP_DECLARE:
             {
-                unsigned int len;
-                const char* name;
-
+                unsigned int slot;
                 unsigned char type;
 
-                char temp[NWO_NAME_SIZE];
+                if (!vm_read_u32(&vm, &slot))
+                    return -1;
 
-                unsigned int i;
+                if (!vm_read_u8(&vm, &type))
+                    return -1;
 
-                if (!vm_read_len(&vm, &len))
+                if (slot >= NWO_VARIABLES)
                 {
+                    print("[NWO VM] Invalid variable slot.\n");
                     return -1;
                 }
 
-                if (len >= NWO_NAME_SIZE)
-                {
-                    print(
-                        "[NWO VM] Variable name too long.\n");
-
+                if (!vm_bind_slot(&vm, slot))
                     return -1;
-                }
 
-                if (vm.ip + len >
-                    program->code_size)
-                {
-                    return -1;
-                }
-
-                name =
-                    (const char*)
-                    (program->code + vm.ip);
-
-                vm.ip += len;
-
-                if (!vm_read_u8(
-                        &vm,
-                        &type))
-                {
-                    return -1;
-                }
-
-                for (i = 0;
-                     i < len;
-                     i++)
-                {
-                    temp[i] = name[i];
-                }
-
-                temp[len] = '\0';
-
-                if (vm_declare_variable(
-                        &vm,
-                        temp,
-                        type) == -1)
-                {
-                    return -1;
-                }
+                if (!vm.variables[slot].active ||
+                    vm.variables[slot].declared_type == 0)
+                    vm.variables[slot].declared_type = type;
 
                 break;
             }
 
-        case OP_DECLARE_ARR:            
-    {
-        unsigned int len;
-        const char* name;
-        unsigned char type;
-        unsigned int size;
-        char temp[NWO_NAME_SIZE];
-        unsigned int i;
-        int index;
-        unsigned int k;
+            case OP_DECLARE_ARR:
+            {
+                unsigned int slot;
+                unsigned char type;
+                unsigned int size;
+                unsigned int k;
 
-        if (!vm_read_len(&vm, &len))
-            return -1;
-
-        if (len >= NWO_NAME_SIZE)
-        {
-            print("[NWO VM] Variable name too long.\n");
-                return -1;
-            }
-
-            if (vm.ip + len > program->code_size)
-                return -1;
-
-                name = (const char*)(program->code + vm.ip);
-                vm.ip += len;
+                if (!vm_read_u32(&vm, &slot))
+                    return -1;
 
                 if (!vm_read_u8(&vm, &type))
                     return -1;
@@ -1682,19 +1580,19 @@ int nwo_execute(
                 if (!vm_read_u32(&vm, &size))
                     return -1;
 
-                for (i = 0; i < len; i++)
-                    temp[i] = name[i];
+                if (slot >= NWO_VARIABLES)
+                {
+                    print("[NWO VM] Invalid variable slot.\n");
+                    return -1;
+                }
 
-                temp[len] = '\0';
-
-                index = vm_declare_variable(&vm, temp, type);
-
-                if (index == -1)
+                if (!vm_bind_slot(&vm, slot))
                     return -1;
 
-                vm.variables[index].is_array = 1;
-                vm.variables[index].array_size = size;
-                vm.variables[index].array_start = -1;
+                vm.variables[slot].declared_type = type;
+                vm.variables[slot].is_array = 1;
+                vm.variables[slot].array_size = size;
+                vm.variables[slot].array_start = -1;
 
                 if (type != NWO_TYPE_VOID && size > 0)
                 {
@@ -1711,28 +1609,28 @@ int nwo_execute(
                         return -1;
                     }
 
-                    vm.variables[index].array_start = vm_array_pool_used;
+                    vm.variables[slot].array_start = vm_array_pool_used;
                     vm_array_pool_used += (int)size;
 
                     for (k = 0; k < size; k++)
                     {
-                        VmValue* slot =
-                            &vm_array_pool[vm.variables[index].array_start + k];
+                        VmValue* elem =
+                            &vm_array_pool[vm.variables[slot].array_start + k];
 
                         if (type == NWO_TYPE_STRING)
                         {
-                            slot->type = VM_STRING;
-                            slot->string_length = 0;
-                            slot->as.string =
+                            elem->type = VM_STRING;
+                            elem->string_length = 0;
+                            elem->as.string =
                                 vm_array_string_storage[vm_array_string_used];
                             vm_array_string_storage[vm_array_string_used][0] = '\0';
                             vm_array_string_used++;
                         }
                         else
                         {
-                            slot->type = VM_INT;
-                            slot->as.integer = 0;
-                            slot->string_length = 0;
+                            elem->type = VM_INT;
+                            elem->as.integer = 0;
+                            elem->string_length = 0;
                         }
                     }
                 }
@@ -1742,190 +1640,85 @@ int nwo_execute(
 
             case OP_LOAD:
             {
-                unsigned int len;
-                const char* name;
-
-                char temp[NWO_NAME_SIZE];
-
-                unsigned int i;
-
-                int index;
-
+                unsigned int slot;
                 VmValue value;
 
-                if (!vm_read_len(&vm, &len))
+                if (!vm_read_u32(&vm, &slot))
+                    return -1;
+
+                if (slot >= NWO_VARIABLES ||
+                    !vm.variables[slot].active)
                 {
+                    print("[NWO VM] Variable used before assignment (slot ");
+                    print_int((int)slot);
+                    print(").\n");
                     return -1;
                 }
 
-                if (len >= NWO_NAME_SIZE)
-                {
-                    print(
-                        "[NWO VM] Variable name too long.\n");
+                value = vm.variables[slot].value;
 
-                    return -1;
-                }
-
-                if (vm.ip + len >
-                    program->code_size)
-                {
-                    return -1;
-                }
-
-                name =
-                    (const char*)
-                    (program->code + vm.ip);
-
-                vm.ip += len;
-
-                for (i = 0;
-                     i < len;
-                     i++)
-                {
-                    temp[i] = name[i];
-                }
-
-                temp[len] = '\0';
-
-                index =
-                    vm_find_variable(
-                        &vm,
-                        temp);
-
-                if (index == -1)
-                {
-                    print(
-                        "[NWO VM] Unknown variable: ");
-
-                    print(temp);
-                    putchar_os('\n');
-
-                    return -1;
-                }
-
-                value =
-                    vm.variables[index].value;
                 if (value.type == VM_NONE)
                 {
-                    value.type =
-                        VM_INT;
-
-                    value.as.integer =
-                        0;
+                    value.type = VM_INT;
+                    value.as.integer = 0;
                 }
 
-                if (!vm_push(
-                        &vm,
-                        value))
-                {
+                if (!vm_push(&vm, value))
                     return -1;
-                }
 
                 break;
             }
 
             case OP_STORE:
             {
-                unsigned int len;
-                const char* name;
-
-                char temp[NWO_NAME_SIZE];
-
-                unsigned int i;
-
-                int index;
-
+                unsigned int slot;
                 VmValue value;
-                if (!vm_pop(
-                        &vm,
-                        &value))
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+
+                if (!vm_read_u32(&vm, &slot))
+                    return -1;
+
+                if (slot >= NWO_VARIABLES)
                 {
+                    print("[NWO VM] Invalid variable slot.\n");
                     return -1;
                 }
 
-                if (!vm_read_len(&vm, &len))
+                /* auto-activate on first store (auto-declare semantics) */
+                if (!vm.variables[slot].active)
                 {
-                    return -1;
+                    if (!vm_bind_slot(&vm, slot))
+                        return -1;
+
+                    vm.variables[slot].declared_type = 1;
                 }
 
-                if (len >= NWO_NAME_SIZE)
-                {
-                    print(
-                        "[NWO VM] Variable name too long.\n");
-
-                    return -1;
-                }
-
-                if (vm.ip + len >
-                    program->code_size)
-                {
-                    return -1;
-                }
-
-                name =
-                    (const char*)
-                    (program->code + vm.ip);
-
-                vm.ip += len;
-
-                for (i = 0;
-                     i < len;
-                     i++)
-                {
-                    temp[i] =
-                        name[i];
-                }
-
-                temp[len] = '\0';
-
-                index =
-                    vm_find_variable(
-                        &vm,
-                        temp);
-
-                if (index == -1)
-                {
-                    index =
-                        vm_declare_variable(
-                            &vm,
-                            temp,
-                            1);
-                }
-
-                if (index == -1)
-                    return -1;
-
-                vm.variables[index].value =
-                    value;
+                vm.variables[slot].value = value;
 
                 break;
             }
 
             case OP_LOAD_ARR:
             {
-                unsigned int len;
-                char temp[NWO_NAME_SIZE];
-                const char* name;
+                unsigned int slot;
                 VmValue idx_val;
-                unsigned int i;
-                int var_idx;
+                int idx;
+                VmVariable* v;
 
-                if (!vm_read_len(&vm, &len)) return -1;
-                if (len >= NWO_NAME_SIZE) return -1;
-                if (vm.ip + len > program->code_size) return -1;
-                name = (const char*)(program->code + vm.ip);
-                vm.ip += len;
-
-                for (i = 0; i < len; i++) temp[i] = name[i];
-                temp[len] = '\0';
+                if (!vm_read_u32(&vm, &slot)) return -1;
 
                 if (!vm_pop(&vm, &idx_val)) return -1;
-                int idx = vm_to_int(&idx_val);
+                idx = vm_to_int(&idx_val);
 
-                var_idx = vm_find_variable(&vm, temp);
-                if (var_idx == -1) { print("[NWO VM] Unknown array.\n"); return -1; }
+                if (slot >= NWO_VARIABLES || !vm.variables[slot].active)
+                {
+                    print("[NWO VM] Unknown array.\n");
+                    return -1;
+                }
 
-                VmVariable* v = &vm.variables[var_idx];
+                v = &vm.variables[slot];
                 if (!v->is_array || v->array_start < 0 ||
                     idx < 0 || idx >= (int)v->array_size)
                 {
@@ -1939,30 +1732,24 @@ int nwo_execute(
 
             case OP_STORE_ARR:
             {
-                unsigned int len;
-                char temp[NWO_NAME_SIZE];
-                const char* name;
+                unsigned int slot;
                 VmValue val, idx_val;
-                unsigned int i;
-                int var_idx;
+                int idx;
+                VmVariable* v;
 
-                if (!vm_read_len(&vm, &len)) return -1;
-                if (len >= NWO_NAME_SIZE) return -1;
-                if (vm.ip + len > program->code_size) return -1;
-                name = (const char*)(program->code + vm.ip);
-                vm.ip += len;
-
-                for (i = 0; i < len; i++) temp[i] = name[i];
-                temp[len] = '\0';
+                if (!vm_read_u32(&vm, &slot)) return -1;
 
                 if (!vm_pop(&vm, &val))     return -1;
                 if (!vm_pop(&vm, &idx_val)) return -1;
-                int idx = vm_to_int(&idx_val);
+                idx = vm_to_int(&idx_val);
 
-                var_idx = vm_find_variable(&vm, temp);
-                if (var_idx == -1) { print("[NWO VM] Unknown array.\n"); return -1; }
+                if (slot >= NWO_VARIABLES || !vm.variables[slot].active)
+                {
+                    print("[NWO VM] Unknown array.\n");
+                    return -1;
+                }
 
-                VmVariable* v = &vm.variables[var_idx];
+                v = &vm.variables[slot];
                 if (!v->is_array || v->array_start < 0 ||
                     idx < 0 || idx >= (int)v->array_size)
                 {
@@ -2457,48 +2244,30 @@ int nwo_execute(
 
             case OP_IN_STORE:
             {
-                unsigned int len;
-                const char* name;
-                char temp[NWO_NAME_SIZE];
+                unsigned int slot;
                 char buffer[NWO_INPUT_SIZE];
-                unsigned int i;
-                int index;
                 VmVariable* variable;
 
-                if (!vm_read_len(&vm, &len))
+                if (!vm_read_u32(&vm, &slot))
                     return -1;
 
-                if (len >= NWO_NAME_SIZE)
+                if (slot >= NWO_VARIABLES)
                 {
-                    print(
-                        "[NWO VM] Variable name too long.\n");
+                    print("[NWO VM] Invalid variable slot.\n");
                     return -1;
                 }
-
-                if (vm.ip + len > program->code_size)
-                    return -1;
-
-                name = (const char*)(program->code + vm.ip);
-                vm.ip += len;
-
-                for (i = 0; i < len; i++)
-                    temp[i] = name[i];
-
-                temp[len] = '\0';
 
                 read_line(buffer, NWO_INPUT_SIZE);
 
-                index = vm_find_variable(&vm, temp);
-
-                if (index == -1)
+                if (!vm.variables[slot].active)
                 {
-                    index = vm_declare_variable(&vm, temp, 1);
-
-                    if (index == -1)
+                    if (!vm_bind_slot(&vm, slot))
                         return -1;
+
+                    vm.variables[slot].declared_type = 1;
                 }
 
-                variable = &vm.variables[index];
+                variable = &vm.variables[slot];
 
                 if (variable->declared_type == 7 ||
                     variable->is_array)
@@ -2508,17 +2277,17 @@ int nwo_execute(
                     while (buffer[length] != '\0' &&
                            length < NWO_INPUT_SIZE - 1)
                     {
-                        vm_string_storage[index][length] =
+                        vm_string_storage[slot][length] =
                             buffer[length];
                         length++;
                     }
 
-                    vm_string_storage[index][length] = '\0';
+                    vm_string_storage[slot][length] = '\0';
 
                     variable->value.type = VM_STRING;
                     variable->value.string_length = length;
                     variable->value.as.string =
-                        vm_string_storage[index];
+                        vm_string_storage[slot];
                 }
                 else
                 {
@@ -2556,9 +2325,7 @@ int nwo_execute(
 
                 static char line_storage[NWO_INPUT_SIZE];
 
-                if (!vm_read_u32(
-                        &vm,
-                        &count))
+                if (!vm_read_u32(&vm, &count))
                 {
                     return -1;
                 }
@@ -2567,72 +2334,33 @@ int nwo_execute(
                      item < count;
                      item++)
                 {
-                    unsigned int len;
-                    const char* name;
+                    unsigned int slot;
+                    VmVariable* variable;
 
-                    char temp[NWO_NAME_SIZE];
+                    if (!vm_read_u32(&vm, &slot))
+                        return -1;
 
-                    unsigned int i;
-
-                    int index;
-
-                    if (!vm_read_len(&vm, &len))
+                    if (slot >= NWO_VARIABLES)
                     {
+                        print("[NWO VM] Invalid variable slot.\n");
                         return -1;
                     }
-
-                    if (len >= NWO_NAME_SIZE)
-                    {
-                        print(
-                            "[NWO VM] Variable name too long.\n");
-
-                        return -1;
-                    }
-
-                    if (vm.ip + len >
-                        program->code_size)
-                    {
-                        return -1;
-                    }
-
-                    name =
-                        (const char*)
-                        (program->code + vm.ip);
-
-                    vm.ip += len;
-
-                    for (i = 0;
-                         i < len;
-                         i++)
-                    {
-                        temp[i] =
-                            name[i];
-                    }
-
-                    temp[len] = '\0';
 
                     read_line(
                         line_storage,
                         NWO_INPUT_SIZE);
 
-                    index =
-                        vm_find_variable(
-                            &vm,
-                            temp);
-
-                    if (index == -1)
+                    if (!vm.variables[slot].active)
                     {
-                        index =
-                            vm_declare_variable(
-                                &vm,
-                                temp,
-                                7);
+                        if (!vm_bind_slot(&vm, slot))
+                            return -1;
+
+                        vm.variables[slot].declared_type = 7;
                     }
 
-                    if (index == -1)
-                        return -1;
+                    variable = &vm.variables[slot];
 
-                    vm.variables[index].value.type =
+                    variable->value.type =
                         VM_STRING;
 
                     {
@@ -2644,11 +2372,11 @@ int nwo_execute(
                             length++;
                         }
 
-                        vm.variables[index].value.string_length =
+                        variable->value.string_length =
                             length;
                     }
 
-                    vm.variables[index].value.as.string =
+                    variable->value.as.string =
                         line_storage;
                 }
 
@@ -3100,43 +2828,29 @@ int nwo_execute(
 
             case OP_CALL:
             {
-                unsigned int len;
+                unsigned int func_index;
                 unsigned int argc;
                 unsigned int i;
-                char name[NWO_NAME_SIZE];
-                VmFunctionInfo info;
+                VmFunctionEntry* func;
 
-                if (!vm_read_len(&vm, &len))
+                if (!vm_read_u32(&vm, &func_index))
                     return -1;
-
-                if (len >= NWO_NAME_SIZE ||
-                    vm.ip + len > program->code_size)
-                {
-                    print("[NWO VM] Invalid function name.\n");
-                    return -1;
-                }
-
-                for (i = 0; i < len; i++)
-                    name[i] = (char)program->code[vm.ip + i];
-
-                name[len] = '\0';
-                vm.ip += len;
 
                 if (!vm_read_u32(&vm, &argc))
                     return -1;
 
-                if (!vm_find_function(program, name, &info))
+                if (func_index >= (unsigned int)vm_function_count)
                 {
-                    print("[NWO VM] Unknown function: ");
-                    print(name);
-                    putchar_os('\n');
+                    print("[NWO VM] Unknown function index.\n");
                     return -1;
                 }
 
-                if (argc != info.param_count)
+                func = &vm_functions[func_index];
+
+                if (argc != func->param_count)
                 {
                     print("[NWO VM] Wrong argument count for ");
-                    print(name);
+                    print(func->name);
                     putchar_os('\n');
                     return -1;
                 }
@@ -3150,31 +2864,28 @@ int nwo_execute(
                 vm.call_stack[vm.call_sp].return_ip = vm.ip;
                 vm.call_stack[vm.call_sp].array_pool_mark = vm_array_pool_used;
                 vm.call_stack[vm.call_sp].array_string_mark = vm_array_string_used;
+                vm.call_stack[vm.call_sp].shadow_mark = vm_shadow_used;
                 vm.call_sp++;
-                vm.scope_depth = vm.call_sp;
 
-                for (i = info.param_count; i > 0; i--)
+                for (i = func->param_count; i > 0; i--)
                 {
                     VmValue value;
-                    int index;
+                    unsigned int slot = func->param_slots[i - 1];
 
                     if (!vm_pop(&vm, &value))
                         return -1;
 
-                    index = vm_declare_variable(
-                        &vm,
-                        info.param_names[i - 1],
-                        info.param_types[i - 1]);
-
-                    if (index == -1)
+                    if (!vm_bind_slot(&vm, slot))
                         return -1;
 
-                    vm.variables[index].is_array =
-                        info.param_arrays[i - 1];
-                    vm.variables[index].value = value;
+                    vm.variables[slot].declared_type =
+                        func->param_types[i - 1];
+                    vm.variables[slot].is_array =
+                        func->param_arrays[i - 1];
+                    vm.variables[slot].value = value;
                 }
 
-                vm.ip = info.body_ip;
+                vm.ip = func->body_ip;
 
                 break;
             }
@@ -3224,11 +2935,8 @@ int nwo_execute(
 
                 if (vm.call_sp > 0)
                 {
-                    int finished_scope = vm.call_sp;
-
                     vm.call_sp--;
-                    vm.scope_depth = vm.call_sp;
-                    vm_release_scope(&vm, finished_scope);
+                    vm_restore_shadows(&vm, vm.call_stack[vm.call_sp].shadow_mark);
                     vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
                     vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;
@@ -3263,11 +2971,8 @@ int nwo_execute(
 
                 if (vm.call_sp > 0)
                 {
-                    int finished_scope = vm.call_sp;
-
                     vm.call_sp--;
-                    vm.scope_depth = vm.call_sp;
-                    vm_release_scope(&vm, finished_scope);
+                    vm_restore_shadows(&vm, vm.call_stack[vm.call_sp].shadow_mark);
                     vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
                     vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;
@@ -3293,11 +2998,8 @@ int nwo_execute(
 
                 if (vm.call_sp > 0)
                 {
-                    int finished_scope = vm.call_sp;
-
                     vm.call_sp--;
-                    vm.scope_depth = vm.call_sp;
-                    vm_release_scope(&vm, finished_scope);
+                    vm_restore_shadows(&vm, vm.call_stack[vm.call_sp].shadow_mark);
                     vm_array_pool_used = vm.call_stack[vm.call_sp].array_pool_mark;
                     vm_array_string_used = vm.call_stack[vm.call_sp].array_string_mark;
                     vm.ip = vm.call_stack[vm.call_sp].return_ip;

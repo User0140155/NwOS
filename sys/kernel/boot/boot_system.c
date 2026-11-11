@@ -1,6 +1,6 @@
 #define NWOS_INCLUDE_LOGONWOS_H
 #include "nwos_internal.h"
-#include "audio/hda.h"
+#include "audio/audio.h"
 
 static int boot_text_width(const char* text);
 static void boot_splash(void);
@@ -55,7 +55,7 @@ static void boot_splash(void)
     for (int i = 0; i <= 100; i += 4)
     {
         fb_draw_rect(bar_x, bar_y, (bar_width * i) / 100, 8, 0x003FA9C8);
-        hda_service();
+        audio_service();
         sleep(15);
     }
 
@@ -80,7 +80,7 @@ void boot_system(void)
     boot_splash();
 
     sleep(1200);
-    hda_wait();
+    audio_wait();
 
     clear();
 

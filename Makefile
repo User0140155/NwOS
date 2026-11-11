@@ -87,7 +87,12 @@ SOURCES_REL := \
     sys/kernel/config/settings_load.c \
     sys/kernel/config/settings_save.c \
     sys/kernel/config/shell_prompt_text.c \
+    sys/kernel/audio/audio.c \
     sys/kernel/audio/hda.c \
+    sys/kernel/audio/ac97.c \
+    sys/kernel/audio/es1370.c \
+    sys/kernel/audio/sb16.c \
+    sys/kernel/audio/audiostat.c \
     sys/kernel/audio/listen.c \
     sys/kernel/audio/startup_sound.c \
     sys/kernel/fs/chain.c \

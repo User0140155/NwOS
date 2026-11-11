@@ -627,6 +627,7 @@ void cmd_cd_path(const char* args);
 void run_nwo_from_dir( const char* dir_path, const char* filename );
 void cmd_disks(void);
 void cmd_listen(const char* args);
+void cmd_audio(void);
 int resolve_drive_arg(const char* args);
 void cmd_drive(const char* args);
 void cmd_drive_status(void);

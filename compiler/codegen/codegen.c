@@ -4,24 +4,19 @@
 
 #include "codegen.h"
 
-
-/* o====================================o
-   Format .nwo (Nw Object)            
-     NWOB\0           4 byte  (magic)
-     version           1 byte
-     reserve           3 byte
-     code size      4 byte  (LE, uint32)
-     data size    4 bytes  (LE, uint32)
-     point     4 bytes  (LE, uint32)
-   o====================================o */
-
 #define NWO_MAGIC       "NWOB"
-#define NWO_VERSION     2
+#define NWO_VERSION     3
 #define NWO_FLAG_NORMAL   0x00
 #define NWO_FLAG_LOWLEVEL 0x01
 
 #define NWO_MAX_LOOPS 16
 #define NWO_MAX_BREAKS 64
+
+#define NWO_MAX_SLOTS     768
+#define NWO_MAX_FUNCTIONS 128
+#define NWO_MAX_PARAMS_V3 16
+#define NWO_MAX_FIXUPS    512
+#define NWO_NAME_SIZE_V3  32
 
 typedef struct
 {
@@ -39,7 +34,40 @@ typedef struct
     long break_patch[NWO_MAX_BREAKS];
     int break_count;
 
+    int current_owner;
+
 } Codegen;
+
+
+typedef struct
+{
+    char name[NWO_NAME_SIZE_V3];
+    int owner;
+} CgSymbol;
+
+typedef struct
+{
+    long pos;
+    const char* name;
+    int owner;
+    int is_store;
+    int slot;
+} CgFixup;
+
+typedef struct
+{
+    char name[NWO_NAME_SIZE_V3];
+} CgFunc;
+
+static CgSymbol cg_symbols[NWO_MAX_SLOTS];
+static int cg_sym_count;
+
+static CgFixup cg_fixups[NWO_MAX_FIXUPS];
+static int cg_fixup_count;
+
+static CgFunc cg_funcs[NWO_MAX_FUNCTIONS];
+static int cg_func_count;
+static int cg_main_func;
 
 static void cg_error(Codegen* cg, const char* msg)
 {
@@ -151,6 +179,191 @@ static void cg_patch_jump(Codegen* cg, long position, long target)
 
     if (saved >= 0)
         fseek(cg->file, saved, SEEK_SET);
+}
+
+/* ---- v3 symbol resolution ---- */
+
+static int cg_sym_find(const char* name, int owner)
+{
+    int i;
+
+    if (name == NULL)
+        return -1;
+
+    for (i = 0; i < cg_sym_count; i++)
+    {
+        if (cg_symbols[i].owner == owner &&
+            strcmp(cg_symbols[i].name, name) == 0)
+        {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static int cg_sym_add(const char* name, int owner, const char* what)
+{
+    size_t len;
+
+    if (name == NULL)
+    {
+        fprintf(stderr, "NwC codegen: %s without name\n", what);
+        return -1;
+    }
+
+    len = strlen(name);
+
+    if (len >= NWO_NAME_SIZE_V3)
+    {
+        fprintf(stderr, "NwC codegen: %s name too long '%s'\n", what, name);
+        return -1;
+    }
+
+    if (cg_sym_count >= NWO_MAX_SLOTS)
+    {
+        fprintf(stderr, "NwC codegen: too many variables (max %d)\n",
+                NWO_MAX_SLOTS);
+        return -1;
+    }
+
+    memcpy(cg_symbols[cg_sym_count].name, name, len + 1);
+    cg_symbols[cg_sym_count].owner = owner;
+
+    return cg_sym_count++;
+}
+
+static int cg_func_index(const char* name)
+{
+    int i;
+
+    if (name == NULL)
+        return -1;
+
+    for (i = 0; i < cg_func_count; i++)
+    {
+        if (strcmp(cg_funcs[i].name, name) == 0)
+            return i;
+    }
+
+    return -1;
+}
+
+static int cg_emit_slot(Codegen* cg, const char* name, int is_store)
+{
+    int slot;
+
+    if (cg->error)
+        return 0;
+
+    slot = cg_sym_find(name, cg->current_owner);
+
+    if (slot == -1 && cg->current_owner != cg_main_func)
+        slot = cg_sym_find(name, cg_main_func);
+
+    if (slot != -1)
+    {
+        cg_emit_u32(cg, (unsigned int)slot);
+        return 1;
+    }
+
+    if (cg_fixup_count >= NWO_MAX_FIXUPS)
+    {
+        cg_error(cg, "too many unresolved variable references");
+        return 0;
+    }
+
+    cg_fixups[cg_fixup_count].pos = ftell(cg->file);
+    cg_fixups[cg_fixup_count].name = name;
+    cg_fixups[cg_fixup_count].owner = cg->current_owner;
+    cg_fixups[cg_fixup_count].is_store = is_store;
+    cg_fixup_count++;
+
+    cg_emit_u32(cg, 0xFFFFFFFFu);
+
+    return 1;
+}
+
+/* Emit the slot operand for a declaration inside the current function.
+   Redeclaration in the same function reuses the slot (old VM semantics),
+   otherwise a fresh slot is allocated. */
+static int cg_emit_decl_slot(Codegen* cg, const char* name)
+{
+    int slot;
+
+    if (cg->error)
+        return 0;
+
+    slot = cg_sym_find(name, cg->current_owner);
+
+    if (slot == -1)
+        slot = cg_sym_add(name, cg->current_owner, "variable");
+
+    if (slot == -1)
+    {
+        cg->error = 1;
+        return 0;
+    }
+
+    cg_emit_u32(cg, (unsigned int)slot);
+    return 1;
+}
+
+static void cg_fixup_patch(Codegen* cg, CgFixup* fx)
+{
+    cg_patch_jump(cg, fx->pos, fx->slot);
+}
+
+static void cg_process_fixups(Codegen* cg)
+{
+    int pass;
+    int i;
+
+    /* Phase 1: main's references first (main runs first at runtime, so
+       its auto-declared variables must exist before functions see them).
+       Phase 2: everything else in emission order. */
+    for (pass = 0; pass < 2; pass++)
+    {
+        for (i = 0; i < cg_fixup_count; i++)
+        {
+            CgFixup* fx = &cg_fixups[i];
+            int slot;
+
+            if (cg->error)
+                return;
+
+            if ((fx->owner == cg_main_func) != (pass == 0))
+                continue;
+
+            slot = cg_sym_find(fx->name, fx->owner);
+
+            if (slot == -1 && fx->owner != cg_main_func)
+                slot = cg_sym_find(fx->name, cg_main_func);
+
+            if (slot == -1)
+            {
+                if (!fx->is_store)
+                {
+                    fprintf(stderr,
+                            "NwC codegen: undefined variable '%s'\n",
+                            fx->name);
+                    cg->error = 1;
+                    return;
+                }
+
+                slot = cg_sym_add(fx->name, fx->owner, "variable");
+
+                if (slot == -1)
+                {
+                    cg->error = 1;
+                    return;
+                }
+            }
+
+            fx->slot = slot;
+            cg_fixup_patch(cg, fx);
+        }
+    }
 }
 
 typedef enum
@@ -537,7 +750,7 @@ static void cg_expression(Codegen* cg, ASTNode* node)
             else
             {
                 cg_emit_byte(cg, OP_LOAD);
-                cg_emit_string(cg, node->text);
+                cg_emit_slot(cg, node->text, 0);
             }
 
             break;
@@ -568,7 +781,7 @@ static void cg_expression(Codegen* cg, ASTNode* node)
         case AST_INDEX:
             cg_expression(cg, node->child);
             cg_emit_byte (cg, OP_LOAD_ARR);
-            cg_emit_string(cg, node->text);
+            cg_emit_slot(cg, node->text, 0);
             break;
 
         case AST_CALL:
@@ -627,14 +840,16 @@ static void cg_variable_decl(Codegen* cg, ASTNode* node)
     if (node->type == AST_ARRAY_DECLARATION)
     {
         cg_emit_byte(cg, OP_DECLARE_ARR);
-        cg_emit_string(cg, node->text);
+        if (!cg_emit_decl_slot(cg, node->text))
+            return;
         cg_emit_byte(cg, cg_type_byte(node->value_type));
         cg_emit_u32(cg, node->array_size);
     }
     else
     {
         cg_emit_byte(cg, OP_DECLARE);
-        cg_emit_string(cg, node->text);
+        if (!cg_emit_decl_slot(cg, node->text))
+            return;
         cg_emit_byte(cg, cg_type_byte(node->value_type));
     }
     if (node->child != NULL)
@@ -642,7 +857,7 @@ static void cg_variable_decl(Codegen* cg, ASTNode* node)
         cg_expression(cg, node->child);
 
         cg_emit_byte(cg, OP_STORE);
-        cg_emit_string(cg, node->text);
+        cg_emit_slot(cg, node->text, 1);
     }
 }
 
@@ -753,7 +968,7 @@ static void cg_input(Codegen* cg, ASTNode* node)
         node->child->type == AST_IDENTIFIER)
     {
         cg_emit_byte(cg, OP_IN_STORE);
-        cg_emit_string(cg, node->child->text);
+        cg_emit_slot(cg, node->child->text, 1);
     }
     else
     {
@@ -789,7 +1004,7 @@ static void cg_line_input(Codegen* cg, ASTNode* node)
 
     cg_emit_byte(cg, OP_LINE_IN);
     cg_emit_u32(cg, 1);
-    cg_emit_string(cg, target->text);
+    cg_emit_slot(cg, target->text, 1);
 }
 
 
@@ -1255,6 +1470,16 @@ static int cg_call(Codegen* cg, ASTNode* node)
     {
         ASTNode* arg = node->child;
         int count = 0;
+        int func_index = cg_func_index(node->text);
+
+        if (func_index == -1)
+        {
+            fprintf(stderr,
+                    "NwC codegen: unknown function '%s'\n",
+                    node->text);
+            cg->error = 1;
+            return 0;
+        }
 
         while (arg != NULL)
         {
@@ -1264,7 +1489,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
         }
 
         cg_emit_byte(cg, OP_CALL);
-        cg_emit_string(cg, node->text);
+        cg_emit_u32(cg, (unsigned int)func_index);
         cg_emit_u32(cg, (unsigned int)count);
     }
 
@@ -1373,13 +1598,13 @@ static void cg_statement(Codegen* cg, ASTNode* node)
                 cg_expression(cg, node->left);
                 cg_expression(cg, node->child);
                 cg_emit_byte (cg, OP_STORE_ARR);
-                cg_emit_string(cg, node->text);
+                cg_emit_slot(cg, node->text, 1);
             }
             else
             {
                 cg_expression(cg, node->child);
                 cg_emit_byte (cg, OP_STORE);
-                cg_emit_string(cg, node->text);
+                cg_emit_slot(cg, node->text, 1);
             }
             break;
 
@@ -1456,10 +1681,20 @@ static void cg_function(Codegen* cg, ASTNode* node)
 {
     ASTNode* param;
     int param_count = 0;
+    int func_index;
+    int saved_owner;
 
     if (node->text == NULL)
     {
         cg_error(cg, "function without name");
+        return;
+    }
+
+    func_index = cg_func_index(node->text);
+
+    if (func_index == -1)
+    {
+        cg_error(cg, "function missing from pre-scan table");
         return;
     }
 
@@ -1471,14 +1706,18 @@ static void cg_function(Codegen* cg, ASTNode* node)
         param = param->next;
     }
 
-    if (param_count > 16)
+    if (param_count > NWO_MAX_PARAMS_V3)
     {
         cg_error(cg, "too many function parameters (max 16)");
         return;
     }
 
+    saved_owner = cg->current_owner;
+    cg->current_owner = func_index;
+
     cg_emit_byte(cg, OP_FUNC_BEGIN);
-    cg_emit_string(cg, node->text);
+    cg_emit_u32(cg, (unsigned int)func_index);
+    cg_emit_string(cg, node->text);   /* name kept for diagnostics/main lookup */
     cg_emit_byte(cg, cg_type_byte(node->value_type));
     cg_emit_byte(cg, (unsigned char)param_count);
 
@@ -1486,7 +1725,11 @@ static void cg_function(Codegen* cg, ASTNode* node)
 
     while (param != NULL)
     {
-        cg_emit_string(cg, param->text);
+        if (!cg_emit_decl_slot(cg, param->text))
+        {
+            cg->current_owner = saved_owner;
+            return;
+        }
         cg_emit_byte(cg, cg_type_byte(param->value_type));
         cg_emit_byte(
             cg,
@@ -1508,6 +1751,7 @@ static void cg_function(Codegen* cg, ASTNode* node)
     }
 
     cg_emit_byte(cg, OP_FUNC_END);
+    cg->current_owner = saved_owner;
 }
 
 static void cg_node(Codegen* cg, ASTNode* node)
@@ -1534,6 +1778,124 @@ static void cg_node(Codegen* cg, ASTNode* node)
 
         node = node->next;
     }
+}
+
+/* Pre-scan A: register every function in emission order so call sites
+   can reference functions defined later in the file. */
+static int cg_prepass_functions(ASTNode* ast)
+{
+    ASTNode* node = ast->child;
+
+    cg_func_count = 0;
+    cg_main_func = -1;
+
+    while (node != NULL)
+    {
+        if (node->type == AST_FUNCTION &&
+            node->text != NULL)
+        {
+            size_t len = strlen(node->text);
+
+            if (len >= NWO_NAME_SIZE_V3)
+            {
+                fprintf(stderr,
+                        "NwC codegen: function name too long '%s'\n",
+                        node->text);
+                return 0;
+            }
+
+            if (cg_func_index(node->text) != -1)
+            {
+                fprintf(stderr,
+                        "NwC codegen: duplicate function '%s'\n",
+                        node->text);
+                return 0;
+            }
+
+            if (cg_func_count >= NWO_MAX_FUNCTIONS)
+            {
+                fprintf(stderr,
+                        "NwC codegen: too many functions (max %d)\n",
+                        NWO_MAX_FUNCTIONS);
+                return 0;
+            }
+
+            memcpy(cg_funcs[cg_func_count].name, node->text, len + 1);
+
+            if (strcmp(node->text, "main") == 0)
+                cg_main_func = cg_func_count;
+
+            cg_func_count++;
+        }
+
+        node = node->next;
+    }
+
+    if (cg_main_func == -1)
+    {
+        fprintf(stderr, "NwC codegen: no main() function\n");
+        return 0;
+    }
+
+    return 1;
+}
+
+/* Pre-scan B: assign slots to every declaration inside main() before any
+   function body is emitted, so functions defined earlier in the file can
+   resolve main's variables ("globals"). */
+static void cg_prepass_main_vars(ASTNode* stmt)
+{
+    while (stmt != NULL)
+    {
+        switch (stmt->type)
+        {
+            case AST_VARIABLE_DECLARATION:
+            case AST_ARRAY_DECLARATION:
+                if (stmt->text != NULL &&
+                    cg_sym_find(stmt->text, cg_main_func) == -1)
+                {
+                    cg_sym_add(stmt->text, cg_main_func, "variable");
+                }
+                break;
+
+            case AST_BLOCK:
+                cg_prepass_main_vars(stmt->child);
+                break;
+
+            case AST_IF:
+                cg_prepass_main_vars(stmt->left);
+                cg_prepass_main_vars(stmt->right);
+                break;
+
+            case AST_WHILE:
+                cg_prepass_main_vars(stmt->left);
+                break;
+
+            default:
+                break;
+        }
+
+        stmt = stmt->next;
+    }
+}
+
+static ASTNode* cg_find_function_node(ASTNode* ast, const char* name)
+{
+    ASTNode* node = ast->child;
+
+    while (node != NULL)
+    {
+        if (node->type == AST_FUNCTION &&
+            node->text != NULL &&
+            strcmp(node->text, name) == 0)
+        {
+            return node;
+        }
+
+        node = node->next;
+    }
+
+    return NULL;
 }
 
 static int cg_write_header(
@@ -1605,6 +1967,33 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
     cg.error = 0;
     cg.loop_depth = 0;
     cg.break_count = 0;
+    cg.current_owner = -1;
+
+    cg_sym_count = 0;
+    cg_fixup_count = 0;
+
+    if (!cg_prepass_functions(ast))
+    {
+        fclose(code_tmp);
+        return 0;
+    }
+
+    {
+        ASTNode* main_node = cg_find_function_node(ast, "main");
+
+        if (main_node != NULL)
+        {
+            if (main_node->child != NULL &&
+                main_node->child->type == AST_BLOCK)
+            {
+                cg_prepass_main_vars(main_node->child->child);
+            }
+            else
+            {
+                cg_prepass_main_vars(main_node->child);
+            }
+        }
+    }
 
     cg_node(&cg, ast->child);
 
@@ -1613,6 +2002,15 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
         fclose(code_tmp);
         return 0;
     }
+
+    cg_process_fixups(&cg);
+
+    if (cg.error)
+    {
+        fclose(code_tmp);
+        return 0;
+    }
+
     cg_emit_byte(&cg, OP_HALT);
 
     if (cg.error)

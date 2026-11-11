@@ -1,5 +1,5 @@
 #include "nwos_internal.h"
-#include "audio/hda.h"
+#include "audio/audio.h"
 
 static int find_in_dir(int dir, const char* name)
 {
@@ -41,7 +41,7 @@ void startup_sound_start(void)
     if (size < 44 || size > 16u * 1024u * 1024u)
         return;
 
-    if (!hda_init())
+    if (!audio_init())
         return;
 
     wav = (unsigned char*)fs_mem_alloc(size);
@@ -50,7 +50,7 @@ void startup_sound_start(void)
         return;
 
     if (fs_file_read(index, 0, wav, size))
-        hda_play_wav(wav, size);
+        audio_play_wav(wav, size);
 
     fs_mem_free(wav, size);
 }
