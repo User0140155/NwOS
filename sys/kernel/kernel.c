@@ -85,6 +85,12 @@ void kernel_main(void) {
 
     int has_installed = (status == 1);
 
+    if (has_installed)
+    {
+        print_success("[BOOT] Installed NwOS found on disk; starting it automatically.\n");
+        boot_system();
+    }
+
     while (1)
     {
         int action = boot_menu(has_installed);
@@ -112,7 +118,8 @@ void kernel_main(void) {
                 has_installed = (installed_status == 1);
                 if (has_installed)
                 {
-                    print_success("\nInstallation verified. NwOS is now available in this boot menu.\n");
+                    print_success("\nInstallation verified. Starting installed NwOS.\n");
+                    boot_system();
                 }
                 else
                 {

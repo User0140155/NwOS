@@ -5,6 +5,7 @@
 
 void fb_init(void);
 int fb_set_mode(uint32_t width, uint32_t height);
+int fb_set_canvas_mode(uint32_t width, uint32_t height);
 void fb_draw_char(int x, int y, char c, uint8_t color);
 void fb_draw_char_transparent(int x, int y, char c, uint8_t color);
 void fb_draw_char_box(int x0, int y0, int x1, int y1, char c, uint8_t color);
@@ -34,6 +35,9 @@ void fb_backbuffer_begin(void);
 void fb_backbuffer_end(void);
 void fb_present(void);
 void fb_draw_cursor(int x, int y);
+int  fb_subsurface_begin(int x, int y, int w, int h);
+void fb_subsurface_present(void);
+void fb_subsurface_end(void);
 unsigned long long fb_get_present_us(void);
 
 #endif

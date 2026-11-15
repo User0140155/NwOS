@@ -2,28 +2,11 @@
 
 void run_gui(void) {
     int saved_dir = current_dir;
-    uint32_t saved_width = fb_get_width();
-    uint32_t saved_height = fb_get_height();
-
-    if (saved_width == 0 || saved_height == 0) {
-        saved_width = NWOS_BOOT_WIDTH;
-        saved_height = NWOS_BOOT_HEIGHT;
-    }
-
-    if (!fb_set_mode(NWOS_GUI_WIDTH, NWOS_GUI_HEIGHT)) {
-        print_error("GUI: cannot switch video mode.\n");
-        return;
-    }
-
-    mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
 
     current_dir = 0;
     fs_cd("bin");
     nwo_run("gui.nwo");
     current_dir = saved_dir;
-
-    fb_set_mode(saved_width, saved_height);
-    mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
     clear();
 }
 

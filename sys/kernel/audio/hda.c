@@ -660,6 +660,15 @@ static void release_pcm(void)
     g_pcm_size = 0;
 }
 
+void hda_stop(void)
+{
+    if (!g_playing)
+        return;
+    stream_stop();
+    g_playing = 0;
+    release_pcm();
+}
+
 void hda_service(void)
 {
     if (!g_playing)

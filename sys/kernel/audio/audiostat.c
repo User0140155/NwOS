@@ -20,5 +20,8 @@ void cmd_audio(void)
     print("\n");
 
     print("State: ");
-    print(audio_is_playing() ? "playing\n" : "idle\n");
+    if (audio_player_active())
+        print(audio_player_paused() ? "background paused\n" : "background playing\n");
+    else
+        print(audio_is_playing() ? "playing\n" : "idle\n");
 }

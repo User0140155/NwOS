@@ -2,7 +2,7 @@
 
 void keyboard_input_test(void)
 {
-    unsigned long long end = timer_ms() + 2500;
+    unsigned long long end = timer_ms() + 3000;
     unsigned long long next_dot = 0;
     int received = 0;
 
@@ -31,7 +31,7 @@ void keyboard_input_test(void)
         if (now >= next_dot)
         {
             putchar_os('.');
-            next_dot = now + 500;
+            next_dot = now + 100;
         }
 
         __asm__ volatile ("pause");

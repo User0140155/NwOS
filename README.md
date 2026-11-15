@@ -33,7 +33,8 @@ x64 operating system written in C and NASM
 - xHCI
 - ahci
 - liveboot
-- 
+- many audio drivers
+
 ## ⚠️ Official Developer Account Update
 
 I lost access to my previous GitHub account due to 2FA recovery issues.
@@ -48,7 +49,7 @@ Thank you for your understanding and support!
 
 **Old profile (if you need archives of <v1.4.6):** https://github.com/User014015/
 
-## Derivative Projects
+## Contributing
 
 You are welcome to:
 - Fork NwOS.
@@ -62,6 +63,8 @@ and license notices.
 
 Modified NwOS source files must comply
 with the original project's license.
+
+Read 'CONTRIBUTING.md' for more information.
 
 ## License
 

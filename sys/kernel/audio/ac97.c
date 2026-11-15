@@ -264,6 +264,15 @@ int ac97_play_wav(const uint8_t* wav, uint32_t size)
     return 1;
 }
 
+void ac97_stop(void)
+{
+    if (!g_playing)
+        return;
+    stop_stream();
+    g_playing = 0;
+    release_pcm();
+}
+
 void ac97_service(void)
 {
     uint16_t status;

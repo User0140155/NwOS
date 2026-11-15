@@ -175,6 +175,15 @@ int es1370_play_wav(const uint8_t* wav, uint32_t size)
     return 1;
 }
 
+void es1370_stop(void)
+{
+    if (!g_playing)
+        return;
+    stop_stream();
+    g_playing = 0;
+    release_pcm();
+}
+
 void es1370_service(void)
 {
     uint32_t count;

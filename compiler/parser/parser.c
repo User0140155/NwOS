@@ -408,6 +408,14 @@ static ASTNode* parse_primary(Parser* parser)
                 strcmp(name, "fs_delete") == 0 ||
                 strcmp(name, "fs_write") == 0 ||
                 strcmp(name, "fs_mkdir") == 0 ||
+                strcmp(name, "fs_rename") == 0 ||
+                strcmp(name, "fs_props") == 0 ||
+                strcmp(name, "fs_nwo_gui") == 0 ||
+                strcmp(name, "run_embedded") == 0 ||
+                strcmp(name, "term_run") == 0 ||
+                strcmp(name, "term_view") == 0 ||
+                strcmp(name, "dialog") == 0 ||
+                strcmp(name, "confirm") == 0 ||
                 strcmp(name, "buf_clear") == 0 ||
                 strcmp(name, "buf_len") == 0 ||
                 strcmp(name, "buf_put") == 0 ||
@@ -1385,6 +1393,14 @@ static ASTNode* parse_nw_statement(Parser* parser)
             strcmp(name, "fs_delete") == 0 ||
             strcmp(name, "fs_write") == 0 ||
             strcmp(name, "fs_mkdir") == 0 ||
+            strcmp(name, "fs_rename") == 0 ||
+            strcmp(name, "fs_props") == 0 ||
+            strcmp(name, "fs_nwo_gui") == 0 ||
+            strcmp(name, "run_embedded") == 0 ||
+            strcmp(name, "term_run") == 0 ||
+            strcmp(name, "term_view") == 0 ||
+            strcmp(name, "dialog") == 0 ||
+            strcmp(name, "confirm") == 0 ||
             strcmp(name, "buf_clear") == 0 ||
             strcmp(name, "buf_len") == 0 ||
             strcmp(name, "buf_put") == 0 ||

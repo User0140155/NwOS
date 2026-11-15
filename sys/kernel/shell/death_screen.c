@@ -85,7 +85,8 @@ void cmd_more_help(void)
     print("  disks    - list all ATA disks\n");
     print("  drive <C|D|n> - switch the active disk\n");
     print("  disk <C|D|n>  - detailed size of one disk\n");
-    print("  listen <file.wav> - play a WAV file\n");
+    print("  listen <file.wav> - play a WAV file and wait\n");
+    print("  vibelisten <file.wav> - background WAV playback\n");
     putchar_os('\n');
     set_color(base_color);
 }

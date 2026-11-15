@@ -2,6 +2,15 @@
 
 int shell_execute(const char* command);
 const char* fs_current_path(void);
+void graphics_end(void);
+void mouse_set_bounds(int width, int height);
+int nwo_run_console(const char* filename);
+int nwo_program_is_gui(const char* filename);
+int nwo_default_window(const char* filename, const char* title);
+void nwo_vm_cancel_begin(void);
+void nwo_vm_cancel_end(void);
+int nwo_vm_cancelled(void);
+unsigned long long timer_ms(void);
 
 #define GT_LINES 400
 #define GT_COLS  118
@@ -9,6 +18,18 @@ const char* fs_current_path(void);
 #define GT_HIST  16
 
 int gui_term_capture = 0;
+int gui_term_interactive = 0;
+
+static int gt_view_valid = 0;
+static int gt_view_x = 0;
+static int gt_view_y = 0;
+static int gt_view_w = 0;
+static int gt_view_h = 0;
+static int gt_view_scroll = 0;
+static int gt_dirty = 0;
+static unsigned long long gt_last_render = 0;
+static char gt_pending[GT_IN + 1];
+static int gt_pending_valid = 0;
 
 static char gt_text[GT_LINES][GT_COLS + 1];
 static unsigned int gt_rgb[GT_LINES];
@@ -53,6 +74,10 @@ static void gt_init(void)
     gt_edit_name[0] = '\0';
 }
 
+static void gui_term_render(void);
+void gui_term_tick(void);
+static void gt_refuse(const char* why);
+
 static void gt_newline(void)
 {
     if (gt_count >= GT_LINES)
@@ -76,15 +101,18 @@ void gui_term_putc(char c)
     int line;
 
     gt_init();
+    gt_dirty = 1;
 
     if (c == '\n')
     {
         gt_newline();
+        gui_term_tick();
         return;
     }
     if (c == '\r')
     {
         gt_col = 0;
+        gui_term_tick();
         return;
     }
     if (c == '\b')
@@ -94,6 +122,7 @@ void gui_term_putc(char c)
             gt_col--;
             gt_text[gt_count - 1][gt_col] = '\0';
         }
+        gui_term_tick();
         return;
     }
     if (c == '\t')
@@ -115,6 +144,8 @@ void gui_term_putc(char c)
 
     if (c != ' ' && gt_rgb[line] == 0)
         gt_rgb[line] = gt_palette[text_color & 0x0F];
+
+    gui_term_tick();
 }
 
 void gui_term_clear(void)
@@ -135,6 +166,181 @@ static void gt_puts(const char* s)
 {
     while (*s)
         gui_term_putc(*s++);
+}
+
+void gui_term_set_view(int x, int y, int w, int h, int scroll)
+{
+    gt_view_x = x;
+    gt_view_y = y;
+    gt_view_w = w;
+    gt_view_h = h;
+    gt_view_scroll = scroll;
+    gt_view_valid = 1;
+}
+
+static void gui_term_render(void)
+{
+    int px;
+    int py;
+    int pw;
+    int ph;
+    int rows;
+    int cols;
+    int n;
+    int first;
+    int i;
+
+    if (!gt_view_valid || !gui_term_interactive || !fb_is_available())
+        return;
+
+    px = gt_view_x + 14;
+    py = gt_view_y + 42;
+    pw = gt_view_w - 28;
+    ph = gt_view_h - 104;
+    rows = (gt_view_h - 120) / 14;
+    cols = (gt_view_w - 68) / 8;
+    if (rows < 1) rows = 1;
+    if (cols < 1) cols = 1;
+
+    fb_draw_rgrad(px, py, pw, ph, 6, 0x00123049, 0x00061622);
+    n = gt_count;
+    first = n - rows - gt_view_scroll;
+    if (first < 0) first = 0;
+
+    for (i = 0; i < rows; ++i)
+    {
+        int line = first + i;
+        int k = 0;
+        unsigned int color;
+
+        if (line >= n) break;
+        while (k < cols && gt_text[line][k] != '\0')
+        {
+            gt_tmp[k] = gt_text[line][k];
+            k++;
+        }
+        gt_tmp[k] = '\0';
+        color = gt_rgb[line] ? gt_rgb[line] : 0x00EAF6FF;
+        fb_draw_text(px + 12, py + 8 + i * 14, gt_tmp, color);
+    }
+
+    fb_draw_rgrad(px + pw - 16, py + 6, 10, ph - 12, 4,
+                  0x00071826, 0x00071826);
+    if (n > rows)
+    {
+        int mxs = n - rows;
+        int tl = ph - 12;
+        int th = tl * rows / n;
+        int tp;
+        if (th < 24) th = 24;
+        if (th > tl) th = tl;
+        if (gt_view_scroll > mxs) gt_view_scroll = mxs;
+        tp = (tl - th) * (mxs - gt_view_scroll) / mxs;
+        fb_draw_rgrad(px + pw - 16, py + 6 + tp, 10, th, 4,
+                      0x008FDBFF, 0x002BA3E6);
+    }
+
+    fb_draw_rgrad(px - 1, gt_view_y + gt_view_h - 53, pw + 2, 34, 7,
+                  0x002F6C94, 0x002F6C94);
+    fb_draw_rgrad(px, gt_view_y + gt_view_h - 52, pw, 32, 6,
+                  0x00123049, 0x00061622);
+    fb_draw_text(px + 12, gt_view_y + gt_view_h - 42,
+                 "Running", 0x008FDBFF);
+    fb_draw_text(px + 92, gt_view_y + gt_view_h - 42,
+                 "Ctrl+C stops the program", 0x00EAF6FF);
+    fb_draw_text(px + 12, gt_view_y + gt_view_h - 26,
+                 "Output is shown in this terminal window.", 0x008FB8D0);
+
+    fb_present();
+    fb_draw_cursor(mouse_x(), mouse_y());
+}
+
+void gui_term_tick(void)
+{
+    unsigned long long now;
+
+    if (!gui_term_interactive || !gt_dirty)
+        return;
+
+    now = timer_ms();
+    if (now - gt_last_render < 16)
+        return;
+
+    gt_last_render = now;
+    gt_dirty = 0;
+    gui_term_render();
+}
+
+static const char* gt_base_name(const char* path)
+{
+    const char* base = path;
+    if (!path) return "";
+    while (*path)
+    {
+        if (*path == '/' || *path == '\\')
+            base = path + 1;
+        path++;
+    }
+    return base;
+}
+
+static int gt_run_console_file(const char* filename)
+{
+    unsigned char saved = text_color;
+    int result;
+    int cancelled;
+
+    if (strcmp(gt_base_name(filename), "gui.nwo") == 0)
+    {
+        gt_refuse("The GUI is already running.");
+        return 0;
+    }
+
+    if (gt_col > 0)
+        gui_term_putc('\n');
+    text_color = TERM_COLOR_LIGHT_CYAN;
+    gt_puts("user@nwos$ run ");
+    gt_puts(filename);
+    gui_term_putc('\n');
+    text_color = saved;
+
+    gui_term_interactive = 1;
+    gui_term_capture = 1;
+    gt_last_render = 0;
+    nwo_vm_cancel_begin();
+
+    result = nwo_run_console(filename);
+    cancelled = nwo_vm_cancelled();
+
+    nwo_vm_cancel_end();
+    gui_term_interactive = 0;
+    gui_term_capture = 0;
+    text_color = saved;
+
+    if (cancelled)
+        gt_puts("\n[stopped by Ctrl+C]\n");
+    else if (result < 0)
+        gt_refuse("\nProgram failed.\n");
+    else
+        gt_puts("\n[program finished]\n");
+
+    gt_dirty = 1;
+    gt_last_render = 0;
+    gui_term_render();
+    return 0;
+}
+
+void gui_term_pending_run(const char* filename)
+{
+    int i = 0;
+    if (!filename) filename = "";
+    while (filename[i] != '\0' && i < GT_IN)
+    {
+        gt_pending[i] = filename[i];
+        i++;
+    }
+    gt_pending[i] = '\0';
+    gt_pending_valid = 1;
 }
 
 static int gt_word_is(const char* cmd, const char* word)
@@ -197,7 +403,6 @@ static int gt_run(void)
     }
     gt_hist_pos = gt_hist_n;
 
-    /* echo the command line */
     if (gt_col > 0)
         gui_term_putc('\n');
     text_color = TERM_COLOR_LIGHT_CYAN;
@@ -206,7 +411,6 @@ static int gt_run(void)
     gui_term_putc('\n');
     text_color = saved;
 
-    /* commands that belong to the graphical shell itself */
     if (gt_word_is(cmd, "exit"))
         return 14;
     if (gt_word_is(cmd, "clear") || gt_word_is(cmd, "cls"))
@@ -238,22 +442,59 @@ static int gt_run(void)
             strcpy(gt_edit_name, "note.txt");
         return 11;
     }
-
-    /* interactive / full-screen commands cannot run inside a window */
-    if (gt_word_is(cmd, "gui") || gt_word_is(cmd, "run") ||
-        gt_word_is(cmd, "games") || gt_word_is(cmd, "game") ||
-        gt_word_is(cmd, "guess") || gt_word_is(cmd, "guessh") ||
-        gt_word_is(cmd, "rps") || gt_word_is(cmd, "hangman") ||
-        gt_word_is(cmd, "tictactoe") || gt_word_is(cmd, "chat") ||
-        gt_word_is(cmd, "passwd") || gt_word_is(cmd, "install") ||
-        gt_word_is(cmd, "format") || gt_word_is(cmd, "sudo") ||
-        gt_word_is(cmd, "panic") || gt_word_is(cmd, "testH") ||
-        gt_word_is(cmd, "color") || gt_word_is(cmd, "listen") ||
-        gt_word_is(cmd, "nw"))
+    if (gt_word_is(cmd, "run"))
     {
-        gt_refuse("This command is interactive: run it in the console (close the GUI).");
-        return 0;
+        const char* p = cmd + 3;
+        const char* base;
+        const char* q;
+
+        while (*p == ' ')
+            p++;
+        if (*p == '\0')
+        {
+            gt_puts("Usage: run <file.nwo>\n");
+            text_color = saved;
+            return 0;
+        }
+        base = p;
+        q = p;
+        while (*q)
+        {
+            if (*q == '/' || *q == '\\')
+                base = q + 1;
+            q++;
+        }
+        if (strcmp(base, "gui.nwo") == 0)
+        {
+            gt_puts("The GUI is already running.\n");
+            text_color = saved;
+            return 0;
+        }
+
+        text_color = saved;
+        if (nwo_program_is_gui(p))
+        {
+            nwo_default_window(p, p);
+            return 0;
+        }
+        return gt_run_console_file(p);
     }
+
+    // if (gt_word_is(cmd, "gui") ||
+    //     gt_word_is(cmd, "games") || gt_word_is(cmd, "game") ||
+    //     gt_word_is(cmd, "guess") || gt_word_is(cmd, "guessh") ||
+    //     gt_word_is(cmd, "rps") || gt_word_is(cmd, "hangman") ||
+    //     gt_word_is(cmd, "tictactoe") || gt_word_is(cmd, "chat") ||
+    //     gt_word_is(cmd, "passwd") || gt_word_is(cmd, "install") ||
+    //     gt_word_is(cmd, "format") || gt_word_is(cmd, "sudo") ||
+    //     gt_word_is(cmd, "panic") || gt_word_is(cmd, "testH") ||
+    //     gt_word_is(cmd, "color") || gt_word_is(cmd, "listen") ||
+    //     gt_word_is(cmd, "vibelisten") ||
+    //     gt_word_is(cmd, "nw"))
+    // {
+    //     gt_refuse("This command is interactive: run it in the console (close the GUI).");
+    //     return 0;
+    // }
     if (strcmp(cmd, "rm -rf /") == 0 || strcmp(cmd, "rm /") == 0 ||
         strcmp(cmd, "rm disk/") == 0)
     {
@@ -343,6 +584,21 @@ int gui_term_shi(int op, int a)
                 text_color = TERM_COLOR_DARK_GRAY;
                 gt_puts("Type help.  PgUp/PgDn scroll, Up/Down history, Esc closes.\n\n");
                 text_color = saved;
+            }
+            return 0;
+        case 13:
+            if (gt_pending_valid)
+            {
+                char pending[GT_IN + 1];
+                int i = 0;
+                while (gt_pending[i] != '\0' && i < GT_IN)
+                {
+                    pending[i] = gt_pending[i];
+                    i++;
+                }
+                pending[i] = '\0';
+                gt_pending_valid = 0;
+                return gt_run_console_file(pending);
             }
             return 0;
         default: return 0;

@@ -11,6 +11,7 @@ int es1370_ready(void);
 int es1370_play_wav(const uint8_t* wav, uint32_t size);
 
 void es1370_service(void);
+void es1370_stop(void);
 
 void es1370_wait(void);
 

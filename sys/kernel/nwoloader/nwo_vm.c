@@ -24,11 +24,23 @@ int nwf_gpu_load(void);
 int nwf_fs_create(const char* name);
 int nwf_fs_mkdir(const char* name);
 int nwf_fs_delete(const char* name);
+int nwf_fs_rename(const char* old_name, const char* new_name);
+void nwf_fs_props(int index);
 int nwf_fs_write(const char* name, const char* text);
 int nwf_fs_read(const char* name, char* buffer, unsigned int max_size);
 void fb_draw_cursor(int x, int y);
+void fb_clear(unsigned int color);
+void fb_subsurface_present(void);
 void fb_draw_rect(int x, int y, int w, int h, unsigned int color);
 int gui_term_shi(int op, int a);
+void gui_term_set_view(int x, int y, int w, int h, int scroll);
+void gui_term_pending_run(const char* filename);
+const char* nwf_dialog_input(const char* prompt, const char* initial);
+int nwf_dialog_confirm(const char* message);
+int nwo_run_in_window(const char* filename, int x, int y, int w, int h);
+int nwo_default_window(const char* filename, const char* title);
+int nwo_program_is_gui(const char* filename);
+int keyboard_take_ctrl_c(void);
 const char* gui_term_shs(int op, int a);
 void fb_draw_gradient(int x, int y, int w, int h, unsigned int top, unsigned int bottom);
 void fb_draw_rgrad(int x, int y, int w, int h, int r, unsigned int top, unsigned int bottom);
@@ -83,6 +95,14 @@ unsigned long long timer_ms(void);
 #define OP_BUBBLE      0xC5
 #define OP_SHI         0xC6
 #define OP_SHS         0xC7
+#define OP_FS_RENAME   0xC8
+#define OP_FS_NWO_GUI  0xC9
+#define OP_DIALOG_INPUT 0xCA
+#define OP_DIALOG_CONFIRM 0xCB
+#define OP_RUN_EMBEDDED 0xCC
+#define OP_TERM_RUN    0xCD
+#define OP_TERM_VIEW   0xCE
+#define OP_FS_PROPS    0xCF
 #define OP_FS_CREATE   0xB3
 #define OP_FS_DELETE   0xB4
 #define OP_FS_WRITE    0xB5
@@ -125,6 +145,51 @@ static char vm_string_storage[NWO_VARIABLES][NWO_INPUT_SIZE];
 #define VM_LITERAL_SLOTS 16
 static char vm_literal_storage[VM_LITERAL_SLOTS][NWO_INPUT_SIZE];
 static int  vm_literal_next = 0;
+
+static int vm_window_active = 0;
+static int vm_window_dx = 0;
+static int vm_window_dy = 0;
+static int vm_window_dw = 0;
+static int vm_window_dh = 0;
+static int vm_cancel_enabled = 0;
+static int vm_cancel_requested = 0;
+
+void nwo_vm_window_begin(int x, int y, int w, int h)
+{
+    vm_window_active = 1;
+    vm_window_dx = x;
+    vm_window_dy = y;
+    vm_window_dw = w > 0 ? w : 1;
+    vm_window_dh = h > 0 ? h : 1;
+}
+
+void nwo_vm_window_end(void)
+{
+    vm_window_active = 0;
+}
+
+void nwo_vm_cancel_begin(void)
+{
+    vm_cancel_enabled = 1;
+    vm_cancel_requested = 0;
+    while (keyboard_take_ctrl_c()) { }
+}
+
+void nwo_vm_cancel_end(void)
+{
+    vm_cancel_enabled = 0;
+    vm_cancel_requested = 0;
+}
+
+int nwo_vm_cancelled(void)
+{
+    return vm_cancel_requested;
+}
+
+void nwo_vm_request_cancel(void)
+{
+    vm_cancel_requested = 1;
+}
 
 #define VM_FILE_BUF_SIZE 4096
 static char vm_file_buf[VM_FILE_BUF_SIZE];
@@ -1308,6 +1373,13 @@ int nwo_execute(
             return -1;
         }
 
+        if (vm_cancel_enabled &&
+            (vm_cancel_requested || keyboard_take_ctrl_c()))
+        {
+            vm.result = -2;
+            vm.running = 0;
+            break;
+        }
 
         switch (opcode)
         {
@@ -1922,7 +1994,8 @@ int nwo_execute(
                 if (!vm_pop(&vm, &y)) return -1;
                 if (!vm_pop(&vm, &x)) return -1;
                 graphics_begin();
-                fb_draw_cursor(vm_to_int(&x), vm_to_int(&y));
+                if (!vm_window_active)
+                    fb_draw_cursor(vm_to_int(&x), vm_to_int(&y));
                 break;
             }
             case OP_FS_CREATE:
@@ -1960,6 +2033,111 @@ int nwo_execute(
                 if (!vm_pop_string(&vm, text, sizeof(text))) return -1;
                 if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
                 v.type = VM_INT; v.as.integer = nwf_fs_write(name, text);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_RENAME:
+            {
+                char old_name[256];
+                char new_name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, new_name, sizeof(new_name))) return -1;
+                if (!vm_pop_string(&vm, old_name, sizeof(old_name))) return -1;
+                v.type = VM_INT;
+                v.as.integer = nwf_fs_rename(old_name, new_name);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_NWO_GUI:
+            {
+                VmValue idx_val;
+                const char* nm = 0;
+                int t = 0;
+                unsigned int sz = 0;
+                int gui = -1;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                fs_dir_entry(vm_to_int(&idx_val), &nm, &t, &sz);
+                if (nm != 0 && t == 0)
+                {
+                    const char* dot = 0;
+                    const char* q = nm;
+                    while (*q) { if (*q == '.') dot = q; q++; }
+                    if (dot != 0 &&
+                        dot[0] == '.' && dot[1] == 'n' &&
+                        dot[2] == 'w' && dot[3] == 'o' &&
+                        dot[4] == '\0')
+                        gui = nwo_program_is_gui(nm) ? 1 : 0;
+                }
+                idx_val.type = VM_INT;
+                idx_val.as.integer = gui;
+                if (!vm_push(&vm, idx_val)) return -1;
+                break;
+            }
+            case OP_RUN_EMBEDDED:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                v.type = VM_INT;
+                v.as.integer = nwo_default_window(name, name);
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_TERM_RUN:
+            {
+                char name[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, name, sizeof(name))) return -1;
+                gui_term_pending_run(name);
+                v.type = VM_INT;
+                v.as.integer = 1;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_TERM_VIEW:
+            {
+                VmValue scroll, h, w, y, x;
+                if (!vm_pop(&vm, &scroll)) return -1;
+                if (!vm_pop(&vm, &h)) return -1;
+                if (!vm_pop(&vm, &w)) return -1;
+                if (!vm_pop(&vm, &y)) return -1;
+                if (!vm_pop(&vm, &x)) return -1;
+                gui_term_set_view(vm_to_int(&x), vm_to_int(&y),
+                                  vm_to_int(&w), vm_to_int(&h),
+                                  vm_to_int(&scroll));
+                break;
+            }
+            case OP_DIALOG_INPUT:
+            {
+                char initial[256];
+                char prompt[256];
+                const char* result;
+                VmValue v;
+                unsigned int n = 0;
+                if (!vm_pop_string(&vm, initial, sizeof(initial))) return -1;
+                if (!vm_pop_string(&vm, prompt, sizeof(prompt))) return -1;
+                result = nwf_dialog_input(prompt, initial);
+                while (result[n]) n++;
+                v.type = VM_STRING;
+                v.string_length = n;
+                v.as.string = result;
+                if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+            case OP_FS_PROPS:
+            {
+                VmValue idx_val;
+                if (!vm_pop(&vm, &idx_val)) return -1;
+                nwf_fs_props(vm_to_int(&idx_val));
+                break;
+            }
+            case OP_DIALOG_CONFIRM:
+            {
+                char message[256];
+                VmValue v;
+                if (!vm_pop_string(&vm, message, sizeof(message))) return -1;
+                v.type = VM_INT;
+                v.as.integer = nwf_dialog_confirm(message);
                 if (!vm_push(&vm, v)) return -1;
                 break;
             }
@@ -2033,6 +2211,11 @@ int nwo_execute(
                 VmValue v;
                 v.type = VM_INT;
                 v.as.integer = keyboard_pollkey();
+                if (vm_cancel_enabled && v.as.integer == 3)
+                {
+                    vm_cancel_requested = 1;
+                    v.as.integer = 0;
+                }
                 if (!vm_push(&vm, v)) return -1;
                 break;
             }
@@ -2663,7 +2846,10 @@ int nwo_execute(
             }
 
             case OP_CLEAR:
-                clear();
+                if (vm_window_active)
+                    fb_clear(0x000000);
+                else
+                    clear();
                 break;
 
             case OP_SLEEP:
@@ -2687,6 +2873,13 @@ int nwo_execute(
 
                 value.as.integer =
                     keyboard_getkey();
+
+                if (vm_cancel_enabled &&
+                    value.as.integer == 3)
+                {
+                    vm_cancel_requested = 1;
+                    value.as.integer = 0;
+                }
 
                 if (!vm_push(
                         &vm,
@@ -2726,7 +2919,10 @@ int nwo_execute(
             }
 
             case OP_FLUSH:
-                fb_present();
+                if (vm_window_active)
+                    fb_subsurface_present();
+                else
+                    fb_present();
                 break;
 
             case OP_WALLPAPER:
@@ -2742,9 +2938,29 @@ int nwo_execute(
                 int result = 0;
 
                 if (opcode == OP_MOUSE_X)
-                    result = mouse_x();
+                {
+                    if (vm_window_active)
+                    {
+                        result = ((mouse_x() - vm_window_dx) *
+                                  1280) / vm_window_dw;
+                        if (result < 0) result = 0;
+                        if (result > 1279) result = 1279;
+                    }
+                    else
+                        result = mouse_x();
+                }
                 else if (opcode == OP_MOUSE_Y)
-                    result = mouse_y();
+                {
+                    if (vm_window_active)
+                    {
+                        result = ((mouse_y() - vm_window_dy) *
+                                  720) / vm_window_dh;
+                        if (result < 0) result = 0;
+                        if (result > 719) result = 719;
+                    }
+                    else
+                        result = mouse_y();
+                }
                 else
                     result = mouse_buttons();
 

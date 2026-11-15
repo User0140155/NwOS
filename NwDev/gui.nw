@@ -405,7 +405,7 @@
     nw::rect(1262, 682, 1, 36, 0x00A6DCFA);
 
     // applications
-    while (i < 7) {
+    while (i < 2) {
         st = (ts / p) - ((ts / p) / 4) * 4;
         p = p * 4;
         bx = 76 + i * 52;
@@ -499,6 +499,7 @@
     1A tl = ph - 12;
     1A th = 0;
     1A tp = 0;
+    nw::term_view(x, y, w, h, sc);
     nw::rgrad(px - 1, py - 1, pw + 2, ph + 2, 7, 0x002F6C94, 0x002F6C94);
     nw::rgrad(px, py, pw, ph, 6, 0x00123049, 0x00061622);
     nw::glass(px + 1, py + 1, pw - 2, 20, 5, 0x00FFFFFF, 18);
@@ -635,6 +636,64 @@
         i = i + 1;
     }
     if (n == 0) nw::text(x + 210, y + 188, 0x004F7896, "This directory is empty.");
+}
+
+// ---------- context menus ----------
+0A ctx_box(1A x, 1A y, 1A w, 1A h) {
+    nw::glass(x - 2, y + 4, w + 4, h + 4, 10, 0x0006223B, 45);
+    nw::rgrad(x, y, w, h, 8, 0x00F7FBFE, 0x00E3EFF7);
+    nw::glass(x + 1, y + 1, w - 2, 22, 6, 0x00FFFFFF, 95);
+    nw::rect(x, y, w, 1, 0x00A6DCFA);
+}
+
+0A ctx_item(1A x, 1A y, 1A w, str label, 1A hot) {
+    str s = label;
+    if (hot == 1) nw::rgrad(x, y, w, 26, 5, 0x00BFE8FC, 0x008FD0F4);
+    else nw::rgrad(x, y, w, 26, 5, 0x00F7FBFE, 0x00EEF6FB);
+    nw::text(x + 10, y + 9, 0x000E3A5C, s);
+}
+
+0A ctx_draw(1A theme, 1A x, 1A y, 1A kind, 1A sub) {
+    str s3 = "";
+    1A mx = nw::mouse_x();
+    1A my = nw::mouse_y();
+    1A i = 0;
+    1A w = 210;
+    1A h = 150;
+    1A sx = 0;
+    1A sy = 0;
+    1A sh = 94;
+    if (kind == 2) h = 94;
+    call ctx_box(x, y, w, h);
+    if (kind == 1) {
+        call ctx_item(x + 5, y + 5, w - 10, "Open", inside(mx, my, x + 5, y + 5, w - 10, 26));
+        call ctx_item(x + 5, y + 33, w - 10, "Open with...", inside(mx, my, x + 5, y + 33, w - 10, 26));
+        call ctx_item(x + 5, y + 61, w - 10, "Rename", inside(mx, my, x + 5, y + 61, w - 10, 26));
+        call ctx_item(x + 5, y + 89, w - 10, "Delete", inside(mx, my, x + 5, y + 89, w - 10, 26));
+        call ctx_item(x + 5, y + 117, w - 10, "Properties", inside(mx, my, x + 5, y + 117, w - 10, 26));
+        if (sub == 1) {
+            if (x + w + 190 > 1280) sx = x - 190;
+            else sx = x + w;
+            sy = y + 33;
+            call ctx_box(sx, sy, 190, sh);
+            call ctx_item(sx + 5, sy + 5, 180, "Terminal", inside(mx, my, sx + 5, sy + 5, 180, 26));
+            call ctx_item(sx + 5, sy + 33, 180, "Notepad", inside(mx, my, sx + 5, sy + 33, 180, 26));
+            nw::text(sx + 15, sy + 71, 0x008FB8D0, "More applications...");
+        }
+    } else {
+        call ctx_item(x + 5, y + 5, w - 10, "Create...", inside(mx, my, x + 5, y + 5, w - 10, 26));
+        call ctx_item(x + 5, y + 33, w - 10, "Open in Terminal", inside(mx, my, x + 5, y + 33, w - 10, 26));
+        call ctx_item(x + 5, y + 61, w - 10, "Properties", inside(mx, my, x + 5, y + 61, w - 10, 26));
+        if (sub == 2) {
+            if (x + w + 190 > 1280) sx = x - 190;
+            else sx = x + w;
+            sy = y + 5;
+            call ctx_box(sx, sy, 190, 66);
+            call ctx_item(sx + 5, sy + 5, 180, "Folder", inside(mx, my, sx + 5, sy + 5, 180, 26));
+            call ctx_item(sx + 5, sy + 33, 180, "File", inside(mx, my, sx + 5, sy + 33, 180, 26));
+        }
+    }
+    s3 = "";
 }
 
 // ---------- editor ----------
@@ -837,6 +896,13 @@
     1A qx = 0;
     1A qy = 0;
     1A chg = 0;
+    1A ctx = 0;
+    1A ctx_x = 0;
+    1A ctx_y = 0;
+    1A ctx_sub = 0;
+    1A nf = 0;
+    str nname = "";
+    str oldname = "";
     i = 0;
     while (i < 200) {
         w[i] = 0;
@@ -891,11 +957,131 @@
             if (w[foc * 24 + 1] == 3) fs = 1;
         }
 
+        // ---- context menu hover / right click ----
+        if (ctx != 0 && (mx != lmx || my != lmy)) dirty = 1;
+        if (btn == 2 && lastbtn == 0) {
+            dirty = 1;
+            chg = 1;
+            menu = 0;
+            ctx = 0;
+            ctx_sub = 0;
+            top = -1;
+            tz = 0;
+            j = 0;
+            while (j < 7) {
+                b = j * 24;
+                if (w[b] == 1 && w[b + 10] == 0) {
+                    if (w[b + 11] > tz && inside(mx, my, w[b + 6], w[b + 7], w[b + 8], w[b + 9]) == 1) {
+                        top = j;
+                        tz = w[b + 11];
+                    }
+                }
+                j = j + 1;
+            }
+            if (top == 1) {
+                b = top * 24;
+                ctx_x = mx;
+                ctx_y = my;
+                if (ctx_x > 1060) ctx_x = 1060;
+                if (ctx_y > 540) ctx_y = 540;
+                rows = (w[b + 9] - 184 - 24) / 23;
+                if (mx >= w[b + 6] + 198 && mx <= w[b + 6] + w[b + 8] - 24 && my >= w[b + 7] + 184 && my < w[b + 7] + 184 + rows * 23) {
+                    j = w[b + 14] + (my - w[b + 7] - 184) / 23;
+                    n = nw::fs_count();
+                    if (j < n) {
+                        w[b + 12] = j;
+                        w[b + 13] = 0;
+                        ctx = 1;
+                    } else {
+                        ctx = 2;
+                    }
+                } else if (inside(mx, my, w[b + 6], w[b + 7], w[b + 8], w[b + 9]) == 1) {
+                    ctx = 2;
+                }
+            }
+        }
+
         // ---- mouse press ----
         if (btn == 1 && lastbtn == 0) {
             dirty = 1;
             chg = 1;
             hitf = 0;
+            if (ctx != 0) {
+                sx = ctx_x + 210;
+                if (ctx_x + 210 + 190 > 1280) sx = ctx_x - 190;
+                sy = ctx_y + 5;
+                if (ctx == 1 && ctx_sub == 1) sy = ctx_y + 33;
+                if (ctx == 2 && ctx_sub == 2) sy = ctx_y + 5;
+                if (ctx == 1) {
+                    if (inside(mx, my, ctx_x + 5, ctx_y + 5, 200, 26) == 1) {
+                        fopen = 1;
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 33, 200, 26) == 1) {
+                        if (ctx_sub == 1) ctx_sub = 0;
+                        else ctx_sub = 1;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 61, 200, 26) == 1) {
+                        oldname = nw::fs_name(w[36]);
+                        nname = nw::dialog("Rename", oldname);
+                        if (strcmp(nname, "") != 0) nw::fs_rename(oldname, nname);
+                        w[36] = 99;
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 89, 200, 26) == 1) {
+                        nname = nw::fs_name(w[36]);
+                        if (nw::confirm("Delete this item?") == 1) {
+                            nf = nw::fs_delete(nname);
+                            if (nf == 0) nw::fs_props(w[36]);
+                        }
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 117, 200, 26) == 1) {
+                        nw::fs_props(w[36]);
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (ctx_sub == 1 && inside(mx, my, sx + 5, sy + 5, 180, 26) == 1) {
+                        nw::term_run(nw::fs_name(w[36]));
+                        req = 0;
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (ctx_sub == 1 && inside(mx, my, sx + 5, sy + 33, 180, 26) == 1) {
+                        ename = nw::fs_name(w[36]);
+                        ldreq = 1;
+                        req = 2;
+                        ctx = 0;
+                        hitf = 1;
+                    } else {
+                        ctx = 0;
+                    }
+                } else {
+                    if (inside(mx, my, ctx_x + 5, ctx_y + 5, 200, 26) == 1) {
+                        if (ctx_sub == 2) ctx_sub = 0;
+                        else ctx_sub = 2;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 33, 200, 26) == 1) {
+                        req = 0;
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (inside(mx, my, ctx_x + 5, ctx_y + 61, 200, 26) == 1) {
+                        nw::fs_props(-1);
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (ctx_sub == 2 && inside(mx, my, sx + 5, sy + 5, 180, 26) == 1) {
+                        nname = nw::dialog("New folder", "");
+                        if (nw::fs_mkdir(nname) == 1) w[36] = 99;
+                        ctx = 0;
+                        hitf = 1;
+                    } else if (ctx_sub == 2 && inside(mx, my, sx + 5, sy + 33, 180, 26) == 1) {
+                        nname = nw::dialog("New file", "");
+                        if (nw::fs_create(nname) == 1) w[36] = 99;
+                        ctx = 0;
+                        hitf = 1;
+                    } else {
+                        ctx = 0;
+                    }
+                }
+            }
             if (menu == 1) {
                 hitf = 1;
                 if (inside(mx, my, 6, 232, 380, 444) == 1) {
@@ -934,7 +1120,7 @@
                 } else {
                     menu = 0;
                     j = 0;
-                    while (j < 7) {
+                    while (j < 2) {
                         if (inside(mx, my, 76 + j * 52, 683, 48, 36) == 1) {
                             b = j * 24;
                             if (w[b] == 0) {
@@ -1179,6 +1365,10 @@
         if (key != 0) {
             dirty = 1;
             chg = 1;
+            if (ctx != 0 && key == 255) {
+                ctx = 0;
+                ctx_sub = 0;
+            }
             if (key == 267) {
                 req = 6;
                 wadd = 1;
@@ -1364,12 +1554,20 @@
                     w[36] = 99;
                     w[37] = 0;
                     w[38] = 0;
-                } else if (nw::fs_size(j) > 4096) {
-                    w[37] = 1;
                 } else {
-                    ename = nw::fs_name(j);
-                    ldreq = 1;
-                    req = 2;
+                    nf = nw::fs_nwo_gui(j);
+                    if (nf == 1) {
+                        nw::run_embedded(nw::fs_name(j));
+                    } else if (nf == 0) {
+                        nw::term_run(nw::fs_name(j));
+                        req = 0;
+                    } else if (nw::fs_size(j) > 4096) {
+                        w[37] = 1;
+                    } else {
+                        ename = nw::fs_name(j);
+                        ldreq = 1;
+                        req = 2;
+                    }
                 }
             }
             dirty = 1;
@@ -1445,7 +1643,9 @@
                 if (tick - (tick / 12) * 12 == 0) dirty = 1;
             }
         }
-        if (mx != lmx || my != lmy || btn != lastbtn) dirty = 1;
+        // Cursor movement is handled by the framebuffer overlay below.
+        // Only button transitions require a full scene redraw.
+        if (btn != lastbtn) dirty = 1;
 
         // ---- draw ----
         if (dirty == 1 && chg == 1) {
@@ -1534,10 +1734,13 @@
                 call taskbar(theme, ts, menu);
                 if (menu == 1) call startmenu(theme);
             }
-            nw::cursor(mx, my);
+            if (ctx == 1) call ctx_draw(theme, ctx_x, ctx_y, 1, ctx_sub);
+            if (ctx == 2) call ctx_draw(theme, ctx_x, ctx_y, 2, ctx_sub);
+            if (w[0] == 1) nw::shi(13, 0);
             nw::flush();
             dirty = 0;
         }
+        if (mx != lmx || my != lmy) nw::cursor(mx, my);
         lmx = mx;
         lmy = my;
         lastbtn = btn;

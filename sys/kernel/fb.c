@@ -8,6 +8,10 @@ static uint32_t* fb_addr = 0;
 static uint32_t fb_width = 0;
 static uint32_t fb_height = 0;
 static uint32_t fb_pitch = 0;
+static uint32_t* fb_hw_addr = 0;
+static uint32_t fb_hw_width = 0;
+static uint32_t fb_hw_height = 0;
+static uint32_t fb_hw_pitch = 0;
 static int fb_bpp = 0;
 static uint8_t fb_type = 0;
 static uint8_t fb_red_pos = 16, fb_red_size = 8;
@@ -18,11 +22,36 @@ static uint8_t fb_blue_pos = 0, fb_blue_size = 8;
 #define FB_BACKBUFFER_HEIGHT 720
 
 static uint32_t fb_backbuffer_pixels[FB_BACKBUFFER_WIDTH * FB_BACKBUFFER_HEIGHT];
+static uint32_t fb_subsurface_pixels[FB_BACKBUFFER_WIDTH * FB_BACKBUFFER_HEIGHT];
 static uint32_t* fb_physical = 0;
 static uint32_t fb_physical_pitch = 0;
 static int fb_back_active = 0;
 static int fb_back_enabled = 1;
 static unsigned long long fb_present_us = 0;
+
+static int fb_sub_active = 0;
+static int fb_sub_dx = 0;
+static int fb_sub_dy = 0;
+static int fb_sub_dw = 0;
+static int fb_sub_dh = 0;
+static uint32_t* fb_sub_saved_addr = 0;
+static uint32_t fb_sub_saved_pitch = 0;
+static uint32_t fb_sub_saved_width = 0;
+static uint32_t fb_sub_saved_height = 0;
+static int fb_sub_saved_back_active = 0;
+
+#define FB_CURSOR_SRC_WIDTH  14
+#define FB_CURSOR_SRC_HEIGHT 19
+#define FB_CURSOR_SAVE_LIMIT 64
+static uint32_t fb_cursor_save[FB_CURSOR_SAVE_LIMIT * FB_CURSOR_SAVE_LIMIT];
+static int fb_cursor_save_x = 0;
+static int fb_cursor_save_y = 0;
+static int fb_cursor_save_w = 0;
+static int fb_cursor_save_h = 0;
+static int fb_cursor_valid = 0;
+static int fb_cursor_enabled = 0;
+static int fb_cursor_x = 0;
+static int fb_cursor_y = 0;
 
 extern unsigned long long timer_us(void);
 
@@ -145,6 +174,13 @@ static uint32_t vga_to_rgb(uint8_t color) {
 
 static int fb_initialized = 0;
 
+static const unsigned short cursor_rows[19] = {
+    0x800, 0xC00, 0xE00, 0xF00, 0xF80, 0xFC0, 0xFE0,
+    0xFF0, 0xFF8, 0xFFC, 0xFFE, 0xFE0, 0xCE0, 0x0E0,
+    0x0E0, 0x070, 0x070, 0x030, 0x030
+};
+
+
 static uint32_t fb_pack_rgb(uint32_t rgb)
 {
     uint32_t r = (rgb >> 16) & 0xFFu;
@@ -216,6 +252,10 @@ void fb_init(void)
                 fb_pitch = pitch;
                 fb_width = width;
                 fb_height = height;
+                fb_hw_addr = fb_addr;
+                fb_hw_pitch = pitch;
+                fb_hw_width = width;
+                fb_hw_height = height;
                 fb_bpp = bpp;
                 fb_type = kind;
                 fb_red_pos = red_pos;
@@ -238,14 +278,40 @@ int fb_set_mode(uint32_t width, uint32_t height)
     if (!fb_is_available() || !width || !height)
         return 0;
 
-    return fb_width == width && fb_height == height;
+    return fb_hw_width == width && fb_hw_height == height;
+}
+
+int fb_set_canvas_mode(uint32_t width, uint32_t height)
+{
+    if (!fb_is_available() || !width || !height || fb_back_active)
+        return 0;
+
+    if ((width > FB_BACKBUFFER_WIDTH || height > FB_BACKBUFFER_HEIGHT) &&
+        (width != fb_hw_width || height != fb_hw_height))
+        return 0;
+
+    if (fb_cursor_valid) {
+        for (int y = 0; y < fb_cursor_save_h; ++y) {
+            uint32_t *dst = (uint32_t*)((uint8_t*)fb_hw_addr +
+                (uint64_t)(fb_cursor_save_y + y) * fb_hw_pitch) + fb_cursor_save_x;
+            for (int x = 0; x < fb_cursor_save_w; ++x)
+                dst[x] = fb_cursor_save[y * fb_cursor_save_w + x];
+        }
+        fb_cursor_valid = 0;
+    }
+
+    fb_addr = fb_hw_addr;
+    fb_pitch = fb_hw_pitch;
+    fb_width = width;
+    fb_height = height;
+    return 1;
 }
 
 int fb_is_available(void)
 {
-    return fb_addr != 0 && fb_bpp == 32 && fb_type == 1 &&
-           fb_width != 0 && fb_height != 0 &&
-           fb_pitch >= fb_width * 4u;
+    return fb_hw_addr != 0 && fb_bpp == 32 && fb_type == 1 &&
+           fb_hw_width != 0 && fb_hw_height != 0 &&
+           fb_hw_pitch >= fb_hw_width * 4u;
 }
 
 uint32_t fb_get_width(void)
@@ -260,6 +326,11 @@ uint32_t fb_get_height(void)
 
 void fb_clear(uint32_t color) {
     if (!fb_addr) return;
+
+    if (!fb_back_active) {
+        fb_cursor_valid = 0;
+        fb_cursor_enabled = 0;
+    }
 
     color = fb_pack_rgb(color);
 
@@ -354,7 +425,6 @@ static void fb_draw_char_box_fast_impl(
     const uint32_t bg = fb_pack_rgb(vga_to_rgb((color >> 4) & 0x0F));
     const uint8_t *glyph = fb_glyph_for((uint8_t)c);
 
-    /* Start the source-x scaler at the first visible destination pixel. */
     uint64_t x_acc_start = (uint64_t)(clip_x0 - x0) * 8u;
     unsigned int sx_start = (unsigned int)(x_acc_start / (unsigned int)w);
     x_acc_start %= (unsigned int)w;
@@ -482,8 +552,8 @@ void fb_backbuffer_begin(void) {
         fb_height > FB_BACKBUFFER_HEIGHT)
         return;
 
-    fb_physical = fb_addr;
-    fb_physical_pitch = fb_pitch;
+    fb_physical = fb_hw_addr;
+    fb_physical_pitch = fb_hw_pitch;
     fb_addr = fb_backbuffer_pixels;
     fb_pitch = fb_width * 4;
     fb_back_active = 1;
@@ -495,66 +565,262 @@ void fb_backbuffer_end(void) {
 
     fb_addr = fb_physical;
     fb_pitch = fb_physical_pitch;
+    fb_width = fb_hw_width;
+    fb_height = fb_hw_height;
     fb_back_active = 0;
+    fb_cursor_valid = 0;
+}
+
+int fb_subsurface_begin(int x, int y, int w, int h)
+{
+    if (fb_sub_active || !fb_back_active || !fb_addr || w <= 0 || h <= 0)
+        return 0;
+
+    fb_sub_saved_addr = fb_addr;
+    fb_sub_saved_pitch = fb_pitch;
+    fb_sub_saved_width = fb_width;
+    fb_sub_saved_height = fb_height;
+    fb_sub_saved_back_active = fb_back_active;
+
+    fb_sub_dx = x;
+    fb_sub_dy = y;
+    fb_sub_dw = w;
+    fb_sub_dh = h;
+    fb_sub_active = 1;
+
+    fb_addr = fb_subsurface_pixels;
+    fb_pitch = FB_BACKBUFFER_WIDTH * 4u;
+    fb_width = FB_BACKBUFFER_WIDTH;
+    fb_height = FB_BACKBUFFER_HEIGHT;
+
+    for (uint32_t py = 0; py < fb_height; ++py) {
+        uint32_t* row = (uint32_t*)((uint8_t*)fb_addr + (uint64_t)py * fb_pitch);
+        for (uint32_t px = 0; px < fb_width; ++px)
+            row[px] = fb_pack_rgb(0x000000);
+    }
+
+    return 1;
+}
+
+void fb_subsurface_present(void)
+{
+    if (!fb_sub_active || !fb_sub_saved_addr)
+        return;
+
+    int dst_x0 = fb_sub_dx;
+    int dst_y0 = fb_sub_dy;
+    int dst_x1 = dst_x0 + fb_sub_dw;
+    int dst_y1 = dst_y0 + fb_sub_dh;
+
+    if (dst_x0 < 0) dst_x0 = 0;
+    if (dst_y0 < 0) dst_y0 = 0;
+    if (dst_x1 > (int)fb_sub_saved_width) dst_x1 = (int)fb_sub_saved_width;
+    if (dst_y1 > (int)fb_sub_saved_height) dst_y1 = (int)fb_sub_saved_height;
+    if (dst_x1 <= dst_x0 || dst_y1 <= dst_y0)
+        return;
+
+    int w = dst_x1 - dst_x0;
+    int h = dst_y1 - dst_y0;
+
+    for (int dy = 0; dy < h; ++dy) {
+        int sy = (int)(((int64_t)(dy + (dst_y0 - fb_sub_dy)) *
+                        FB_BACKBUFFER_HEIGHT) / fb_sub_dh);
+        if (sy < 0) sy = 0;
+        if (sy >= FB_BACKBUFFER_HEIGHT) sy = FB_BACKBUFFER_HEIGHT - 1;
+        uint32_t* src = (uint32_t*)((uint8_t*)fb_subsurface_pixels +
+            (uint64_t)sy * (FB_BACKBUFFER_WIDTH * 4u));
+        uint32_t* dst = (uint32_t*)((uint8_t*)fb_sub_saved_addr +
+            (uint64_t)(dst_y0 + dy) * fb_sub_saved_pitch) + dst_x0;
+
+        for (int dx = 0; dx < w; ++dx) {
+            int sx = (int)(((int64_t)(dx + (dst_x0 - fb_sub_dx)) *
+                            FB_BACKBUFFER_WIDTH) / fb_sub_dw);
+            if (sx < 0) sx = 0;
+            if (sx >= FB_BACKBUFFER_WIDTH) sx = FB_BACKBUFFER_WIDTH - 1;
+            dst[dx] = src[sx];
+        }
+    }
+
+    fb_addr = fb_sub_saved_addr;
+    fb_pitch = fb_sub_saved_pitch;
+    fb_width = fb_sub_saved_width;
+    fb_height = fb_sub_saved_height;
+    fb_back_active = fb_sub_saved_back_active;
+
+    fb_present();
+
+    fb_addr = fb_subsurface_pixels;
+    fb_pitch = FB_BACKBUFFER_WIDTH * 4u;
+    fb_width = FB_BACKBUFFER_WIDTH;
+    fb_height = FB_BACKBUFFER_HEIGHT;
+}
+
+void fb_subsurface_end(void)
+{
+    if (!fb_sub_active)
+        return;
+
+    fb_addr = fb_sub_saved_addr;
+    fb_pitch = fb_sub_saved_pitch;
+    fb_width = fb_sub_saved_width;
+    fb_height = fb_sub_saved_height;
+    fb_back_active = fb_sub_saved_back_active;
+    fb_sub_active = 0;
 }
 
 unsigned long long fb_get_present_us(void) {
     return fb_present_us;
 }
 
+static int fb_floor_mul_div(int value, uint32_t mul, uint32_t div)
+{
+    int64_t n = (int64_t)value * (int64_t)mul;
+    int64_t d = (int64_t)div;
+    int64_t q = n / d;
+    int64_t r = n % d;
+    if (r < 0) --q;
+    return (int)q;
+}
+
+static int fb_ceil_mul_div(int value, uint32_t mul, uint32_t div)
+{
+    return -fb_floor_mul_div(-value, mul, div);
+}
+
+static int fb_cursor_source_pixel(int sx, int sy)
+{
+    int bit_col = sx - 1;
+    unsigned short bits;
+
+    if (sx < 0 || sx >= FB_CURSOR_SRC_WIDTH || sy < 0 || sy >= FB_CURSOR_SRC_HEIGHT)
+        return 0;
+
+    bits = cursor_rows[sy];
+    if (bit_col >= 0 && bit_col < 12 && (bits & (0x800u >> bit_col)))
+        return 2; /* white fill */
+
+    for (int col = 0; col < 12; ++col) {
+        if (bits & (0x800u >> col)) {
+            if (sx == col || sx == col + 2)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static void fb_cursor_restore(void)
+{
+    if (!fb_cursor_valid || !fb_hw_addr)
+        return;
+
+    for (int y = 0; y < fb_cursor_save_h; ++y) {
+        uint32_t *dst = (uint32_t*)((uint8_t*)fb_hw_addr +
+            (uint64_t)(fb_cursor_save_y + y) * fb_hw_pitch) + fb_cursor_save_x;
+        for (int x = 0; x < fb_cursor_save_w; ++x)
+            dst[x] = fb_cursor_save[y * fb_cursor_save_w + x];
+    }
+    fb_cursor_valid = 0;
+}
+
+static void fb_cursor_draw_overlay(void)
+{
+    int x0, y0, x1, y1, width, height;
+    int clip_x0, clip_y0, clip_x1, clip_y1;
+
+    if (!fb_cursor_enabled || !fb_hw_addr || !fb_width || !fb_height ||
+        !fb_hw_width || !fb_hw_height)
+        return;
+
+    x0 = fb_floor_mul_div(fb_cursor_x - 1, fb_hw_width, fb_width);
+    y0 = fb_floor_mul_div(fb_cursor_y, fb_hw_height, fb_height);
+    x1 = fb_ceil_mul_div(fb_cursor_x + 13, fb_hw_width, fb_width);
+    y1 = fb_ceil_mul_div(fb_cursor_y + FB_CURSOR_SRC_HEIGHT, fb_hw_height, fb_height);
+
+    width = x1 - x0;
+    height = y1 - y0;
+    if (width <= 0 || height <= 0)
+        return;
+    if (width > FB_CURSOR_SAVE_LIMIT) width = FB_CURSOR_SAVE_LIMIT;
+    if (height > FB_CURSOR_SAVE_LIMIT) height = FB_CURSOR_SAVE_LIMIT;
+
+    clip_x0 = x0 < 0 ? 0 : x0;
+    clip_y0 = y0 < 0 ? 0 : y0;
+    clip_x1 = x0 + width;
+    clip_y1 = y0 + height;
+    if (clip_x1 > (int)fb_hw_width) clip_x1 = (int)fb_hw_width;
+    if (clip_y1 > (int)fb_hw_height) clip_y1 = (int)fb_hw_height;
+    if (clip_x1 <= clip_x0 || clip_y1 <= clip_y0)
+        return;
+
+    fb_cursor_save_x = clip_x0;
+    fb_cursor_save_y = clip_y0;
+    fb_cursor_save_w = clip_x1 - clip_x0;
+    fb_cursor_save_h = clip_y1 - clip_y0;
+
+    for (int py = clip_y0; py < clip_y1; ++py) {
+        uint32_t *row = (uint32_t*)((uint8_t*)fb_hw_addr + (uint64_t)py * fb_hw_pitch);
+        int save_y = py - clip_y0;
+        int sy = (int)(((int64_t)(py - y0) * FB_CURSOR_SRC_HEIGHT) / height);
+        if (sy < 0) sy = 0;
+        if (sy >= FB_CURSOR_SRC_HEIGHT) sy = FB_CURSOR_SRC_HEIGHT - 1;
+
+        for (int px = clip_x0; px < clip_x1; ++px) {
+            int save_x = px - clip_x0;
+            int sx = (int)(((int64_t)(px - x0) * FB_CURSOR_SRC_WIDTH) / width);
+            int kind;
+            if (sx < 0) sx = 0;
+            if (sx >= FB_CURSOR_SRC_WIDTH) sx = FB_CURSOR_SRC_WIDTH - 1;
+
+            fb_cursor_save[save_y * fb_cursor_save_w + save_x] = row[px];
+            kind = fb_cursor_source_pixel(sx, sy);
+            if (kind == 1) row[px] = fb_pack_rgb(0x000000);
+            else if (kind == 2) row[px] = fb_pack_rgb(0xFFFFFF);
+        }
+    }
+    fb_cursor_valid = 1;
+}
+
 void fb_present(void) {
-    if (!fb_back_active || !fb_physical)
+    if (!fb_back_active || !fb_physical || !fb_hw_addr ||
+        !fb_hw_width || !fb_hw_height || !fb_width || !fb_height)
         return;
 
     unsigned long long start = timer_us();
 
-    for (uint32_t y = 0; y < fb_height; y++) {
-        uint32_t* dst = (uint32_t*)((uint8_t*)fb_physical + y * fb_physical_pitch);
-        uint32_t* src = (uint32_t*)((uint8_t*)fb_backbuffer_pixels + y * fb_pitch);
-
-        for (uint32_t x = 0; x < fb_width; x++)
-            dst[x] = src[x];
-    }
-
-    fb_present_us += timer_us() - start;
-}
-
-static const unsigned short cursor_rows[19] = {
-    0x800, 0xC00, 0xE00, 0xF00, 0xF80, 0xFC0, 0xFE0,
-    0xFF0, 0xFF8, 0xFFC, 0xFFE, 0xFE0, 0xCE0, 0x0E0,
-    0x0E0, 0x070, 0x070, 0x030, 0x030
-};
-
-void fb_draw_cursor(int x, int y) {
-    if (!fb_addr) return;
-
-    for (int pass = 0; pass < 2; pass++) {
-        uint32_t color = (pass == 0) ? 0x00000000 : 0x00FFFFFF;
-
-        for (int row = 0; row < 19; row++) {
-            unsigned short bits = cursor_rows[row];
-            int col = 0;
-
-            while (col < 12) {
-                while (col < 12 && !(bits & (0x800 >> col)))
-                    col++;
-                if (col >= 12)
-                    break;
-
-                int start = col;
-                while (col < 12 && (bits & (0x800 >> col)))
-                    col++;
-                int end = col - 1;
-
-                if (pass == 0)
-                    fb_draw_rect(x + start - 1, y + row,
-                                 end - start + 3, 1, color);
-                else
-                    fb_draw_rect(x + start, y + row,
-                                 end - start + 1, 1, color);
+    fb_cursor_valid = 0;
+    for (uint32_t y = 0; y < fb_hw_height; ++y) {
+        uint32_t src_y = (uint32_t)(((uint64_t)y * fb_height) / fb_hw_height);
+        uint32_t *dst = (uint32_t*)((uint8_t*)fb_hw_addr + (uint64_t)y * fb_hw_pitch);
+        uint32_t *src = (uint32_t*)((uint8_t*)fb_backbuffer_pixels + (uint64_t)src_y * fb_pitch);
+        uint32_t src_x = 0;
+        uint64_t x_rem = 0;
+        for (uint32_t x = 0; x < fb_hw_width; ++x) {
+            dst[x] = src[src_x];
+            x_rem += fb_width;
+            while (x_rem >= fb_hw_width) {
+                x_rem -= fb_hw_width;
+                ++src_x;
+                if (src_x >= fb_width) src_x = fb_width - 1;
             }
         }
     }
+
+    fb_cursor_draw_overlay();
+    fb_present_us += timer_us() - start;
+}
+
+void fb_draw_cursor(int x, int y) {
+    if (!fb_hw_addr || !fb_width || !fb_height)
+        return;
+
+    if (fb_cursor_enabled && fb_cursor_x == x && fb_cursor_y == y && fb_cursor_valid)
+        return;
+
+    fb_cursor_restore();
+    fb_cursor_x = x;
+    fb_cursor_y = y;
+    fb_cursor_enabled = 1;
+    fb_cursor_draw_overlay();
 }
 
 void fb_draw_int(int x, int y, int value, uint32_t color) {
@@ -771,13 +1037,6 @@ void fb_draw_window(int x, int y, int w, int h, uint32_t color, const char* titl
     }
 }
 
-/* ======================================================================
- * Frutiger Aero primitives: gradients, rounded corners, glass, glossy orbs,
- * ellipses and bubbles.
- * NwC: nw::gradient nw::rgrad nw::glass nw::orb nw::ellipse nw::bubble
- * All colors are 0x00RRGGBB, alpha is 0..255.
- * ====================================================================== */
-
 static uint32_t aero_isqrt(uint32_t n)
 {
     uint32_t res = 0;
@@ -817,7 +1076,6 @@ static uint32_t aero_unpack(uint32_t pixel)
     return (r << 16) | (g << 8) | b;
 }
 
-/* a + (b - a) * num / den, per channel (used per row, not per pixel). */
 static uint32_t aero_lerp(uint32_t a, uint32_t b, int num, int den)
 {
     uint32_t out = 0;
@@ -840,7 +1098,6 @@ static uint32_t aero_lerp(uint32_t a, uint32_t b, int num, int den)
     return out;
 }
 
-/* Division-free mix: al = 0..256 */
 static uint32_t aero_mix(uint32_t dst, uint32_t src, int al)
 {
     int ia = 256 - al;
@@ -850,7 +1107,6 @@ static uint32_t aero_mix(uint32_t dst, uint32_t src, int al)
     return (r << 16) | (g << 8) | b;
 }
 
-/* Blend rgb over pixel (x,y), alpha 0..255. Clipped to the screen. */
 static void aero_blend(int x, int y, uint32_t rgb, int alpha)
 {
     uint32_t* p;
@@ -870,7 +1126,6 @@ static void aero_blend(int x, int y, uint32_t rgb, int alpha)
     *p = fb_pack_rgb(aero_mix(aero_unpack(*p), rgb, alpha + (alpha >> 7)));
 }
 
-/* One horizontal span from xl256 to xr256 (1/256 px units), soft edges. */
 static void aero_span(int py, int xl256, int xr256, uint32_t rgb, int alpha)
 {
     int xl, xr, i;
@@ -924,7 +1179,6 @@ static void aero_span(int py, int xl256, int xr256, uint32_t rgb, int alpha)
     }
 }
 
-/* Corner inset (1/256 px) for row j of a box h tall with corner radius r. */
 static int aero_corner_inset(int r, int j, int h)
 {
     int k;
@@ -946,7 +1200,6 @@ static int aero_corner_inset(int r, int j, int h)
     return r * 256 - (int)aero_isqrt(v * 16384u);
 }
 
-/* Rounded box with vertical gradient c1 -> c2 and uniform alpha. */
 static void aero_rbox(int x, int y, int w, int h, int r,
                       uint32_t c1, uint32_t c2, int alpha)
 {
@@ -990,7 +1243,6 @@ void fb_draw_glass(int x, int y, int w, int h, int r, uint32_t color, int alpha)
     aero_rbox(x, y, w, h, r, color, color, alpha);
 }
 
-/* Ellipse inside box (x,y,w,h), vertical gradient, uniform alpha. */
 void fb_draw_ellipse(int x, int y, int w, int h, uint32_t c1, uint32_t c2, int alpha)
 {
     int j;
@@ -1018,7 +1270,6 @@ void fb_draw_ellipse(int x, int y, int w, int h, uint32_t c1, uint32_t c2, int a
     }
 }
 
-/* Glossy sphere: radial shading, specular highlight, soft edge. */
 void fb_draw_orb(int cx, int cy, int r, uint32_t color)
 {
     int dx, dy;
@@ -1096,7 +1347,6 @@ void fb_draw_orb(int cx, int cy, int r, uint32_t color)
     }
 }
 
-/* Translucent soap bubble: clear body, bright rim, tiny highlights. */
 void fb_draw_bubble(int cx, int cy, int r, int alpha)
 {
     int dx, dy, r2;
@@ -1120,14 +1370,11 @@ void fb_draw_bubble(int cx, int cy, int r, int alpha)
             t = (d2 * 256) / r2;
             if (t > 256) t = 256;
 
-            /* body: nearly clear in the middle, denser near the rim */
             a = 10 + (t * t * 60) / 65536;
 
-            /* bottom-right inner glow (aqua), top-left cooler tint */
             if (dx + dy > r / 2 && d2 > r2 / 3)
                 { rgb = 0xC8F4FF; a += 28; }
 
-            /* crisp rim */
             edge = r2 - d2;
             if (edge < r) {
                 a += 90;
@@ -1140,7 +1387,6 @@ void fb_draw_bubble(int cx, int cy, int r, int alpha)
         }
     }
 
-    /* specular dot */
     {
         int hr = r / 4;
         int hx = cx - r / 2;

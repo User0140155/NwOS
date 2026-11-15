@@ -69,6 +69,7 @@ void keyboard_init(void);
 /* Compatibility API used by the existing shell, menus and applications. */
 int keyboard_getkey(void);  /* blocking; returns a key-down event */
 int keyboard_pollkey(void); /* non-blocking; returns KEY_NONE if no key */
+int keyboard_take_ctrl_c(void);
 
 /* Unified input API. The native xHCI driver submits each completed
  * 8-byte HID Boot Keyboard input report here after USB enumeration.

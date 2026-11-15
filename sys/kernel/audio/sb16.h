@@ -11,6 +11,7 @@ int sb16_ready(void);
 int sb16_play_wav(const uint8_t* wav, uint32_t size);
 
 void sb16_service(void);
+void sb16_stop(void);
 
 void sb16_wait(void);
 

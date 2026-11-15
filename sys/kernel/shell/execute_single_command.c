@@ -35,7 +35,8 @@ static const Command commands[] =
     CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> -o <file.nwo> - compile NwC source"),
     CMD_ARG("nw",          package_handler, "nw list|install|remove|update|run - local package manager"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
-    CMD_ARG("listen",      cmd_listen,      "listen <file.wav> - play a WAV file"),
+    CMD_ARG("listen",      cmd_listen,      "listen <file.wav> - play a WAV file and wait"),
+    CMD_ARG("vibelisten",  cmd_vibelisten,  "vibelisten <file.wav>|stop - background WAV player"),
     CMD    ("sound",       cmd_audio,       "sound - show the active audio device"),
     CMD    ("pwd",         cmd_pwd,           "pwd - print the current directory"),
     CMD_ARG("write",        cmd_write,       "write <file> <text> - write text to file"),
@@ -111,7 +112,7 @@ static void cmd_help(void)
     {
         if (commands[i].help)
         {
-            if (lines_on_screen >= 52)
+            if (lines_on_screen >= 58)
             {
                 set_color(TERM_COLOR_YELLOW);
                 print("--- MORE --- (ENTER: line, SPACE: page, ESC: quit)\n");

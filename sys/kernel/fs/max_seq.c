@@ -108,6 +108,8 @@ int fs_load_status(void) {
     fs_part_lba = fs_drive_fs_base(drive);
 
     fs_load();
+    if (!fs_sb_ok)
+        return 0;
 
     for (int i = 0; i < fs_dir_cap; i++) {
         if (directory[i].used && directory[i].parent == 0 &&

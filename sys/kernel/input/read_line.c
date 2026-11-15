@@ -25,14 +25,64 @@ void history_add_command(const char* cmd)
 }
 
 extern int gui_term_capture;
+extern int gui_term_interactive;
 
 void read_line(char* buffer, int max)
 {
     if (gui_term_capture)
     {
+        int interactive_len = 0;
+
         if (max > 0)
             buffer[0] = '\0';
-        return;
+
+        if (!gui_term_interactive)
+            return;
+
+        while (1)
+        {
+            int key = keyboard_getkey();
+
+            if (key == 3)
+            {
+                putchar_os('^');
+                putchar_os('C');
+                putchar_os('\n');
+                buffer[0] = '\0';
+                return;
+            }
+            if (key == KEY_ENTER)
+            {
+                buffer[interactive_len] = '\0';
+                putchar_os('\n');
+                return;
+            }
+            if (key == KEY_BACKSPACE)
+            {
+                if (interactive_len > 0)
+                {
+                    interactive_len--;
+                    buffer[interactive_len] = '\0';
+                    putchar_os('\b');
+                }
+                continue;
+            }
+            if (key == KEY_TAB)
+            {
+                while ((interactive_len & 3) != 0 &&
+                       interactive_len < max - 1)
+                {
+                    buffer[interactive_len++] = ' ';
+                    putchar_os(' ');
+                }
+                continue;
+            }
+            if (key >= 32 && key <= 126 && interactive_len < max - 1)
+            {
+                buffer[interactive_len++] = (char)key;
+                putchar_os((char)key);
+            }
+        }
     }
 
     int length = 0;

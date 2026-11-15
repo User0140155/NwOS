@@ -10,6 +10,7 @@ typedef struct {
     int (*ready)(void);
     int (*play_wav)(const uint8_t* wav, uint32_t size);
     void (*service)(void);
+    void (*stop)(void);
     void (*wait)(void);
     int (*is_playing)(void);
 } audio_driver_t;
@@ -18,22 +19,22 @@ static const audio_driver_t g_drivers[] = {
     {
         "Intel HDA",
         hda_init, hda_ready, hda_play_wav,
-        hda_service, hda_wait, hda_is_playing
+        hda_service, hda_stop, hda_wait, hda_is_playing
     },
     {
         "AC'97",
         ac97_init, ac97_ready, ac97_play_wav,
-        ac97_service, ac97_wait, ac97_is_playing
+        ac97_service, ac97_stop, ac97_wait, ac97_is_playing
     },
     {
         "Ensoniq ES1370",
         es1370_init, es1370_ready, es1370_play_wav,
-        es1370_service, es1370_wait, es1370_is_playing
+        es1370_service, es1370_stop, es1370_wait, es1370_is_playing
     },
     {
         "Sound Blaster 16",
         sb16_init, sb16_ready, sb16_play_wav,
-        sb16_service, sb16_wait, sb16_is_playing
+        sb16_service, sb16_stop, sb16_wait, sb16_is_playing
     },
 };
 
@@ -81,6 +82,12 @@ void audio_service(void)
 {
     if (g_active >= 0)
         g_drivers[g_active].service();
+}
+
+void audio_stop(void)
+{
+    if (g_active >= 0)
+        g_drivers[g_active].stop();
 }
 
 void audio_wait(void)

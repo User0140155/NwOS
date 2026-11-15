@@ -17,8 +17,7 @@ int fs_install_format_partition(int drive_idx, unsigned int partition_lba)
     fs_live_build = 1;
     fs_format_disk(drive_idx);
     fs_live_build = saved_live_build;
-
-    return 0;
+    return fs_drive_has_fs_at(drive_idx, partition_lba) ? 0 : -1;
 }
 
 void fs_format(void) {
@@ -57,8 +56,6 @@ void fs_live_init(void)
         }
     }
 
-    /* Fresh memory from the page allocator is zeroed; the static fallback
-       must be cleared explicitly. */
     if (!fresh)
     {
         for (unsigned long i = 0; i < (unsigned long)fs_ram_lbas * 512ul; i++)

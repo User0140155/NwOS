@@ -54,3 +54,12 @@ We need more driver developers because our drivers do not all work on real hardw
 ## Other
 
 Knowing Russian is a plus, but you can still communicate in English.
+
+## Fast start
+
+You need:
+- Fork repository
+- Add changes to thim
+- Create pull request
+
+describe what you added to pull request (drivers, etc.)

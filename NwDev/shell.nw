@@ -1,11 +1,32 @@
 #include <nwc.h>
 
 0A help() {
-    nw::out << "shell_off       - Quit from shell\n";
+    nw::out << "help            - List of commands\n";
+    nw::out << "shell off       - Quit from shell\n";
+    nw::out << "chat            - random words (chat)\n";
 }
 
 0A date() {
     nw::out << "Shell.nwo: 23.10.2026\n";
+}
+
+0A chat() {
+    nw::out!COLOR << "=== Chat ===" << nw::endl!COLOR:GREEN;
+    while (true) {
+        char input_usr[32];
+        nw::out << "You: ";
+        nw::cin >> input_usr;
+        if (input_usr == "!0") {
+            break;
+        } else {
+            1A words = 0;
+            nw::out << "OS: ";
+            while (words < 4) {
+                nw::out << "..\n";
+            }
+            nw::out << "\n";
+        }
+    }
 }
 
 0A shell() {
@@ -17,7 +38,7 @@
         if (strcmp(cmd, "help") == 0) {
             call help();
         }
-        else if (strcmp(cmd, "shell_off") == 0) {
+        else if (strcmp(cmd, "shell off") == 0) {
             running = false;
             break;
         }

@@ -12,6 +12,7 @@ int hda_ready(void);
 int hda_play_wav(const uint8_t* wav, uint32_t size);
 
 void hda_service(void);
+void hda_stop(void);
 
 void hda_wait(void);
 

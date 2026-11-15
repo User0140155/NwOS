@@ -44,6 +44,10 @@ PYTHON ?= python3
 SHA256SUM ?= sha256sum
 XORRISO ?= xorriso
 FILE ?= file
+MKFS_FAT ?= mkfs.fat
+MMD ?= mmd
+MCOPY ?= mcopy
+DD ?= dd
 
 # Set CHECK_MULTIBOOT=0 only if grub-file is intentionally unavailable.
 CHECK_MULTIBOOT ?= 1
@@ -165,6 +169,7 @@ SOURCES_REL := \
     sys/kernel/sysinfo/nwfetch.c \
     sys/kernel/sysinfo/print_gpu.c \
     sys/kernel/term/gui_term.c \
+    sys/kernel/term/gui_dialog.c \
     sys/kernel/term/new_line.c \
     sys/kernel/term/print.c \
     sys/kernel/term/putchar_os.c \
@@ -232,6 +237,15 @@ VIDEO_CONFIG_H := $(BUILD)/video_config.h
 GENERATED_STAMP := $(BUILD)/generated.stamp
 LIMINE_CONF := $(BUILD)/limine.conf
 VENTOY_GRUB_CONF := $(BUILD)/ventoy-grub.cfg
+ESP_LIMINE_CONF := $(BUILD)/esp-limine.conf
+ESP_IMAGE := $(BUILD)/nwos-esp.img
+ESP_INSTALLED_IMAGE := $(BUILD)/nwos-esp-installed.img
+BIOS_TEMPLATE := $(BUILD)/nwos-bios-template.img
+BIOS_BOOT_AREA := $(BUILD)/nwos-bios-boot-area.bin
+BIOS_TEMPLATE_TOOL := $(ROOT)/tools/mk_bios_template.py
+ESP_PARTITION_SECTORS := 14336
+BIOS_BOOT_AREA_SECTORS := 2048
+NWOS_MBR_START_LBA := 2048
 
 # NwWord source files. The generated binary is shipped as a Multiboot2 module.
 NWWD_SOURCE := $(ROOT)/data/wordlists/en_US.txt
@@ -245,10 +259,18 @@ NWBIBLE_SOURCE := $(ROOT)/data/passages/world_english_bible.txt
 NWBIBLE_NOTICE := $(ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt
 NWBIBLE_MODULE := $(BUILD)/world_english_bible.txt
 
-# The exclusions file is optional; if present, changes to it rebuild the module.
+# The dictionary corpus is optional in source archives that omit the licensed
+# word-list data. The kernel has a built-in fallback dictionary in that case.
+NWWD_ENABLED := $(if $(and $(wildcard $(NWWD_SOURCE)),$(wildcard $(NWWD_NOTICE))),1,0)
+NWWD_ISO_DEPS :=
+ifeq ($(NWWD_ENABLED),1)
 NWWD_INPUTS := $(NWWD_SOURCE) $(NWWD_GENERATOR)
 ifneq ($(wildcard $(NWWD_EXCLUDE)),)
 NWWD_INPUTS += $(NWWD_EXCLUDE)
+endif
+NWWD_ISO_DEPS += $(NWWD_MODULE) $(NWWD_NOTICE)
+else
+$(info NOTE: NwWord source/license data is absent; the ISO will use NwOS's built-in fallback dictionary.)
 endif
 
 NWBIBLE_ENABLED := $(if $(wildcard $(NWBIBLE_SOURCE)),1,0)
@@ -257,7 +279,7 @@ ifeq ($(NWBIBLE_ENABLED),1)
 NWBIBLE_ISO_DEPS += $(NWBIBLE_MODULE) $(NWBIBLE_NOTICE)
 endif
 
-.PHONY: all iso kernel boot-sector clean check-tools check-limine help
+.PHONY: all iso kernel boot-sector clean check-tools check-boot-tools check-limine help
 
 all: iso boot-sector
 
@@ -288,6 +310,18 @@ check-tools:
 	if (( $${#missing[@]} )); then \
 	  printf '\nMissing build tools: %s\n' "$${missing[*]}" >&2; \
 	  printf 'On Debian/Ubuntu install: sudo apt install clang lld nasm xorriso python3 coreutils file grub-common make\n' >&2; \
+	  exit 1; \
+	fi
+
+
+check-boot-tools:
+	@missing=(); \
+	for tool in "$(MKFS_FAT)" "$(MMD)" "$(MCOPY)" "$(DD)"; do \
+	  command -v "$$tool" >/dev/null 2>&1 || missing+=("$$tool"); \
+	done; \
+	if (( $${#missing[@]} )); then \
+	  printf '\nMissing EFI image tools: %s\n' "$${missing[*]}" >&2; \
+	  printf 'On Debian/Ubuntu install: sudo apt install dosfstools mtools coreutils\n' >&2; \
 	  exit 1; \
 	fi
 
@@ -330,14 +364,15 @@ $(GENERATED_STAMP): $(ROOT)/tools/gen_wallpaper.py $(ROOT)/tools/gen_packages.py
 	@touch "$@"
 
 # NwWord dictionary: en_US.txt is converted into a compact NWWD module.
+ifeq ($(NWWD_ENABLED),1)
 $(NWWD_MODULE): $(NWWD_INPUTS) | $(BUILD)
-	@test -f "$(NWWD_SOURCE)" || { echo 'Missing data/wordlists/en_US.txt' >&2; exit 1; }
 	@test -f "$(NWWD_GENERATOR)" || { echo 'Missing tools/gen_word_data.py' >&2; exit 1; }
 	@if [[ -f "$(NWWD_EXCLUDE)" ]]; then \
 	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@" --exclude "$(NWWD_EXCLUDE)"; \
 	else \
 	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@"; \
 	fi
+endif
 
 ifeq ($(NWBIBLE_ENABLED),1)
 $(NWBIBLE_MODULE): $(NWBIBLE_SOURCE) | $(BUILD)
@@ -389,15 +424,69 @@ else
 	@echo 'WARNING: grub-file check disabled (CHECK_MULTIBOOT=0).'
 endif
 
+# The installed disk boots through a conventional FAT16 EFI System Partition.
+# Keep the ESP size in sync with NWOS_EFI_PARTITION_SECTORS in installer.c.
+$(ESP_LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) | $(BUILD)
+	@{ \
+	  printf '%s\n' 'timeout: 0' 'default_entry: 1' '' '/NwOS (installed disk)' \
+	    '    protocol: multiboot2' \
+	    '    path: boot():/boot/kernel.elf' \
+	    '    module_path: boot():/boot/kernel.elf' \
+	    '    module_string: nwos-kernel-image' \
+	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
+	  if [[ -f "$(NWWD_MODULE)" ]]; then \
+	    printf '%s\n' '    module_path: boot():/boot/nwos/words.bin' '    module_string: nwos-word-dictionary'; \
+	  fi; \
+	} > "$@.tmp"
+	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
+
+$(ESP_IMAGE): $(KERNEL_ELF) $(NWWD_ISO_DEPS) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64) $(ESP_LIMINE_CONF) | check-boot-tools $(BUILD) check-limine
+	@set -eu; \
+	rm -f "$@"; \
+	truncate -s $$(( $(ESP_PARTITION_SECTORS) * 512 )) "$@"; \
+	"$(MKFS_FAT)" -F 16 -s 1 -n NWOSBOOT "$@" >/dev/null; \
+	"$(MMD)" -i "$@" ::/EFI; \
+	"$(MMD)" -i "$@" ::/EFI/BOOT; \
+	"$(MMD)" -i "$@" ::/boot; \
+	"$(MMD)" -i "$@" ::/boot/limine; \
+	"$(MMD)" -i "$@" ::/boot/nwos; \
+	"$(MCOPY)" -i "$@" "$(LIMINE_BOOTX64)" ::/EFI/BOOT/BOOTX64.EFI; \
+	"$(MCOPY)" -i "$@" "$(LIMINE_BIOS_SYS)" ::/boot/limine/limine-bios.sys; \
+	"$(MCOPY)" -i "$@" "$(KERNEL_ELF)" ::/boot/kernel.elf; \
+	"$(MCOPY)" -i "$@" "$(ESP_LIMINE_CONF)" ::/boot/limine/limine.conf; \
+	if [[ -f "$(NWWD_MODULE)" ]]; then "$(MCOPY)" -i "$@" "$(NWWD_MODULE)" ::/boot/nwos/words.bin; fi; \
+	"$(FILE)" "$@"; \
+	ls -lh "$@"
+
+$(BIOS_TEMPLATE): $(ESP_IMAGE) $(BIOS_TEMPLATE_TOOL) | $(BUILD) check-limine
+	$(PYTHON) "$(BIOS_TEMPLATE_TOOL)" "$(ESP_IMAGE)" "$@" \
+	  $(NWOS_MBR_START_LBA) $(ESP_PARTITION_SECTORS)
+	"$(LIMINE_TOOL)" bios-install "$@"
+
+$(ESP_INSTALLED_IMAGE): $(BIOS_TEMPLATE) | check-boot-tools
+	"$(DD)" if="$(BIOS_TEMPLATE)" of="$@.tmp" bs=512 skip=$(NWOS_MBR_START_LBA) count=$(ESP_PARTITION_SECTORS) status=none conv=fsync
+	mv "$@.tmp" "$@"
+
+$(BIOS_BOOT_AREA): $(BIOS_TEMPLATE) | check-boot-tools
+	"$(DD)" if="$(BIOS_TEMPLATE)" of="$@.tmp" bs=512 count=$(BIOS_BOOT_AREA_SECTORS) status=none conv=fsync
+	mv "$@.tmp" "$@"
+
 # Limine configuration is generated here; do not edit build/limine.conf manually.
-$(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
+$(LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
 	  printf '%s\n' 'timeout: 10' 'default_entry: 1' '' '/NwOS' \
 	    '    protocol: multiboot2' \
 	    '    path: boot():/boot/kernel.elf' \
-	    '    module_path: boot():/boot/nwos/words.bin' \
-	    '    module_string: nwos-word-dictionary' \
+	    '    module_path: boot():/boot/kernel.elf' \
+	    '    module_string: nwos-kernel-image' \
+	    '    module_path: boot():/boot/nwos/esp.img' \
+	    '    module_string: nwos-esp-image' \
+	    '    module_path: boot():/boot/nwos/biosboot.bin' \
+	    '    module_string: nwos-bios-boot-area' \
 	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
+	  if [[ -f "$(NWWD_MODULE)" ]]; then \
+	    printf '%s\n' '    module_path: boot():/boot/nwos/words.bin' '    module_string: nwos-word-dictionary'; \
+	  fi; \
 	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
 	    printf '%s\n' \
 	      '    module_path: boot():/boot/nwos/world_english_bible.txt' \
@@ -417,7 +506,7 @@ $(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
 # Ventoy GRUB2 fallback; module2 must follow multiboot2 and precede boot.
-$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
+$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
 	  printf '%s\n' \
 	    '# NwOS Ventoy GRUB2 fallback: select a real UEFI GOP mode first.' \
@@ -430,7 +519,12 @@ $(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	    'insmod iso9660' \
 	    'insmod multiboot2' \
 	    'multiboot2 /boot/kernel.elf' \
-	    'module2 /boot/nwos/words.bin nwos-word-dictionary'; \
+	    'module2 /boot/kernel.elf nwos-kernel-image' \
+	    'module2 /boot/nwos/esp.img nwos-esp-image' \
+	    'module2 /boot/nwos/biosboot.bin nwos-bios-boot-area'; \
+	  if [[ -f "$(NWWD_MODULE)" ]]; then \
+	    printf '%s\n' 'module2 /boot/nwos/words.bin nwos-word-dictionary'; \
+	  fi; \
 	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
 	    printf '%s\n' 'module2 /boot/nwos/world_english_bible.txt nwos-bible-passages'; \
 	  fi; \
@@ -438,13 +532,15 @@ $(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_MODULE) $(NWWD_NOTICE) $(NWBIBLE_ISO_DEPS) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
+$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) $(ESP_INSTALLED_IMAGE) $(BIOS_BOOT_AREA) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
 	@set -eu; \
 	rm -rf "$(ISO_ROOT)"; \
 	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses" "$(ISO_ROOT)/EFI/BOOT"; \
 	install -m 0644 "$(KERNEL_ELF)" "$(ISO_ROOT)/boot/kernel.elf"; \
-	install -m 0644 "$(NWWD_MODULE)" "$(ISO_ROOT)/boot/nwos/words.bin"; \
-	install -m 0644 "$(NWWD_NOTICE)" "$(ISO_ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt"; \
+	if [[ -f "$(NWWD_MODULE)" ]]; then install -m 0644 "$(NWWD_MODULE)" "$(ISO_ROOT)/boot/nwos/words.bin"; fi; \
+	install -m 0644 "$(ESP_INSTALLED_IMAGE)" "$(ISO_ROOT)/boot/nwos/esp.img"; \
+	install -m 0644 "$(BIOS_BOOT_AREA)" "$(ISO_ROOT)/boot/nwos/biosboot.bin"; \
+	if [[ -f "$(NWWD_NOTICE)" ]]; then install -m 0644 "$(NWWD_NOTICE)" "$(ISO_ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt"; fi; \
 	if [[ -f "$(NWBIBLE_MODULE)" ]]; then \
 	  install -m 0644 "$(NWBIBLE_MODULE)" "$(ISO_ROOT)/boot/nwos/world_english_bible.txt"; \
 	  install -m 0644 "$(NWBIBLE_NOTICE)" "$(ISO_ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt"; \

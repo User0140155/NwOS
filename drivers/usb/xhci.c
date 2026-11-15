@@ -128,6 +128,15 @@ typedef struct xhci_keyboard {
     uint8_t report_offset, report_id, pending, errors, need_recover;
     uint8_t use_layout;
     uint16_t queue_len;
+    uint8_t root_port;
+    uint8_t *dev_ctx;
+    xhci_trb_t *ep0_ring;
+    uint64_t ep0_ring_phys;
+    uint8_t *ctl_buf;
+    uint16_t ep0_index;
+    uint8_t ep0_cycle, iface, fallback, fb_fail;
+    uint32_t fb_last_mf, fb_polls, fb_reports;
+    uint8_t fb_last[8];
     xhci_kbd_layout_t layout;
 } xhci_keyboard_t;
 
@@ -170,6 +179,8 @@ typedef struct xhci_state {
     uint8_t keyboard_count;
     xhci_kbd_layout_t kbd_layout;
     uint8_t keyboard_use_layout;
+    uint32_t dbg_unmatched;
+    uint8_t last_unm_slot, last_unm_ep, last_unm_cc;
 } xhci_state_t;
 
 typedef struct xhci_device_snapshot {
@@ -183,6 +194,15 @@ typedef struct xhci_device_snapshot {
 } xhci_device_snapshot_t;
 
 static xhci_state_t g_xhci;
+extern unsigned long long timer_us(void);
+static uint32_t xhci_mf_now(void)
+{
+    return (uint32_t)(timer_us()/125ull)&XHCI_MFINDEX_MASK;
+}
+static void xhci_stage(const char *s)
+{
+    if (g_xhci.diag) { print("[XHCI]   "); print(s); print("\n"); }
+}
 
 static inline void xhci_pause(void) { __asm__ volatile("pause" ::: "memory"); }
 static inline uint32_t mmio_read32(volatile uint8_t *b, uint32_t o)
@@ -203,12 +223,10 @@ static void *dma_alloc(size_t n,size_t a,uint64_t *phys)
 { return pmm_alloc_dma32(n,a,phys); }
 static uint32_t trb_type(uint32_t c)
 { return (c & XHCI_TRB_TYPE_MASK) >> XHCI_TRB_TYPE_SHIFT; }
-
 static uint32_t *ctx_in(uint32_t index)
 { return (uint32_t *)(g_xhci.input_context + (size_t)index * g_xhci.context_size); }
 static volatile uint32_t *ctx_out(uint32_t index)
 { return (volatile uint32_t *)(g_xhci.device_context + (size_t)index * g_xhci.context_size); }
-
 static void dbg_value(const char *what,uint32_t value)
 {
     if (!g_xhci.diag) return;
@@ -224,7 +242,6 @@ static void dbg_hex(const char *what,uint32_t value)
     text[10]=0;
     print(what); print(text); print("\n");
 }
-
 static void speed_fill_usb2_defaults(void)
 {
     if (!g_xhci.speed_class_by_protocol[2][1] && !g_xhci.speed_id_by_class[2][XHCI_SPEED_FULL]) {
@@ -251,7 +268,6 @@ static uint8_t speed_id_for(uint8_t protocol, uint8_t speed_class)
     if (protocol > 3u || speed_class > 5u) return 0;
     return g_xhci.speed_id_by_class[protocol][speed_class];
 }
-
 static int parse_supported_protocols(uint32_t hccparams1)
 {
     uint32_t offset=((hccparams1 >> 16) & 0xFFFFu) * 4u;
@@ -550,19 +566,17 @@ static int legacy_handoff(volatile uint8_t *mmio,uint32_t hccparams1)
             int released=!(h&(1u<<16));            /* BIOS Owned Semaphore */
             if (!released) {
                 mmio_write32(mmio,off,h|(1u<<24)); /* HC OS Owned Semaphore */
-                for (uint32_t spin=0;spin<40000000u;++spin) {
+                unsigned long long t0=timer_us();
+                while (timer_us()-t0<1000000ull) {
                     h=mmio_read32(mmio,off);
                     if (!(h&(1u<<16))) { released=1; break; }
                     xhci_pause();
                 }
                 if (!released) {
-                    /* BIOS never answered: take the controller anyway. */
                     mmio_write32(mmio,off,(h&~(1u<<16))|(1u<<24));
                 }
             }
             g_xhci.bios_released=(uint8_t)released;
-            /* USBLEGCTLSTS: switch off every SMI source (bits 0,4,13,14,15)
-               and clear pending SMI status (RW1C bits 29..31). */
             ctl=mmio_read32(mmio,off+4u);
             ctl&=~((1u<<0)|(1u<<4)|(1u<<13)|(1u<<14)|(1u<<15));
             ctl|=(7u<<29);
@@ -579,28 +593,34 @@ static int controller_reset(void)
 {
     uint32_t cmd=mmio_read32(g_xhci.op,XHCI_USBCMD);
     mmio_write32(g_xhci.op,XHCI_USBCMD,cmd&~XHCI_CMD_RUN);
-    for (uint32_t i=0;i<XHCI_WAIT_LIMIT;++i) {
-        if (mmio_read32(g_xhci.op,XHCI_USBSTS)&XHCI_STS_HALTED) break;
-        if (i+1u==XHCI_WAIT_LIMIT) return 0;
-        xhci_pause();
+    {
+        unsigned long long t0=timer_us();
+        for (;;) {
+            if (mmio_read32(g_xhci.op,XHCI_USBSTS)&XHCI_STS_HALTED) break;
+            if (timer_us()-t0>500000ull) return 0;
+            xhci_pause();
+        }
     }
     mmio_write32(g_xhci.op,XHCI_USBCMD,
         (mmio_read32(g_xhci.op,XHCI_USBCMD)&~XHCI_CMD_RUN)|XHCI_CMD_RESET);
-    for (uint32_t i=0;i<XHCI_WAIT_LIMIT;++i) {
-        if (!(mmio_read32(g_xhci.op,XHCI_USBCMD)&XHCI_CMD_RESET)) break;
-        if (i+1u==XHCI_WAIT_LIMIT) return 0;
-        xhci_pause();
-    }
-    for (uint32_t i=0;i<XHCI_WAIT_LIMIT;++i) {
-        if (!(mmio_read32(g_xhci.op,XHCI_USBSTS)&XHCI_STS_NOT_READY)) return 1;
-        xhci_pause();
+    {
+        unsigned long long t0=timer_us();
+        for (;;) {
+            if (!(mmio_read32(g_xhci.op,XHCI_USBCMD)&XHCI_CMD_RESET)) break;
+            if (timer_us()-t0>1000000ull) return 0;
+            xhci_pause();
+        }
+        t0=timer_us();
+        while (timer_us()-t0<1000000ull) {
+            if (!(mmio_read32(g_xhci.op,XHCI_USBSTS)&XHCI_STS_NOT_READY)) return 1;
+            xhci_pause();
+        }
     }
     return 0;
 }
 
 static int controller_allocate_rings(uint32_t hcsparams2)
 {
-    /* HCSPARAMS2: Max Scratchpad Bufs Hi = bits 25:21, Lo = bits 31:27. */
     uint32_t scratch_count =
         (((hcsparams2 >> 21) & 0x1Fu) << 5) |
         ((hcsparams2 >> 27) & 0x1Fu);
@@ -677,23 +697,30 @@ static int controller_start(volatile uint8_t *mmio)
         g_xhci.status="xHCI: Supported Protocol capabilities missing or invalid";
         return 0;
     }
+    xhci_stage("BIOS handoff");
     g_xhci.status="xHCI: BIOS ownership handoff";
     (void)legacy_handoff(mmio,hcc1);
+    xhci_stage("reset");
     g_xhci.status="xHCI: controller reset";
     if (!controller_reset()) { g_xhci.status="xHCI: halt/reset timed out"; return 0; }
     mmio_write32(g_xhci.op, XHCI_USBSTS, 0x1Eu);
+    xhci_stage("rings");
     g_xhci.status="xHCI: allocating DMA rings";
     if (!controller_allocate_rings(hcs2)) { g_xhci.status="xHCI: DMA ring allocation failed"; return 0; }
     mmio_write32(g_xhci.op,XHCI_CONFIG,g_xhci.max_slots);
     mmio_write32(g_xhci.op,XHCI_USBCMD,XHCI_CMD_RUN | (1u << 3) | (1u << 2));
     
-    for (uint32_t i=0;i<XHCI_WAIT_LIMIT;++i) {
-        uint32_t sts=mmio_read32(g_xhci.op,XHCI_USBSTS);
-        if (!(sts&XHCI_STS_HALTED) && !(sts&XHCI_STS_NOT_READY)) {
-            (void)xhci_wait_microframes(160); 
-            return 1;
+    {
+        unsigned long long t0=timer_us();
+        while (timer_us()-t0<1000000ull) {
+            uint32_t sts=mmio_read32(g_xhci.op,XHCI_USBSTS);
+            if (!(sts&XHCI_STS_HALTED) && !(sts&XHCI_STS_NOT_READY)) {
+                xhci_stage("running");
+                (void)xhci_wait_microframes(160);
+                return 1;
+            }
+            xhci_pause();
         }
-        xhci_pause();
     }
     g_xhci.status="xHCI: controller did not enter Running state";
     return 0;
@@ -719,12 +746,10 @@ static int port_reset(uint8_t port_id,uint8_t protocol_major,uint8_t *speed_out)
     if (protocol_major==3u) {
         uint8_t sp=(uint8_t)((portsc&XHCI_PORT_SPEED_MASK)>>XHCI_PORT_SPEED_SHIFT);
         if ((portsc&XHCI_PORT_PED) && pls==0u && sp!=0u) {
-            /* SuperSpeed link already trained and enabled (U0): no reset. */
             *speed_out=sp;
             mmio_write32(g_xhci.op,off,(portsc&XHCI_PORT_PP)|XHCI_PORT_CHANGE_BITS);
             return 1;
         }
-        /* Warm reset only for Inactive (6) / Compliance (10); else hot reset. */
         reset_mask=(pls==6u||pls==10u)?XHCI_PORT_WPR:XHCI_PORT_PR;
     } else {
         reset_mask=XHCI_PORT_PR;
@@ -733,7 +758,7 @@ static int port_reset(uint8_t port_id,uint8_t protocol_major,uint8_t *speed_out)
     mmio_write32(g_xhci.op,off,(portsc&XHCI_PORT_PP)|reset_mask);
 
     {
-        uint32_t start=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+        uint32_t start=xhci_mf_now();
         for (uint32_t spin=0;spin<XHCI_PORT_WAIT_LIMIT;++spin) {
             uint32_t now;
             portsc=mmio_read32(g_xhci.op,off);
@@ -747,7 +772,7 @@ static int port_reset(uint8_t port_id,uint8_t protocol_major,uint8_t *speed_out)
                     return 1;
                 }
             }
-            now=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+            now=xhci_mf_now();
             if (((now-start)&XHCI_MFINDEX_MASK)>=8000u) return 0;
             xhci_pause();
         }
@@ -782,11 +807,6 @@ static int allocate_device_contexts(void)
         (XHCI_TRB_LINK<<XHCI_TRB_TYPE_SHIFT);
     return 1;
 }
-
-/* Build the Input Context for Address Device.  The EP0 TR Dequeue Pointer is
-   the CURRENT enqueue position of the software ring (not the ring base):
-   after the BSR=1 pass the first control transfer already used TRBs, and the
-   second Address Device re-initialises the endpoint from this context. */
 static void build_address_input_context(uint8_t root_port,uint8_t speed,
     uint8_t speed_class,uint32_t route_string,uint8_t parent_hub_slot,
     uint8_t parent_hub_port,uint8_t parent_hub_speed,uint8_t upstream_tt_slot,
@@ -799,12 +819,8 @@ static void build_address_input_context(uint8_t root_port,uint8_t speed,
     deq=g_xhci.ep0_ring_phys+(uint64_t)g_xhci.ep0_index*sizeof(xhci_trb_t);
     in[0]=0;
     in[1]=(1u<<0)|(1u<<XHCI_EP0_ID);
-    /* Slot DW0: route string, speed (PSIV), context entries = 1 */
     slot[0]=((uint32_t)speed<<20)|(1u<<27)|(route_string&0x000FFFFFu);
-    /* Slot DW1: root hub port number */
     slot[1]=(uint32_t)root_port<<16;
-    /* Slot DW2: for LS/FS devices behind a HS hub, the Transaction Translator
-       hub slot id [7:0] and port number [15:8]. */
     slot[2]=0;
     if (speed_class<=XHCI_SPEED_FULL) {
         uint8_t tt_slot=upstream_tt_slot,tt_port=upstream_tt_port;
@@ -844,8 +860,6 @@ static uint8_t xhci_interval(uint8_t speed_class,uint8_t b_interval)
     if (speed_class>=XHCI_SPEED_HIGH) {
         exponent=(uint8_t)(b_interval-1u);
     } else {
-        /* FS/LS: xHCI specifies rounding DOWN to a power-of-two multiple
-           of bInterval * 8 microframes (Intel xHCI 1.2, Table 6-12). */
         microframes=(uint32_t)b_interval*8u;
         while (exponent<15u && ((uint32_t)1u<<(exponent+1u))<=microframes)
             ++exponent;
@@ -920,9 +934,6 @@ static void hid_seg_add(xhci_kbd_layout_t *l,uint32_t off,uint32_t count,uint32_
     ++l->nsegs;
 }
 
-/* Walk the HID report descriptor and describe the first keyboard report
-   (Generic Desktop / Keyboard application collection, Keyboard-page inputs).
-   Handles the boot layout, report IDs, NKRO bitmaps and mixed layouts. */
 static int hid_parse_keyboard_layout(const uint8_t *desc,uint16_t length,
                                      xhci_kbd_layout_t *out)
 {
@@ -1032,9 +1043,6 @@ static uint32_t hid_get_bits(const uint8_t *buf,uint32_t len,uint32_t off,uint32
     return v;
 }
 
-/* Convert a report in the described layout into the 8-byte boot format
-   (modifiers, reserved, up to 6 key codes).  Returns 0 if the report does not
-   belong to the keyboard (wrong Report ID / too short). */
 static int hid_layout_to_boot(const xhci_kbd_layout_t *l,const uint8_t *buf,
                               uint32_t len,uint8_t out[8])
 {
@@ -1071,8 +1079,6 @@ static void dbg_hex16(uint16_t v)
     print(text);
 }
 
-/* One diagnostic line per enumerated device: VID/PID and every interface as
-   number:class/subclass/protocol (HID keyboard = 3/1/1, HID mouse = 3/1/2). */
 static void dbg_dump_device(uint8_t root_port,uint16_t vid,uint16_t pid,
                             const uint8_t *cfg,uint16_t total)
 {
@@ -1154,9 +1160,6 @@ static int configure_keyboard_endpoint(void)
     return wait_command(cmd_phys,0);
 }
 
-/* A halted interrupt endpoint (STALL / transaction error / babble) stays dead
-   until Reset Endpoint + Set TR Dequeue Pointer.  The ring is cleared and
-   restarted from its base. */
 static void keyboard_endpoint_recover(xhci_keyboard_t *k)
 {
     uint32_t ep=k->endpoint_id,slot=k->slot_id;
@@ -1170,8 +1173,6 @@ static void keyboard_endpoint_recover(xhci_keyboard_t *k)
     k->pending=0;
 }
 
-/* Move the freshly configured keyboard from the "working device" fields into
-   the keyboards[] table.  Its slot, contexts and rings stay allocated. */
 static int keyboard_stash(void)
 {
     xhci_keyboard_t *k;
@@ -1194,13 +1195,20 @@ static int keyboard_stash(void)
     k->queue_len=k->packet_size;
     if (k->use_layout&&k->layout.report_bytes>k->queue_len&&k->layout.report_bytes<=256u)
         k->queue_len=k->layout.report_bytes;
+    k->root_port=g_xhci.port_id;
+    k->dev_ctx=g_xhci.device_context;
+    k->ep0_ring=g_xhci.ep0_ring;
+    k->ep0_ring_phys=g_xhci.ep0_ring_phys;
+    k->ep0_index=g_xhci.ep0_index;
+    k->ep0_cycle=g_xhci.ep0_cycle;
+    k->ctl_buf=g_xhci.control_buffer;
+    k->iface=g_xhci.keyboard_interface;
+    k->fallback=(k->ep0_ring&&k->ctl_buf)?1u:0u;
     k->used=1;
     g_xhci.ready=1;
     return 1;
 }
 
-/* Hub / MTT / Number of Ports are only honoured by Configure Endpoint
-   (Evaluate Context ignores them). */
 static int update_hub_context(uint8_t port_count,uint8_t multi_tt,uint8_t tt_think)
 {
     uint32_t *in,*slot;
@@ -1250,9 +1258,9 @@ static void hub_delay(uint8_t units_2ms)
 {
     uint32_t units=units_2ms?units_2ms:1u,ticks=units*16u;
     if (g_xhci.runtime) {
-        uint32_t start=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+        uint32_t start=xhci_mf_now();
         for (uint32_t s=0;s<XHCI_MFINDEX_SPIN_LIMIT;++s) {
-            uint32_t now=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+            uint32_t now=xhci_mf_now();
             if (((now-start)&XHCI_MFINDEX_MASK)>=ticks) return;
             xhci_pause();
         }
@@ -1413,9 +1421,6 @@ static int enumerate_usb_device(uint8_t root_port,uint8_t speed,
     ep0_packet=(speed_class==XHCI_SPEED_HIGH)?64u:
                (speed_class>=XHCI_SPEED_SUPER)?512u:8u;
 
-    /* 1. Address Device with BSR=1: slot enters Default state, no SET_ADDRESS
-          is sent yet, so the first 8 bytes of the device descriptor can be
-          read to learn the real EP0 max packet size. */
     build_address_input_context(root_port,speed,speed_class,route_string,
         parent_hub_slot,parent_hub_port,parent_hub_speed,
         upstream_tt_slot,upstream_tt_port,ep0_packet);
@@ -1439,9 +1444,6 @@ static int enumerate_usb_device(uint8_t root_port,uint8_t speed,
         if (m==8u||m==16u||m==32u||m==64u) ep0_packet=m;
     }
 
-    /* 2. Address Device with BSR=0: SET_ADDRESS is sent.  The Input Context
-          is rebuilt with the real EP0 packet size and the current EP0 ring
-          position. */
     build_address_input_context(root_port,speed,speed_class,route_string,
         parent_hub_slot,parent_hub_port,parent_hub_speed,
         upstream_tt_slot,upstream_tt_port,ep0_packet);
@@ -1549,9 +1551,6 @@ static int enumerate_usb_device(uint8_t root_port,uint8_t speed,
     g_xhci.keyboard_report_descriptor_length=report_length;
     g_xhci.keyboard_report_id=g_xhci.keyboard_report_offset=0;
 
-    /* 3. Configure Endpoint BEFORE SET_CONFIGURATION (same order as Linux:
-          the host controller is set up first, then the device is told to
-          switch to the configuration). */
     g_xhci.status="xHCI: configuring keyboard interrupt endpoint";
     if (!configure_keyboard_endpoint()) {
         g_xhci.status="xHCI: Configure Endpoint failed for keyboard";
@@ -1592,15 +1591,13 @@ static int enumerate_usb_device(uint8_t root_port,uint8_t speed,
             print("\n");
         }
     }
-    (void)control_transfer(0x21u,0x0Au,0u,iface,0,0);   /* SET_IDLE(0); may STALL */
+    (void)control_transfer(0x21u,0x0Au,0u,iface,0,0);
     g_xhci.keyboard_pending=0;
     if (!keyboard_stash()) {
         g_xhci.status="xHCI: too many USB keyboards";
         goto fail;
     }
     if (parent_hub_slot) g_xhci.keyboard_via_hub=1;
-    /* Slot, contexts and rings now belong to the stashed keyboard: forget
-       the working pointers WITHOUT freeing them. */
     clear_active_device_fields();
     return 1;
 
@@ -1618,9 +1615,9 @@ static int xhci_wait_microframes(uint32_t ticks)
 {
     uint32_t start;
     if (!g_xhci.runtime||!ticks) return ticks==0u;
-    start=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+    start=xhci_mf_now();
     for (uint32_t i=0;i<XHCI_MFINDEX_SPIN_LIMIT;++i) {
-        uint32_t now=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+        uint32_t now=xhci_mf_now();
         if (((now-start)&XHCI_MFINDEX_MASK)>=ticks) return 1;
         xhci_pause();
     }
@@ -1638,9 +1635,9 @@ static int xhci_wait_for_root_connection(uint32_t max_ticks)
 {
     uint32_t start,last=0;
     if (xhci_any_root_port_connected()) return 1;
-    start=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+    start=xhci_mf_now();
     for (uint32_t s=0;s<XHCI_MFINDEX_SPIN_LIMIT;++s) {
-        uint32_t now=mmio_read32(g_xhci.runtime,0u)&XHCI_MFINDEX_MASK;
+        uint32_t now=xhci_mf_now();
         uint32_t elapsed=(now-start)&XHCI_MFINDEX_MASK;
         if (elapsed-last>=16u) {
             if (xhci_any_root_port_connected()) return 1;
@@ -1692,6 +1689,7 @@ static int xhci_scan_root_ports(uint32_t connect_wait)
 {
     g_xhci.root_connected_ports=0;
     g_xhci.root_reset_ports=0;
+    xhci_stage("ports");
     xhci_prepare_root_ports(connect_wait);
     g_xhci.status="xHCI started; scanning protocol-defined root ports";
     for (uint32_t p=1;p<=g_xhci.max_ports&&p<=255u;++p) {
@@ -1708,8 +1706,6 @@ static int xhci_scan_root_ports(uint32_t connect_wait)
         }
 
         if (proto!=2u&&proto!=3u) {
-            /* Some firmware does not publish a Supported Protocol entry for
-               every port.  Try a USB2 reset first, then a USB3 warm reset. */
             if (port_reset((uint8_t)p,2u,&speed)) proto=2u;
             else if (port_reset((uint8_t)p,3u,&speed)) proto=3u;
             else continue;
@@ -1719,7 +1715,6 @@ static int xhci_scan_root_ports(uint32_t connect_wait)
                 "xHCI: USB2 root port connected; issuing Port Reset":
                 "xHCI: USB3 root port connected; issuing Warm Port Reset";
             if (!port_reset((uint8_t)p,proto,&speed)) {
-                /* Ports that were just powered sometimes need a second try. */
                 (void)xhci_wait_microframes(1600u);
                 xhci_port_clear_changes(off);
                 if (!port_reset((uint8_t)p,proto,&speed)) continue;
@@ -1740,7 +1735,6 @@ static int xhci_scan_root_ports(uint32_t connect_wait)
                     
         if (!enumerate_usb_device((uint8_t)p,speed,0u,0u,0u,0u,0u,0u,0u,0u,0u))
             xhci_port_clear_changes(off);
-        /* keep scanning: another port may hold the real keyboard */
     }
     if (g_xhci.keyboard_count) {
         g_xhci.status=g_xhci.keyboard_via_hub?
@@ -1788,6 +1782,7 @@ static int controller_try_device(const pci_dev_t *dev)
         g_xhci.status="xHCI PCI: MMIO BAR missing or above 4 GiB";
         return 0;
     }
+    print("[XHCI]   mapping mmio\n");
     mmu_mark_mmio_uncached(bar,XHCI_MMIO_MAP_SIZE);
 
     {
@@ -1802,6 +1797,7 @@ static int controller_try_device(const pci_dev_t *dev)
     zero_bytes(&g_xhci,sizeof(g_xhci));
     g_xhci.initialized=1;
     g_xhci.diag=1;
+    xhci_stage("start");
     if (!controller_start((volatile uint8_t *)(uintptr_t)bar)) return 0;
     g_xhci.controller_running=1;
     g_xhci.rescan_countdown=XHCI_RESCAN_INTERVAL;
@@ -1878,7 +1874,11 @@ static void keyboard_handle_event(const xhci_trb_t *ev)
     cc=(uint8_t)(ev->d[2]>>24);
     residual=ev->d[2]&0x00FFFFFFu;
     k=keyboard_find(slot,ep);
-    if (!k) return;
+    if (!k) {
+        ++g_xhci.dbg_unmatched;
+        g_xhci.last_unm_slot=slot; g_xhci.last_unm_ep=ep; g_xhci.last_unm_cc=cc;
+        return;
+    }
     ++k->events;
     ++g_xhci.dbg_xfer_events;
     g_xhci.last_xfer_cc=cc;
@@ -1910,6 +1910,60 @@ static void keyboard_handle_event(const xhci_trb_t *ev)
     k->pending=0;
 }
 
+static void keyboard_fallback_poll(xhci_keyboard_t *k)
+{
+    uint32_t now,len;
+    uint8_t report[8];
+    int ok;
+    xhci_trb_t *s_ring;
+    uint64_t s_phys;
+    uint16_t s_index;
+    uint8_t s_cycle,s_slot;
+
+    if (!k->fallback) return;
+    if (k->events) { k->fallback=0; return; }
+    now=xhci_mf_now();
+    if (((now-k->fb_last_mf)&XHCI_MFINDEX_MASK)<80u) return;     /* 10 ms */
+    k->fb_last_mf=now;
+    ++k->fb_polls;
+
+    len=k->use_layout?k->layout.report_bytes:8u;
+    if (len<8u) len=8u;
+    if (len>64u) len=64u;
+
+    s_ring=g_xhci.ep0_ring; s_phys=g_xhci.ep0_ring_phys;
+    s_index=g_xhci.ep0_index; s_cycle=g_xhci.ep0_cycle; s_slot=g_xhci.slot_id;
+    g_xhci.ep0_ring=k->ep0_ring; g_xhci.ep0_ring_phys=k->ep0_ring_phys;
+    g_xhci.ep0_index=k->ep0_index; g_xhci.ep0_cycle=k->ep0_cycle;
+    g_xhci.slot_id=k->slot_id;
+    ok=control_transfer(0xA1u,0x01u,
+        (uint16_t)(0x0100u|((k->use_layout&&k->layout.has_id)?k->layout.report_id:0u)),
+        k->iface,k->ctl_buf,(uint16_t)len);
+    k->ep0_index=g_xhci.ep0_index; k->ep0_cycle=g_xhci.ep0_cycle;
+    g_xhci.ep0_ring=s_ring; g_xhci.ep0_ring_phys=s_phys;
+    g_xhci.ep0_index=s_index; g_xhci.ep0_cycle=s_cycle; g_xhci.slot_id=s_slot;
+
+    if (!ok) {
+        if (++k->fb_fail>8u) k->fallback=0;
+        return;
+    }
+    k->fb_fail=0;
+    if (k->use_layout) {
+        if (!hid_layout_to_boot(&k->layout,k->ctl_buf,len,report)) return;
+    } else {
+        for (unsigned int i=0;i<8u;++i) report[i]=k->ctl_buf[i];
+    }
+    for (unsigned int i=0;i<8u;++i) {
+        if (report[i]!=k->fb_last[i]) {
+            for (unsigned int j=0;j<8u;++j) k->fb_last[j]=report[j];
+            ++k->fb_reports;
+            ++g_xhci.dbg_reports;
+            keyboard_usb_hid_submit_boot_report(report);
+            break;
+        }
+    }
+}
+
 void xhci_poll(void)
 {
     uint32_t alive=0;
@@ -1936,7 +1990,6 @@ void xhci_poll(void)
         if (k->need_recover) {
             k->need_recover=0;
             if (k->errors>8u) {
-                /* Dead endpoint (unplugged?): stop polling it. */
                 k->used=0; k->pending=0;
                 (void)command_submit(0,0,0,
                     (XHCI_TRB_DISABLE_SLOT<<XHCI_TRB_TYPE_SHIFT)|((uint32_t)k->slot_id<<24),0);
@@ -1952,7 +2005,10 @@ void xhci_poll(void)
             __asm__ volatile("sfence" ::: "memory");
             mmio_write32(g_xhci.doorbells,(uint32_t)k->slot_id*4u,k->endpoint_id);
             k->pending=1;
+        } else if ((g_xhci.dbg_polls&0xFFFFFu)==0u) {
+            mmio_write32(g_xhci.doorbells,(uint32_t)k->slot_id*4u,k->endpoint_id);
         }
+        keyboard_fallback_poll(k);
     }
     if (!alive) {
         g_xhci.status="xHCI: all keyboard endpoints failed; rescanning ports";
@@ -1963,7 +2019,7 @@ void xhci_poll(void)
 }
 
 int xhci_keyboard_ready(void) { return g_xhci.ready!=0; }
-static char g_status_buf[384];
+static char g_status_buf[640];
 static void sb_text(size_t *pos,const char *s)
 {
     while (*s && *pos+1u<sizeof(g_status_buf)) g_status_buf[(*pos)++]=*s++;
@@ -1978,6 +2034,16 @@ static void sb_uint(size_t *pos,uint32_t v)
     while (n&&*pos+1u<sizeof(g_status_buf)) g_status_buf[(*pos)++]=tmp[--n];
     g_status_buf[*pos]=0;
 }
+static void sb_hex(size_t *pos,uint32_t v)
+{
+    static const char digits[]="0123456789ABCDEF";
+    sb_text(pos,"0x");
+    for (int s=28;s>=0;s-=4) {
+        char c[2];
+        c[0]=digits[(v>>s)&0xFu]; c[1]=0;
+        sb_text(pos,c);
+    }
+}
 const char *xhci_status_string(void)
 {
     size_t pos=0;
@@ -1990,6 +2056,24 @@ const char *xhci_status_string(void)
         sb_text(&pos," [slot"); sb_uint(&pos,g_xhci.keyboards[i].slot_id);
         sb_text(&pos," ep");    sb_uint(&pos,g_xhci.keyboards[i].endpoint_id);
         sb_text(&pos," ev");    sb_uint(&pos,g_xhci.keyboards[i].events);
+        sb_text(&pos," fb");    sb_uint(&pos,g_xhci.keyboards[i].fb_polls);
+        sb_text(&pos,"/");      sb_uint(&pos,g_xhci.keyboards[i].fb_reports);
+        sb_text(&pos,"/");      sb_uint(&pos,g_xhci.keyboards[i].fb_fail);
+        {
+            /* live view of what the controller thinks of the endpoint:
+               ss = slot state (3 = Configured), es = endpoint state
+               (1 Running, 2 Halted, 3 Stopped, 4 Error), dq = index of the
+               TRB the controller will fetch next, p = root-port PORTSC. */
+            const xhci_keyboard_t *k=&g_xhci.keyboards[i];
+            volatile uint32_t *sc=(volatile uint32_t *)k->dev_ctx;
+            volatile uint32_t *ec=(volatile uint32_t *)(k->dev_ctx+(size_t)k->endpoint_id*g_xhci.context_size);
+            uint64_t dq=(((uint64_t)ec[3]<<32)|ec[2])&~0xFull;
+            sb_text(&pos," ss"); sb_uint(&pos,(sc[3]>>27)&0x1Fu);
+            sb_text(&pos," es"); sb_uint(&pos,ec[0]&7u);
+            sb_text(&pos," dq"); sb_uint(&pos,(uint32_t)((dq-k->ring_phys)/sizeof(xhci_trb_t)));
+            sb_text(&pos," p=");
+            sb_hex(&pos,mmio_read32(g_xhci.op,XHCI_PORTSC_BASE+((uint32_t)k->root_port-1u)*XHCI_PORTSC_STRIDE));
+        }
         sb_text(&pos,"]");
     }
     sb_text(&pos," polls="); sb_uint(&pos,g_xhci.dbg_polls);
@@ -1998,6 +2082,13 @@ const char *xhci_status_string(void)
     sb_text(&pos," rep=");   sb_uint(&pos,g_xhci.dbg_reports);
     sb_text(&pos," cc=");    sb_uint(&pos,g_xhci.last_xfer_cc);
     sb_text(&pos," cmdcc="); sb_uint(&pos,g_xhci.last_cmd_cc);
+    sb_text(&pos," unm="); sb_uint(&pos,g_xhci.dbg_unmatched);
+    if (g_xhci.dbg_unmatched) {
+        sb_text(&pos,"("); sb_uint(&pos,g_xhci.last_unm_slot);
+        sb_text(&pos,":"); sb_uint(&pos,g_xhci.last_unm_ep);
+        sb_text(&pos,":"); sb_uint(&pos,g_xhci.last_unm_cc);
+        sb_text(&pos,")");
+    }
     sb_text(&pos,"}");
     return g_status_buf;
 }

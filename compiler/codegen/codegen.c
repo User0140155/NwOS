@@ -8,6 +8,7 @@
 #define NWO_VERSION     3
 #define NWO_FLAG_NORMAL   0x00
 #define NWO_FLAG_LOWLEVEL 0x01
+#define NWO_FLAG_GUI      0x02
 
 #define NWO_MAX_LOOPS 16
 #define NWO_MAX_BREAKS 64
@@ -64,6 +65,7 @@ static int cg_sym_count;
 
 static CgFixup cg_fixups[NWO_MAX_FIXUPS];
 static int cg_fixup_count;
+static int cg_gui_used;
 
 static CgFunc cg_funcs[NWO_MAX_FUNCTIONS];
 static int cg_func_count;
@@ -482,6 +484,14 @@ typedef enum
     OP_BUBBLE    = 0xC5,
     OP_SHI       = 0xC6,
     OP_SHS       = 0xC7,
+    OP_FS_RENAME = 0xC8,
+    OP_FS_NWO_GUI = 0xC9,
+    OP_DIALOG_INPUT = 0xCA,
+    OP_DIALOG_CONFIRM = 0xCB,
+    OP_FS_PROPS = 0xCF,
+    OP_RUN_EMBEDDED = 0xCC,
+    OP_TERM_RUN = 0xCD,
+    OP_TERM_VIEW = 0xCE,
 
     OP_HALT         = 0xFF
 
@@ -1148,6 +1158,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
             arg = arg->next;
         }
 
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_DRAW_WINDOW);
         return 0;
     }
@@ -1177,18 +1188,21 @@ static int cg_call(Codegen* cg, ASTNode* node)
             arg = arg->next;
         }
 
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_DRAW_TEXT);
         return 0;
     }
 
     if (strcmp(node->text, "nw::wallpaper") == 0)
     {
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_WALLPAPER);
         return 0;
     }
 
     if (strcmp(node->text, "nw::flush") == 0)
     {
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_FLUSH);
         return 0;
     }
@@ -1218,6 +1232,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
             arg = arg->next;
         }
 
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_DRAW_INT);
         return 0;
     }
@@ -1247,6 +1262,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
             arg = arg->next;
         }
 
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_RECT);
         return 0;
     }
@@ -1277,6 +1293,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
         }
         arg = node->child;
         while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_gui_used = 1;
         cg_emit_byte(cg, op);
         return 0;
     }
@@ -1330,6 +1347,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
         if (count != 2) { cg_error(cg, "nw::cursor needs x, y"); return 0; }
         arg = node->child;
         while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_gui_used = 1;
         cg_emit_byte(cg, OP_CURSOR);
         return 0;
     }
@@ -1348,6 +1366,51 @@ static int cg_call(Codegen* cg, ASTNode* node)
         }
         cg_emit_byte(cg, OP_FS_WRITE);
         return 1;
+    }
+    if (strcmp(node->text, "nw::fs_rename") == 0)
+    {
+        if (node->child && node->child->next)
+        {
+            cg_expression(cg, node->child);
+            cg_expression(cg, node->child->next);
+        }
+        cg_emit_byte(cg, OP_FS_RENAME);
+        return 1;
+    }
+    if (strcmp(node->text, "nw::fs_props") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_PROPS); return 0; }
+    if (strcmp(node->text, "nw::fs_nwo_gui") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_NWO_GUI); return 1; }
+    if (strcmp(node->text, "nw::run_embedded") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_RUN_EMBEDDED); return 1; }
+    if (strcmp(node->text, "nw::term_run") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_TERM_RUN); return 1; }
+    if (strcmp(node->text, "nw::dialog") == 0)
+    {
+        if (node->child && node->child->next)
+        {
+            cg_expression(cg, node->child);
+            cg_expression(cg, node->child->next);
+        }
+        cg_emit_byte(cg, OP_DIALOG_INPUT);
+        return 1;
+    }
+    if (strcmp(node->text, "nw::confirm") == 0)
+    { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_DIALOG_CONFIRM); return 1; }
+    if (strcmp(node->text, "nw::term_view") == 0)
+    {
+        ASTNode* arg = node->child;
+        int count = 0;
+        while (arg != NULL) { count++; arg = arg->next; }
+        if (count != 5)
+        {
+            cg_error(cg, "nw::term_view needs x, y, width, height, scroll");
+            return 0;
+        }
+        arg = node->child;
+        while (arg != NULL) { cg_expression(cg, arg); arg = arg->next; }
+        cg_emit_byte(cg, OP_TERM_VIEW);
+        return 0;
     }
     if (strcmp(node->text, "nw::buf_clear") == 0) { cg_emit_byte(cg, OP_BUF_CLEAR); return 0; }
     if (strcmp(node->text, "nw::buf_len") == 0) { cg_emit_byte(cg, OP_BUF_LEN); return 1; }
@@ -1901,10 +1964,14 @@ static ASTNode* cg_find_function_node(ASTNode* ast, const char* name)
 static int cg_write_header(
     FILE* f,
     unsigned int code_size,
-    unsigned int data_size)
+    unsigned int data_size,
+    int flags)
 {
     unsigned char version = NWO_VERSION;
     unsigned char reserved[3] = { 0, 0, 0 };
+
+    if (flags & NWO_FLAG_GUI)
+        reserved[0] = NWO_FLAG_GUI;
 
     if (fwrite(NWO_MAGIC, 1, 4, f) != 4) return 0;
     if (fwrite(&version, 1, 1, f) != 1)  return 0;
@@ -1938,8 +2005,8 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
     char shell_exports[1024];
     int shell_export_count = 0;
 
-    (void)flags;
     shell_exports[0] = '\0';
+    cg_gui_used = 0;
 
     if (ast == NULL || path == NULL)
     {
@@ -2029,7 +2096,8 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
         fclose(code_tmp);
         return 0;
     }
-    if (!cg_write_header(f, cg.code_size, cg.data_size))
+    if (!cg_write_header(f, cg.code_size, cg.data_size,
+                         flags | (cg_gui_used ? NWO_FLAG_GUI : 0)))
     {
         fprintf(stderr,
                 "NwC codegen: failed to write header\n");

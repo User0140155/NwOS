@@ -95,5 +95,5 @@ void fs_rmdir(const char* name)
 
     fs_save_directory();
 
-    print_success("Directory removed.\n");
+    if (!fs_quiet) print_success("Directory removed.\n");
 }
