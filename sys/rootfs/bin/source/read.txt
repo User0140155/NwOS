@@ -1,0 +1,6 @@
+GUI is edited and cant be compiled
+so wait until we make new version
+of compiler.
+
+You can also now compile Programs
+By editing them and press F5

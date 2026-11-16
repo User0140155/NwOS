@@ -241,9 +241,9 @@ static uint64_t user_readline(uint64_t address, uint64_t capacity)
     if (capacity > 4096)
         capacity = 4096;
 
-    console_f7_enabled = 1;
+    console_passage_hotkey_enabled = 1;
     read_line((char *)(uintptr_t)address, (int)capacity);
-    console_f7_enabled = 0;
+    console_passage_hotkey_enabled = 0;
 
     const char *text = (const char *)(uintptr_t)address;
     uint64_t length = 0;

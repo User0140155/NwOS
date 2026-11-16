@@ -1,6 +1,7 @@
 #define NWOS_INCLUDE_LOGONWOS_H
 #include "nwos_internal.h"
 #include "audio/audio.h"
+#include "../../../include/kernelpanic.h"
 
 static int boot_text_width(const char* text);
 static void boot_splash(void);
@@ -63,10 +64,21 @@ static void boot_splash(void)
                  height - 40, "Copyright (c) User0140155 2026", 0x006F8794);
 }
 
+static int boot_path_exists_dir(const char* path)
+{
+    return fs_resolve_dir_path(path) >= 0;
+}
+
 void boot_system(void)
 {
     print("CLEARING...\n");
     startingNWOS();
+
+    if (!boot_path_exists_dir("/sys") || !boot_path_exists_dir("/bin"))
+    {
+        KPANIC_CRITICAL(ERR_SYSTEM_MISSING, "Required system folder is missing (/sys or /bin).");
+    }
+
     settings_load();
     print("Starting " OS_NAME "...\n");
     sleep(500);
@@ -102,9 +114,7 @@ void boot_system(void)
     fs_enter_user_home();
     if (!login_prompt())
     {
-        print_error("error\n");
-        while (1)
-            __asm__ volatile ("hlt");
+        KPANIC_FATAL(ERR_BAD_STATE, "Login subsystem failed to start.");
     }
     shell();
 

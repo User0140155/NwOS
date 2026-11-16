@@ -44,23 +44,6 @@ void kernel_main(void) {
     }
 
     if (pmm_ready_for_modules &&
-        nw_word_module_init_from_multiboot2(multiboot_info_ptr))
-    {
-        print_success("[BOOT] NwWord dictionary validated: ");
-        print_uint64(nw_word_module_count());
-        print(" words.\n");
-    }
-    else
-    {
-        print_error("[BOOT] NwWord dictionary unavailable: ");
-        if (pmm_ready_for_modules)
-            print(nw_word_module_error());
-        else
-            print("PMM is not ready");
-        print(". Using the built-in fallback dictionary.\n");
-    }
-
-    if (pmm_ready_for_modules &&
         nw_passage_module_init_from_multiboot2(multiboot_info_ptr))
     {
         print_success("[BOOT] NwPassage text loaded: ");

@@ -4,7 +4,8 @@
 typedef enum
 {
     PANIC_SAFE = 0,
-    PANIC_FATAL = 1
+    PANIC_FATAL = 1,
+    PANIC_CRITICAL = 2
 } PanicLevel;
 
 #define ERR_NONE                0x00200000
@@ -22,14 +23,19 @@ typedef enum
 #define ERR_TRIPLE_FAULT        0x05400068
 #define ERR_GUI_LAG             0x00015169
 #define ERR_VIRUS               0x66601666
+#define ERR_SYSTEM_MISSING      0x00BAD500
+#define ERR_SUSPICIOUS_APP      0x00BADA55
 
 #define DISK_DEATH              0x19992888
 #define ERR_UNKNOW              0x00000000
 #define ERR_DEATH               0x01111111
 
+const char* kernel_panic_code_name(unsigned int code);
+void unknow_panic(unsigned int code);
 void kernel_panic(const char* message, unsigned int code, const char* file, int line, PanicLevel level);
 
-#define KPANIC_SAFE(code, msg)  kernel_panic((msg), (code), __FILE__, __LINE__, PANIC_SAFE)
-#define KPANIC_FATAL(code, msg) kernel_panic((msg), (code), __FILE__, __LINE__, PANIC_FATAL)
+#define KPANIC_SAFE(code, msg)      kernel_panic((msg), (code), __FILE__, __LINE__, PANIC_SAFE)
+#define KPANIC_FATAL(code, msg)     kernel_panic((msg), (code), __FILE__, __LINE__, PANIC_FATAL)
+#define KPANIC_CRITICAL(code, msg)  kernel_panic((msg), (code), __FILE__, __LINE__, PANIC_CRITICAL)
 
 #endif

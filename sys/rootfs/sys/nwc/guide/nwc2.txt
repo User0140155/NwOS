@@ -1,0 +1,25 @@
+NwC Basics 
+Output/Input:
+
+To output 'Hello world!' you need
+
+1A main() {
+    nw::out << "hello world!" << nw::endl;
+    return 0;
+}
+
+output: hello world!
+
+nw::out Means output 
+nw::endl Means like '\n'
+You also can do this 
+nw::out << "hi\n";
+'\n' its like 'nw::endl'
+
+To input you need this:
+
+1A main() {
+    1A var = 2;
+    nw::cin >> var;
+    return 0;
+}

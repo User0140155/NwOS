@@ -53,8 +53,6 @@ static const Command commands[] =
     CMD    ("generate num", generate_num,    "generate num - generate num"),
     CMD_ARG("hexview",      app_hexview,     "hexview <file> - hex byte map"),
     CMD_ARG("nwocheck",     app_nwo_info,    "nwocheck <file> - check OPcodes"),
-    CMD    ("random word",  say,             "random word - generate word"),
-    CMD    ("chat",         chat,            "chat - chat with computer"),
     CMD    ("change invite",set_p_shell,     "change invite - Change invite ('" OS_NAME ">')"),
     CMD    ("change color", change_p_color,  "change color - Change prompt color"),
     CMD    ("settings",     cmd_settings,    "settings - show configuration"),
@@ -76,7 +74,6 @@ static const Command commands[] =
     CMD_ARG("mkdir",        fs_mkdir,        "mkdir <dir> - create directory"),
     CMD_ARG("cd",           cmd_cd_path,               "cd <path> - change directory; supports ~, .. and nested paths"),
     CMD    ("gui",          run_gui,         "gui    - launch graphical shell"),
-    CMD    ("word",         word_new,        "word   - generate random word"),
 
     CMD_ARG("ping",         net_ping,        "ping <host or IP> - e.g. ping www.google.com"),
     CMD    ("net",          net_info,        "net    - network status (MAC, IP, link)"),

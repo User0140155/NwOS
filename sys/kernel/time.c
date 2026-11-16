@@ -3,7 +3,6 @@
 #include "../../drivers/disk.h"
 #include "../../include/kernelpanic.h"
 
-#include "Apps/wordgenerator/wordgenerator.h"
 #include "Apps/textredactor/textredactor.h"
 #include "nwoloader/nwo_vm.h"
 #include "nwoloader/nwo_runner.h"
@@ -15,7 +14,6 @@
 #include "kernel.h"
 #include "../../compiler/nwc_kernel.h"
 #include "memory/pmm.h"
-#include "random/word_module.h"
 #include "random/entropy.h"
 #include "random/passage_module.h"
 #include "graphics.h"
@@ -26,7 +24,6 @@
 #include "rootfs_data.h"
 
 #include "package.h"
-#include "words_data.h"
 
 
 #include "network/net.h"

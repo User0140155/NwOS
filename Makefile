@@ -140,7 +140,7 @@ SOURCES_REL := \
     sys/kernel/installer/ui_progress.c \
     sys/kernel/installer/verify_saved_account.c \
     sys/kernel/lib/format_size_buf.c \
-    sys/kernel/lib/random_word.c \
+    sys/kernel/lib/random.c \
     sys/kernel/lib/size_unit.c \
     sys/kernel/lib/strncmp.c \
     sys/kernel/script/cmd_bash.c \
@@ -183,8 +183,7 @@ SOURCES_REL := \
     sys/kernel/Apps/Games/game_memory.c \
     sys/kernel/Apps/fileStats/filestats.c \
     sys/kernel/Apps/baseconverter/baseconverter.c \
-    sys/kernel/Apps/wordgenerator/wordgenerator.c \
-    sys/kernel/random/word_module.c \
+    sys/kernel/Apps/passage/passage.c \
     sys/kernel/random/entropy.c \
     sys/kernel/random/passage_module.c \
     sys/kernel/Apps/textredactor/textredactor.c \
@@ -247,31 +246,11 @@ ESP_PARTITION_SECTORS := 14336
 BIOS_BOOT_AREA_SECTORS := 2048
 NWOS_MBR_START_LBA := 2048
 
-# NwWord source files. The generated binary is shipped as a Multiboot2 module.
-NWWD_SOURCE := $(ROOT)/data/wordlists/en_US.txt
-NWWD_EXCLUDE := $(ROOT)/data/wordlists/excluded_words.txt
-NWWD_GENERATOR := $(ROOT)/tools/gen_word_data.py
-NWWD_NOTICE := $(ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt
-NWWD_MODULE := $(BUILD)/words.bin
 
 # Optional TempleOS-style Shift+F7 passage corpus (UTF-8, one verse per line).
 NWBIBLE_SOURCE := $(ROOT)/data/passages/world_english_bible.txt
 NWBIBLE_NOTICE := $(ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt
 NWBIBLE_MODULE := $(BUILD)/world_english_bible.txt
-
-# The dictionary corpus is optional in source archives that omit the licensed
-# word-list data. The kernel has a built-in fallback dictionary in that case.
-NWWD_ENABLED := $(if $(and $(wildcard $(NWWD_SOURCE)),$(wildcard $(NWWD_NOTICE))),1,0)
-NWWD_ISO_DEPS :=
-ifeq ($(NWWD_ENABLED),1)
-NWWD_INPUTS := $(NWWD_SOURCE) $(NWWD_GENERATOR)
-ifneq ($(wildcard $(NWWD_EXCLUDE)),)
-NWWD_INPUTS += $(NWWD_EXCLUDE)
-endif
-NWWD_ISO_DEPS += $(NWWD_MODULE) $(NWWD_NOTICE)
-else
-$(info NOTE: NwWord source/license data is absent; the ISO will use NwOS's built-in fallback dictionary.)
-endif
 
 NWBIBLE_ENABLED := $(if $(wildcard $(NWBIBLE_SOURCE)),1,0)
 NWBIBLE_ISO_DEPS :=
@@ -363,17 +342,6 @@ $(GENERATED_STAMP): $(ROOT)/tools/gen_wallpaper.py $(ROOT)/tools/gen_packages.py
 	cd "$(ROOT)" && $(PYTHON) tools/gen_packages.py
 	@touch "$@"
 
-# NwWord dictionary: en_US.txt is converted into a compact NWWD module.
-ifeq ($(NWWD_ENABLED),1)
-$(NWWD_MODULE): $(NWWD_INPUTS) | $(BUILD)
-	@test -f "$(NWWD_GENERATOR)" || { echo 'Missing tools/gen_word_data.py' >&2; exit 1; }
-	@if [[ -f "$(NWWD_EXCLUDE)" ]]; then \
-	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@" --exclude "$(NWWD_EXCLUDE)"; \
-	else \
-	  $(PYTHON) "$(NWWD_GENERATOR)" --input "$(NWWD_SOURCE)" --output "$@"; \
-	fi
-endif
-
 ifeq ($(NWBIBLE_ENABLED),1)
 $(NWBIBLE_MODULE): $(NWBIBLE_SOURCE) | $(BUILD)
 	@test -f "$(NWBIBLE_NOTICE)" || { echo 'Missing data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt' >&2; exit 1; }
@@ -426,7 +394,7 @@ endif
 
 # The installed disk boots through a conventional FAT16 EFI System Partition.
 # Keep the ESP size in sync with NWOS_EFI_PARTITION_SECTORS in installer.c.
-$(ESP_LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) | $(BUILD)
+$(ESP_LIMINE_CONF): $(ROOT)/Makefile | $(BUILD)
 	@{ \
 	  printf '%s\n' 'timeout: 0' 'default_entry: 1' '' '/NwOS (installed disk)' \
 	    '    protocol: multiboot2' \
@@ -434,13 +402,10 @@ $(ESP_LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) | $(BUILD)
 	    '    module_path: boot():/boot/kernel.elf' \
 	    '    module_string: nwos-kernel-image' \
 	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
-	  if [[ -f "$(NWWD_MODULE)" ]]; then \
-	    printf '%s\n' '    module_path: boot():/boot/nwos/words.bin' '    module_string: nwos-word-dictionary'; \
-	  fi; \
 	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(ESP_IMAGE): $(KERNEL_ELF) $(NWWD_ISO_DEPS) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64) $(ESP_LIMINE_CONF) | check-boot-tools $(BUILD) check-limine
+$(ESP_IMAGE): $(KERNEL_ELF) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64) $(ESP_LIMINE_CONF) | check-boot-tools $(BUILD) check-limine
 	@set -eu; \
 	rm -f "$@"; \
 	truncate -s $$(( $(ESP_PARTITION_SECTORS) * 512 )) "$@"; \
@@ -454,7 +419,6 @@ $(ESP_IMAGE): $(KERNEL_ELF) $(NWWD_ISO_DEPS) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64
 	"$(MCOPY)" -i "$@" "$(LIMINE_BIOS_SYS)" ::/boot/limine/limine-bios.sys; \
 	"$(MCOPY)" -i "$@" "$(KERNEL_ELF)" ::/boot/kernel.elf; \
 	"$(MCOPY)" -i "$@" "$(ESP_LIMINE_CONF)" ::/boot/limine/limine.conf; \
-	if [[ -f "$(NWWD_MODULE)" ]]; then "$(MCOPY)" -i "$@" "$(NWWD_MODULE)" ::/boot/nwos/words.bin; fi; \
 	"$(FILE)" "$@"; \
 	ls -lh "$@"
 
@@ -472,7 +436,7 @@ $(BIOS_BOOT_AREA): $(BIOS_TEMPLATE) | check-boot-tools
 	mv "$@.tmp" "$@"
 
 # Limine configuration is generated here; do not edit build/limine.conf manually.
-$(LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
+$(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
 	  printf '%s\n' 'timeout: 10' 'default_entry: 1' '' '/NwOS' \
 	    '    protocol: multiboot2' \
@@ -484,9 +448,6 @@ $(LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	    '    module_path: boot():/boot/nwos/biosboot.bin' \
 	    '    module_string: nwos-bios-boot-area' \
 	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
-	  if [[ -f "$(NWWD_MODULE)" ]]; then \
-	    printf '%s\n' '    module_path: boot():/boot/nwos/words.bin' '    module_string: nwos-word-dictionary'; \
-	  fi; \
 	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
 	    printf '%s\n' \
 	      '    module_path: boot():/boot/nwos/world_english_bible.txt' \
@@ -506,7 +467,7 @@ $(LIMINE_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
 # Ventoy GRUB2 fallback; module2 must follow multiboot2 and precede boot.
-$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(BUILD)
+$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
 	@{ \
 	  printf '%s\n' \
 	    '# NwOS Ventoy GRUB2 fallback: select a real UEFI GOP mode first.' \
@@ -522,9 +483,6 @@ $(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(B
 	    'module2 /boot/kernel.elf nwos-kernel-image' \
 	    'module2 /boot/nwos/esp.img nwos-esp-image' \
 	    'module2 /boot/nwos/biosboot.bin nwos-bios-boot-area'; \
-	  if [[ -f "$(NWWD_MODULE)" ]]; then \
-	    printf '%s\n' 'module2 /boot/nwos/words.bin nwos-word-dictionary'; \
-	  fi; \
 	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
 	    printf '%s\n' 'module2 /boot/nwos/world_english_bible.txt nwos-bible-passages'; \
 	  fi; \
@@ -532,15 +490,13 @@ $(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) | $(B
 	} > "$@.tmp"
 	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
 
-$(ISO_STAMP): $(KERNEL_ELF) $(NWWD_ISO_DEPS) $(NWBIBLE_ISO_DEPS) $(ESP_INSTALLED_IMAGE) $(BIOS_BOOT_AREA) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
+$(ISO_STAMP): $(KERNEL_ELF) $(NWBIBLE_ISO_DEPS) $(ESP_INSTALLED_IMAGE) $(BIOS_BOOT_AREA) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
 	@set -eu; \
 	rm -rf "$(ISO_ROOT)"; \
 	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses" "$(ISO_ROOT)/EFI/BOOT"; \
 	install -m 0644 "$(KERNEL_ELF)" "$(ISO_ROOT)/boot/kernel.elf"; \
-	if [[ -f "$(NWWD_MODULE)" ]]; then install -m 0644 "$(NWWD_MODULE)" "$(ISO_ROOT)/boot/nwos/words.bin"; fi; \
 	install -m 0644 "$(ESP_INSTALLED_IMAGE)" "$(ISO_ROOT)/boot/nwos/esp.img"; \
 	install -m 0644 "$(BIOS_BOOT_AREA)" "$(ISO_ROOT)/boot/nwos/biosboot.bin"; \
-	if [[ -f "$(NWWD_NOTICE)" ]]; then install -m 0644 "$(NWWD_NOTICE)" "$(ISO_ROOT)/data/licenses/SCOWL-ESDB-NOTICE.txt"; fi; \
 	if [[ -f "$(NWBIBLE_MODULE)" ]]; then \
 	  install -m 0644 "$(NWBIBLE_MODULE)" "$(ISO_ROOT)/boot/nwos/world_english_bible.txt"; \
 	  install -m 0644 "$(NWBIBLE_NOTICE)" "$(ISO_ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt"; \

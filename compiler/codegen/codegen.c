@@ -19,6 +19,10 @@
 #define NWO_MAX_FIXUPS    512
 #define NWO_NAME_SIZE_V3  32
 
+#define NWC_MOD_NONZERO  1u
+#define NWC_MOD_CONST    2u
+#define NWC_MOD_NEEDED   4u
+
 typedef struct
 {
     FILE* file;
@@ -29,11 +33,16 @@ typedef struct
     int error;
 
     long loop_start[NWO_MAX_LOOPS];
+    long loop_continue[NWO_MAX_LOOPS];
     int loop_break_base[NWO_MAX_LOOPS];
+    int loop_continue_base[NWO_MAX_LOOPS];
     int loop_depth;
 
     long break_patch[NWO_MAX_BREAKS];
     int break_count;
+
+    long continue_patch[NWO_MAX_BREAKS];
+    int continue_count;
 
     int current_owner;
 
@@ -44,6 +53,8 @@ typedef struct
 {
     char name[NWO_NAME_SIZE_V3];
     int owner;
+    unsigned int modifiers;
+    ValueType value_type;
 } CgSymbol;
 
 typedef struct
@@ -289,7 +300,8 @@ static int cg_emit_slot(Codegen* cg, const char* name, int is_store)
 /* Emit the slot operand for a declaration inside the current function.
    Redeclaration in the same function reuses the slot (old VM semantics),
    otherwise a fresh slot is allocated. */
-static int cg_emit_decl_slot(Codegen* cg, const char* name)
+static int cg_emit_decl_slot(Codegen* cg, const char* name,
+                             unsigned int modifiers, ValueType value_type)
 {
     int slot;
 
@@ -307,8 +319,24 @@ static int cg_emit_decl_slot(Codegen* cg, const char* name)
         return 0;
     }
 
+    cg_symbols[slot].modifiers = modifiers;
+    cg_symbols[slot].value_type = value_type;
+
     cg_emit_u32(cg, (unsigned int)slot);
     return 1;
+}
+
+static unsigned int cg_sym_modifiers(const char* name, int owner)
+{
+    int slot = cg_sym_find(name, owner);
+
+    if (slot == -1 && owner != cg_main_func)
+        slot = cg_sym_find(name, cg_main_func);
+
+    if (slot == -1)
+        return 0;
+
+    return cg_symbols[slot].modifiers;
 }
 
 static void cg_fixup_patch(Codegen* cg, CgFixup* fx)
@@ -427,6 +455,29 @@ typedef enum
     OP_FLUSH        = 0x7A,
     OP_MOD          = 0x34,
 
+    OP_BIT_AND_BIN  = 0x35,
+    OP_BIT_OR_BIN   = 0x36,
+    OP_BIT_XOR_BIN  = 0x37,
+    OP_SHL          = 0x38,
+    OP_SHR          = 0x39,
+    OP_BIT_NOT      = 0x3A,
+    OP_VOLATILE     = 0x3B,
+
+    OP_LOW_OUT8         = 0x90,
+    OP_LOW_IN8          = 0x91,
+    OP_LOW_OUT16        = 0x92,
+    OP_LOW_IN16         = 0x93,
+    OP_LOW_OUT32        = 0x94,
+    OP_LOW_IN32         = 0x95,
+    OP_LOW_MEM_WRITE8   = 0x96,
+    OP_LOW_MEM_READ8    = 0x97,
+    OP_LOW_MEM_WRITE16  = 0x98,
+    OP_LOW_MEM_READ16   = 0x99,
+    OP_LOW_MEM_WRITE32  = 0x9A,
+    OP_LOW_MEM_READ32   = 0x9B,
+    OP_LOW_CLI          = 0x9C,
+    OP_LOW_STI          = 0x9D,
+
     OP_AND          = 0x46,
     OP_OR           = 0x47,
     OP_NOT          = 0x48,
@@ -475,7 +526,6 @@ typedef enum
     OP_BUF_LOAD  = 0xBC,
     OP_BUF_SAVE  = 0xBD,
     OP_POLLKEY   = 0xBE,
-    OP_RANDOM_WORD = 0xBF,
     OP_GRADIENT  = 0xC0,
     OP_RGRAD     = 0xC1,
     OP_GLASS     = 0xC2,
@@ -500,6 +550,9 @@ typedef enum
 static void cg_node(Codegen* cg, ASTNode* node);
 static void cg_expression(Codegen* cg, ASTNode* node);
 static void cg_statement(Codegen* cg, ASTNode* node);
+static void cg_for(Codegen* cg, ASTNode* node);
+static void cg_do_while(Codegen* cg, ASTNode* node);
+static void cg_low_call(Codegen* cg, ASTNode* node);
 static int cg_call(Codegen* cg, ASTNode* node);
 
 static unsigned char cg_type_byte(ValueType t)
@@ -516,6 +569,22 @@ static unsigned char cg_type_byte(ValueType t)
         case TYPE_VOID:      return 0;
         default:             return 0;
     }
+}
+
+static unsigned char cg_decl_type_byte(ValueType t, unsigned int modifiers)
+{
+    unsigned char type = cg_type_byte(t);
+
+    if (modifiers & NWC_MOD_NONZERO)
+        type |= 0x80;
+
+    if (modifiers & NWC_MOD_NEEDED)
+        type |= 0x40;
+
+    if (modifiers & NWC_MOD_CONST)
+        type |= 0x20;
+
+    return type;
 }
 
 static int cg_text_equals_ci(const char* a, const char* b)
@@ -659,6 +728,43 @@ static int cg_color_value(Codegen* cg, const char* name)
 }
 
 
+static void cg_inc_dec(Codegen* cg, ASTNode* target, int delta, int post)
+{
+    unsigned char op = (delta > 0) ? OP_ADD : OP_SUB;
+
+    if (target == NULL || target->type != AST_IDENTIFIER)
+    {
+        cg_error(cg, "increment requires a variable");
+        return;
+    }
+
+    if (cg_sym_modifiers(target->text, cg->current_owner) & NWC_MOD_CONST)
+    {
+        cg_error(cg, "assignment to const variable");
+        return;
+    }
+
+    cg_emit_byte(cg, OP_LOAD);
+    cg_emit_slot(cg, target->text, 0);
+
+    if (post)
+    {
+        cg_emit_byte(cg, OP_DUP);
+        cg_emit_int(cg, 1);
+        cg_emit_byte(cg, op);
+        cg_emit_byte(cg, OP_STORE);
+        cg_emit_slot(cg, target->text, 1);
+    }
+    else
+    {
+        cg_emit_int(cg, 1);
+        cg_emit_byte(cg, op);
+        cg_emit_byte(cg, OP_DUP);
+        cg_emit_byte(cg, OP_STORE);
+        cg_emit_slot(cg, target->text, 1);
+    }
+}
+
 static void cg_binary(Codegen* cg, ASTNode* node)
 {
     const char* op = node->text;
@@ -686,7 +792,38 @@ static void cg_binary(Codegen* cg, ASTNode* node)
             return;
         }
 
+        if (strcmp(op, "~") == 0)
+        {
+            cg_expression(cg, node->right);
+            cg_emit_byte(cg, OP_BIT_NOT);
+            return;
+        }
+
+        if (strcmp(op, "pre++") == 0)
+        {
+            cg_inc_dec(cg, node->right, 1, 0);
+            return;
+        }
+
+        if (strcmp(op, "pre--") == 0)
+        {
+            cg_inc_dec(cg, node->right, -1, 0);
+            return;
+        }
+
         cg_error(cg, "unknown unary operator");
+        return;
+    }
+
+    if (strcmp(op, "post++") == 0)
+    {
+        cg_inc_dec(cg, node->left, 1, 1);
+        return;
+    }
+
+    if (strcmp(op, "post--") == 0)
+    {
+        cg_inc_dec(cg, node->left, -1, 1);
         return;
     }
 
@@ -697,6 +834,12 @@ static void cg_binary(Codegen* cg, ASTNode* node)
     else if (strcmp(op, "-") == 0) cg_emit_byte(cg, OP_SUB);
     else if (strcmp(op, "*") == 0) cg_emit_byte(cg, OP_MUL);
     else if (strcmp(op, "/") == 0) cg_emit_byte(cg, OP_DIV);
+    else if (strcmp(op, "%") == 0) cg_emit_byte(cg, OP_MOD);
+    else if (strcmp(op, "&") == 0) cg_emit_byte(cg, OP_BIT_AND_BIN);
+    else if (strcmp(op, "|") == 0) cg_emit_byte(cg, OP_BIT_OR_BIN);
+    else if (strcmp(op, "^") == 0) cg_emit_byte(cg, OP_BIT_XOR_BIN);
+    else if (strcmp(op, "<<") == 0) cg_emit_byte(cg, OP_SHL);
+    else if (strcmp(op, ">>") == 0) cg_emit_byte(cg, OP_SHR);
     else if (strcmp(op, "==") == 0) cg_emit_byte(cg, OP_EQ);
     else if (strcmp(op, "!=") == 0) cg_emit_byte(cg, OP_NEQ);
     else if (strcmp(op, "<") == 0)  cg_emit_byte(cg, OP_LT);
@@ -759,6 +902,10 @@ static void cg_expression(Codegen* cg, ASTNode* node)
             }
             else
             {
+                if (cg_sym_modifiers(node->text, cg->current_owner) &
+                    NWC_MOD_NEEDED)
+                    cg_emit_byte(cg, OP_VOLATILE);
+
                 cg_emit_byte(cg, OP_LOAD);
                 cg_emit_slot(cg, node->text, 0);
             }
@@ -768,6 +915,10 @@ static void cg_expression(Codegen* cg, ASTNode* node)
 
         case AST_BINARY_OPERATION:
             cg_binary(cg, node);
+            break;
+
+        case AST_LOW_CALL:
+            cg_low_call(cg, node);
             break;
 
         case AST_EXPRESSION:
@@ -850,17 +1001,19 @@ static void cg_variable_decl(Codegen* cg, ASTNode* node)
     if (node->type == AST_ARRAY_DECLARATION)
     {
         cg_emit_byte(cg, OP_DECLARE_ARR);
-        if (!cg_emit_decl_slot(cg, node->text))
+        if (!cg_emit_decl_slot(cg, node->text, node->modifiers,
+                               node->value_type))
             return;
-        cg_emit_byte(cg, cg_type_byte(node->value_type));
+        cg_emit_byte(cg, cg_decl_type_byte(node->value_type, node->modifiers));
         cg_emit_u32(cg, node->array_size);
     }
     else
     {
         cg_emit_byte(cg, OP_DECLARE);
-        if (!cg_emit_decl_slot(cg, node->text))
+        if (!cg_emit_decl_slot(cg, node->text, node->modifiers,
+                               node->value_type))
             return;
-        cg_emit_byte(cg, cg_type_byte(node->value_type));
+        cg_emit_byte(cg, cg_decl_type_byte(node->value_type, node->modifiers));
     }
     if (node->child != NULL)
     {
@@ -1073,12 +1226,6 @@ static int cg_call(Codegen* cg, ASTNode* node)
     if (strcmp(node->text, "nw::pollkey") == 0)
     {
         cg_emit_byte(cg, OP_POLLKEY);
-        return 1;
-    }
-
-    if (strcmp(node->text, "nw::random_word") == 0)
-    {
-        cg_emit_byte(cg, OP_RANDOM_WORD);
         return 1;
     }
 
@@ -1589,6 +1736,7 @@ static void cg_while(Codegen* cg, ASTNode* node)
 {
     int depth = cg->loop_depth;
     int break_base;
+    int continue_base;
     long loop_start;
     long exit_jump;
     long loop_end;
@@ -1602,9 +1750,12 @@ static void cg_while(Codegen* cg, ASTNode* node)
 
     loop_start = ftell(cg->file);
     break_base = cg->break_count;
+    continue_base = cg->continue_count;
 
     cg->loop_start[depth] = loop_start;
+    cg->loop_continue[depth] = loop_start;
     cg->loop_break_base[depth] = break_base;
+    cg->loop_continue_base[depth] = continue_base;
     cg->loop_depth = depth + 1;
 
     cg_expression(cg, node->child);
@@ -1623,8 +1774,289 @@ static void cg_while(Codegen* cg, ASTNode* node)
     for (i = break_base; i < cg->break_count; i++)
         cg_patch_jump(cg, cg->break_patch[i], loop_end);
 
+    for (i = continue_base; i < cg->continue_count; i++)
+        cg_patch_jump(cg, cg->continue_patch[i], loop_start);
+
     cg->break_count = break_base;
+    cg->continue_count = continue_base;
     cg->loop_depth = depth;
+}
+
+static void cg_for(Codegen* cg, ASTNode* node)
+{
+    int depth = cg->loop_depth;
+    int break_base;
+    int continue_base;
+    long loop_start;
+    long exit_jump = -1;
+    long step_start;
+    long loop_end;
+    int i;
+
+    if (depth >= NWO_MAX_LOOPS)
+    {
+        cg_error(cg, "too many nested loops");
+        return;
+    }
+
+    if (node->body != NULL)
+        cg_statement(cg, node->body);
+
+    loop_start = ftell(cg->file);
+    break_base = cg->break_count;
+    continue_base = cg->continue_count;
+
+    cg->loop_start[depth] = loop_start;
+    cg->loop_break_base[depth] = break_base;
+    cg->loop_continue_base[depth] = continue_base;
+    cg->loop_depth = depth + 1;
+
+    if (node->child != NULL)
+    {
+        cg_expression(cg, node->child);
+        exit_jump = cg_emit_jump(cg, OP_JUMP_FALSE);
+    }
+
+    cg_statement(cg, node->left);
+
+    step_start = ftell(cg->file);
+
+    cg->loop_continue[depth] = step_start;
+
+    for (i = continue_base; i < cg->continue_count; i++)
+        cg_patch_jump(cg, cg->continue_patch[i], step_start);
+
+    if (node->right != NULL)
+        cg_statement(cg, node->right);
+
+    cg_emit_byte(cg, OP_JUMP);
+    cg_emit_u32(cg, (unsigned int)loop_start);
+
+    loop_end = ftell(cg->file);
+
+    if (exit_jump != -1)
+        cg_patch_jump(cg, exit_jump, loop_end);
+
+    for (i = break_base; i < cg->break_count; i++)
+        cg_patch_jump(cg, cg->break_patch[i], loop_end);
+
+    cg->break_count = break_base;
+    cg->continue_count = continue_base;
+    cg->loop_depth = depth;
+}
+
+static void cg_do_while(Codegen* cg, ASTNode* node)
+{
+    int depth = cg->loop_depth;
+    int break_base;
+    int continue_base;
+    long loop_start;
+    long continue_target;
+    long loop_end;
+    int i;
+
+    if (depth >= NWO_MAX_LOOPS)
+    {
+        cg_error(cg, "too many nested loops");
+        return;
+    }
+
+    loop_start = ftell(cg->file);
+    break_base = cg->break_count;
+    continue_base = cg->continue_count;
+
+    cg->loop_start[depth] = loop_start;
+    cg->loop_break_base[depth] = break_base;
+    cg->loop_continue_base[depth] = continue_base;
+    cg->loop_depth = depth + 1;
+
+    cg_statement(cg, node->left);
+
+    continue_target = ftell(cg->file);
+
+    for (i = continue_base; i < cg->continue_count; i++)
+        cg_patch_jump(cg, cg->continue_patch[i], continue_target);
+
+    cg->loop_continue[depth] = continue_target;
+
+    cg_expression(cg, node->child);
+
+    {
+        long back = cg_emit_jump(cg, OP_JUMP_FALSE);
+
+        cg_emit_byte(cg, OP_JUMP);
+        cg_emit_u32(cg, (unsigned int)loop_start);
+
+        loop_end = ftell(cg->file);
+
+        cg_patch_jump(cg, back, loop_end);
+    }
+
+    for (i = break_base; i < cg->break_count; i++)
+        cg_patch_jump(cg, cg->break_patch[i], loop_end);
+
+    cg->break_count = break_base;
+    cg->continue_count = continue_base;
+    cg->loop_depth = depth;
+}
+
+static unsigned char cg_assign_opcode(long long token)
+{
+    switch ((TokenType)token)
+    {
+        case TOKEN_PLUS_ASSIGN:    return OP_ADD;
+        case TOKEN_MINUS_ASSIGN:   return OP_SUB;
+        case TOKEN_STAR_ASSIGN:    return OP_MUL;
+        case TOKEN_SLASH_ASSIGN:   return OP_DIV;
+        case TOKEN_PERCENT_ASSIGN: return OP_MOD;
+        case TOKEN_BIT_AND_ASSIGN: return OP_BIT_AND_BIN;
+        case TOKEN_BIT_OR_ASSIGN:  return OP_BIT_OR_BIN;
+        case TOKEN_BIT_XOR_ASSIGN: return OP_BIT_XOR_BIN;
+        case TOKEN_SHL_ASSIGN:     return OP_SHL;
+        case TOKEN_SHR_ASSIGN:     return OP_SHR;
+        default:                   return 0;
+    }
+}
+
+static void cg_low_call(Codegen* cg, ASTNode* node)
+{
+    unsigned char opcode = 0;
+    int arg_count = 0;
+    int expected = 0;
+    ASTNode* arg;
+
+    if (node->text == NULL)
+    {
+        cg_error(cg, "low-level call without name");
+        return;
+    }
+
+    if (strcmp(node->text, "low::out8") == 0)
+    { opcode = OP_LOW_OUT8; expected = 2; }
+    else if (strcmp(node->text, "low::in8") == 0)
+    { opcode = OP_LOW_IN8; expected = 1; }
+    else if (strcmp(node->text, "low::out16") == 0)
+    { opcode = OP_LOW_OUT16; expected = 2; }
+    else if (strcmp(node->text, "low::in16") == 0)
+    { opcode = OP_LOW_IN16; expected = 1; }
+    else if (strcmp(node->text, "low::out32") == 0)
+    { opcode = OP_LOW_OUT32; expected = 2; }
+    else if (strcmp(node->text, "low::in32") == 0)
+    { opcode = OP_LOW_IN32; expected = 1; }
+    else if (strcmp(node->text, "low::memory_write8") == 0)
+    { opcode = OP_LOW_MEM_WRITE8; expected = 2; }
+    else if (strcmp(node->text, "low::memory_read8") == 0)
+    { opcode = OP_LOW_MEM_READ8; expected = 1; }
+    else if (strcmp(node->text, "low::memory_write16") == 0)
+    { opcode = OP_LOW_MEM_WRITE16; expected = 2; }
+    else if (strcmp(node->text, "low::memory_read16") == 0)
+    { opcode = OP_LOW_MEM_READ16; expected = 1; }
+    else if (strcmp(node->text, "low::memory_write32") == 0)
+    { opcode = OP_LOW_MEM_WRITE32; expected = 2; }
+    else if (strcmp(node->text, "low::memory_read32") == 0)
+    { opcode = OP_LOW_MEM_READ32; expected = 1; }
+    else if (strcmp(node->text, "low::cli") == 0)
+    { opcode = OP_LOW_CLI; expected = 0; }
+    else if (strcmp(node->text, "low::sti") == 0)
+    { opcode = OP_LOW_STI; expected = 0; }
+    else
+    {
+        cg_error(cg, "unknown low-level command");
+        return;
+    }
+
+    for (arg = node->child; arg != NULL; arg = arg->next)
+        arg_count++;
+
+    if (arg_count != expected)
+    {
+        cg_error(cg, "wrong number of low-level arguments");
+        return;
+    }
+
+    for (arg = node->child; arg != NULL; arg = arg->next)
+        cg_expression(cg, arg);
+
+    cg_emit_byte(cg, opcode);
+}
+
+static void cg_assignment(Codegen* cg, ASTNode* node)
+{
+    unsigned int modifiers = cg_sym_modifiers(node->text, cg->current_owner);
+    unsigned char opcode;
+    int volatile_access = (modifiers & NWC_MOD_NEEDED) != 0;
+
+    if (modifiers & NWC_MOD_CONST)
+    {
+        cg_error(cg, "assignment to const variable");
+        return;
+    }
+
+    if (node->integer_value == TOKEN_PLUS_PLUS ||
+        node->integer_value == TOKEN_MINUS_MINUS)
+    {
+        cg_emit_byte(cg, OP_LOAD);
+        cg_emit_slot(cg, node->text, 0);
+        cg_emit_int(cg, 1);
+        cg_emit_byte(cg, node->integer_value == TOKEN_PLUS_PLUS ?
+                         OP_ADD : OP_SUB);
+        if (volatile_access)
+            cg_emit_byte(cg, OP_VOLATILE);
+        cg_emit_byte(cg, OP_STORE);
+        cg_emit_slot(cg, node->text, 1);
+        return;
+    }
+
+    if (node->integer_value == TOKEN_ASSIGN)
+    {
+        if (node->left != NULL)
+        {
+            cg_expression(cg, node->left);
+            cg_expression(cg, node->child);
+            cg_emit_byte(cg, OP_STORE_ARR);
+            cg_emit_slot(cg, node->text, 1);
+        }
+        else
+        {
+            cg_expression(cg, node->child);
+            if (volatile_access)
+                cg_emit_byte(cg, OP_VOLATILE);
+            cg_emit_byte(cg, OP_STORE);
+            cg_emit_slot(cg, node->text, 1);
+        }
+        return;
+    }
+
+    opcode = cg_assign_opcode(node->integer_value);
+
+    if (opcode == 0)
+    {
+        cg_error(cg, "unsupported assignment operator");
+        return;
+    }
+
+    if (node->left != NULL)
+    {
+        cg_expression(cg, node->left);
+        cg_emit_byte(cg, OP_DUP);
+        cg_emit_byte(cg, OP_LOAD_ARR);
+        cg_emit_slot(cg, node->text, 0);
+        cg_expression(cg, node->child);
+        cg_emit_byte(cg, opcode);
+        cg_emit_byte(cg, OP_STORE_ARR);
+        cg_emit_slot(cg, node->text, 1);
+    }
+    else
+    {
+        cg_emit_byte(cg, OP_LOAD);
+        cg_emit_slot(cg, node->text, 0);
+        cg_expression(cg, node->child);
+        cg_emit_byte(cg, opcode);
+        if (volatile_access)
+            cg_emit_byte(cg, OP_VOLATILE);
+        cg_emit_byte(cg, OP_STORE);
+        cg_emit_slot(cg, node->text, 1);
+    }
 }
 
 static void cg_statement(Codegen* cg, ASTNode* node)
@@ -1656,19 +2088,7 @@ static void cg_statement(Codegen* cg, ASTNode* node)
             break;
 
         case AST_ASSIGNMENT:
-            if (node->left != NULL)
-            {
-                cg_expression(cg, node->left);
-                cg_expression(cg, node->child);
-                cg_emit_byte (cg, OP_STORE_ARR);
-                cg_emit_slot(cg, node->text, 1);
-            }
-            else
-            {
-                cg_expression(cg, node->child);
-                cg_emit_byte (cg, OP_STORE);
-                cg_emit_slot(cg, node->text, 1);
-            }
+            cg_assignment(cg, node);
             break;
 
         case AST_ASM:
@@ -1715,12 +2135,26 @@ static void cg_statement(Codegen* cg, ASTNode* node)
                 break;
             }
 
-            cg_emit_byte(cg, OP_JUMP);
-            cg_emit_u32(
-                cg,
-                (unsigned int)
-                cg->loop_start[cg->loop_depth - 1]
-            );
+            if (cg->continue_count >= NWO_MAX_BREAKS)
+            {
+                cg_error(cg, "too many continue statements");
+                break;
+            }
+
+            cg->continue_patch[cg->continue_count++] =
+                cg_emit_jump(cg, OP_JUMP);
+            break;
+
+        case AST_LOW_CALL:
+            cg_low_call(cg, node);
+            break;
+
+        case AST_FOR:
+            cg_for(cg, node);
+            break;
+
+        case AST_DO_WHILE:
+            cg_do_while(cg, node);
             break;
 
         case AST_CALL:
@@ -1788,12 +2222,14 @@ static void cg_function(Codegen* cg, ASTNode* node)
 
     while (param != NULL)
     {
-        if (!cg_emit_decl_slot(cg, param->text))
+        if (!cg_emit_decl_slot(cg, param->text, param->modifiers,
+                               param->value_type))
         {
             cg->current_owner = saved_owner;
             return;
         }
-        cg_emit_byte(cg, cg_type_byte(param->value_type));
+        cg_emit_byte(cg, cg_decl_type_byte(param->value_type,
+                                           param->modifiers));
         cg_emit_byte(
             cg,
             (param->type == AST_ARRAY_DECLARATION ||

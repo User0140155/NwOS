@@ -7,7 +7,6 @@
 *.vdi
 
 *.exe
-*.nwo
 *.fd
 *.bak
 # other
@@ -17,7 +16,6 @@
 build/
 compiler/builded/
 compiler/nwc
-rootfs/
 # for me (help, commands, recovery, ...)
 cloc
 nwimg

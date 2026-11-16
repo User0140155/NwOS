@@ -1,3 +1,0 @@
-# Optional NwWord exclusions: one exact word per line.
-# Lines beginning with # and blank lines are ignored.
-# Keep this list separate; do not edit the original en_US.txt.

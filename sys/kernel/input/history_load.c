@@ -2,7 +2,7 @@
 
 static void history_check_size(void);
 
-int console_f7_enabled = 0;
+int console_passage_hotkey_enabled = 0;
 
 char cmd_history[MAX_HISTORY_COMMANDS][MAX_CMD_LENGTH];
 int history_count = 0;

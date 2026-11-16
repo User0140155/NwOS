@@ -2,6 +2,7 @@
 #include "nwo_vm.h"
 #include "nwo_native.h"
 #include "../fb.h"
+#include "../../../include/kernelpanic.h"
 
 void graphics_begin(void);
 void graphics_end(void);
@@ -14,18 +15,126 @@ void print_error(const char* text);
 void print_success(const char* text);
 
 int fs_read_binary(const char* name, unsigned char* buffer, unsigned int max_size);
+unsigned int fs_get_file_size(const char* name);
 
-
-static int nwo_is_gui_name(const char* filename)
+static int nwo_str_eq(const char* a, const char* b)
 {
-    const char* base = filename;
-    const char* p = filename;
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++; b++;
+    }
+    return *a == *b;
+}
 
+static int nwo_starts_with(const char* s, const char* p)
+{
+    if (!s || !p) return 0;
+    while (*p) {
+        if (*s++ != *p++) return 0;
+    }
+    return 1;
+}
+
+static const char* nwo_base_name(const char* filename)
+{
+    const char* base = filename ? filename : "";
+    const char* p = base;
     while (*p) {
         if (*p == '/' || *p == '\\')
             base = p + 1;
         ++p;
     }
+    return base;
+}
+
+static int nwo_is_system_app(const char* filename)
+{
+    const char* base = nwo_base_name(filename);
+
+    if (!filename) return 0;
+    if (nwo_starts_with(filename, "/sys/") || nwo_starts_with(filename, "/bin/"))
+        return 1;
+    if (nwo_starts_with(filename, "sys/") || nwo_starts_with(filename, "bin/"))
+        return 1;
+
+    if (nwo_str_eq(base, "gui.nwo") ||
+        nwo_str_eq(base, "testgui.nwo") ||
+        nwo_str_eq(base, "shell.nwo") ||
+        nwo_str_eq(base, "calculator.nwo"))
+        return 1;
+
+    return 0;
+}
+
+static int nwo_contains_bytes(const unsigned char* buf, unsigned int size, const char* needle)
+{
+    unsigned int nlen = 0;
+    if (!buf || !needle) return 0;
+    while (needle[nlen]) nlen++;
+    if (nlen == 0 || size < nlen) return 0;
+    for (unsigned int i = 0; i + nlen <= size; i++) {
+        unsigned int j = 0;
+        while (j < nlen && buf[i + j] == (unsigned char)needle[j]) j++;
+        if (j == nlen) return 1;
+    }
+    return 0;
+}
+
+static int nwo_is_suspicious(const char* filename, const unsigned char* buf, unsigned int size)
+{
+    if (nwo_is_system_app(filename))
+        return 0;
+    if (!buf || size == 0)
+        return 0;
+
+    if (nwo_contains_bytes(buf, size, "/sys/kernel.elf") ||
+        nwo_contains_bytes(buf, size, "kernel.elf") ||
+        nwo_contains_bytes(buf, size, "EFI/BOOT/KERNEL.ELF") ||
+        nwo_contains_bytes(buf, size, "format_disk") ||
+        nwo_contains_bytes(buf, size, "fs_format") ||
+        nwo_contains_bytes(buf, size, "wipefs") ||
+        nwo_contains_bytes(buf, size, "MALWARE") ||
+        nwo_contains_bytes(buf, size, "virus"))
+        return 1;
+
+    if (nwo_contains_bytes(buf, size, "/sys/") &&
+        nwo_contains_bytes(buf, size, "delete"))
+        return 1;
+
+    return 0;
+}
+
+static void nwo_security_check(const char* filename)
+{
+    unsigned char header_scan[4096];
+    unsigned int size = fs_get_file_size(filename);
+    unsigned int read_size = size;
+
+    if (nwo_is_system_app(filename))
+        return;
+    if (size == 0)
+        return;
+
+    if (read_size > sizeof(header_scan))
+        read_size = sizeof(header_scan);
+
+    for (unsigned int i = 0; i < read_size; i++)
+        header_scan[i] = 0;
+
+    if (!fs_read_binary(filename, header_scan, read_size))
+        return;
+
+    if (nwo_is_suspicious(filename, header_scan, read_size))
+    {
+        KPANIC_CRITICAL(ERR_SUSPICIOUS_APP,
+            "Highly suspicious NWO application blocked before execution.");
+    }
+}
+
+static int nwo_is_gui_name(const char* filename)
+{
+    const char* base = nwo_base_name(filename);
 
     return base[0] == 'g' && base[1] == 'u' && base[2] == 'i' &&
            base[3] == '.' && base[4] == 'n' && base[5] == 'w' &&
@@ -67,6 +176,8 @@ void nwo_run(const char* filename)
         print_error("Usage: run <file.nwo>\n");
         return;
     }
+
+    nwo_security_check(filename);
 
     use_gui_canvas = nwo_program_is_gui(filename) && fb_is_available();
     saved_canvas_width = fb_get_width();
@@ -140,6 +251,8 @@ int nwo_run_console(const char* filename)
     if (filename == 0 || filename[0] == '\0')
         return -1;
 
+    nwo_security_check(filename);
+
     print("NWO: loading ");
     print(filename);
     print("...\n");
@@ -170,6 +283,8 @@ int nwo_run_in_window(const char* filename, int x, int y, int w, int h)
 
     if (filename == 0 || filename[0] == '\0')
         return -1;
+
+    nwo_security_check(filename);
 
     if (!fb_is_available())
         return nwo_run_console(filename);

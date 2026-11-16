@@ -23,6 +23,7 @@ typedef enum
     TOKEN_ELSE,
     TOKEN_WHILE,
     TOKEN_FOR,
+    TOKEN_DO,
     TOKEN_BREAK,
     TOKEN_CONTINUE,
     TOKEN_CALL,
@@ -58,8 +59,14 @@ typedef enum
     TOKEN_IN8,
     TOKEN_OUT16,
     TOKEN_IN16,
+    TOKEN_OUT32,
+    TOKEN_IN32,
     TOKEN_MEMORY_WRITE8,
     TOKEN_MEMORY_READ8,
+    TOKEN_MEMORY_WRITE16,
+    TOKEN_MEMORY_READ16,
+    TOKEN_MEMORY_WRITE32,
+    TOKEN_MEMORY_READ32,
     TOKEN_CLI,
     TOKEN_STI,
 
@@ -70,8 +77,22 @@ typedef enum
     TOKEN_MINUS,
     TOKEN_STAR,
     TOKEN_SLASH,
+    TOKEN_PERCENT,        /* % */
+
+    TOKEN_PLUS_PLUS,      /* ++ */
+    TOKEN_MINUS_MINUS,    /* -- */
 
     TOKEN_ASSIGN,         /* = */
+    TOKEN_PLUS_ASSIGN,    /* += */
+    TOKEN_MINUS_ASSIGN,   /* -= */
+    TOKEN_STAR_ASSIGN,    /* *= */
+    TOKEN_SLASH_ASSIGN,   /* /= */
+    TOKEN_PERCENT_ASSIGN, /* %= */
+    TOKEN_BIT_AND_ASSIGN, /* &= */
+    TOKEN_BIT_OR_ASSIGN,  /* |= */
+    TOKEN_BIT_XOR_ASSIGN, /* ^= */
+    TOKEN_SHL_ASSIGN,     /* <<= */
+    TOKEN_SHR_ASSIGN,     /* >>= */
 
     TOKEN_EQUAL_EQUAL,    /* == */
     TOKEN_NOT_EQUAL,      /* != */

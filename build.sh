@@ -74,7 +74,6 @@ SOURCES=(
     sys/kernel/Apps/Games/game_memory.c
     sys/kernel/Apps/fileStats/filestats.c
     sys/kernel/Apps/baseconverter/baseconverter.c
-    sys/kernel/Apps/wordgenerator/wordgenerator.c
     sys/kernel/Apps/textredactor/textredactor.c
     drivers/keyboard.c
     drivers/mouse.c

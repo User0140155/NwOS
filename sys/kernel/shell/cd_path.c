@@ -24,9 +24,9 @@ void shell(void)
         print_shell_p();
         set_color(base_color);
 
-        console_f7_enabled = 1;
+        console_passage_hotkey_enabled = 1;
         read_line(command, 128);
-        console_f7_enabled = 0;
+        console_passage_hotkey_enabled = 0;
 
         shell_execute(command);
     }

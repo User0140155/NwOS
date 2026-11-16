@@ -205,6 +205,9 @@ static Token read_identifier(Lexer* lexer)
     else if (strcmp(token.text, "for") == 0)
         token.type = TOKEN_FOR;
 
+    else if (strcmp(token.text, "do") == 0)
+        token.type = TOKEN_DO;
+
     else if (strcmp(token.text, "break") == 0)
         token.type = TOKEN_BREAK;
 
@@ -283,11 +286,29 @@ static Token read_identifier(Lexer* lexer)
     else if (strcmp(token.text, "in16") == 0)
         token.type = TOKEN_IN16;
 
+    else if (strcmp(token.text, "out32") == 0)
+        token.type = TOKEN_OUT32;
+
+    else if (strcmp(token.text, "in32") == 0)
+        token.type = TOKEN_IN32;
+
     else if (strcmp(token.text, "memory_write8") == 0)
         token.type = TOKEN_MEMORY_WRITE8;
 
     else if (strcmp(token.text, "memory_read8") == 0)
         token.type = TOKEN_MEMORY_READ8;
+
+    else if (strcmp(token.text, "memory_write16") == 0)
+        token.type = TOKEN_MEMORY_WRITE16;
+
+    else if (strcmp(token.text, "memory_read16") == 0)
+        token.type = TOKEN_MEMORY_READ16;
+
+    else if (strcmp(token.text, "memory_write32") == 0)
+        token.type = TOKEN_MEMORY_WRITE32;
+
+    else if (strcmp(token.text, "memory_read32") == 0)
+        token.type = TOKEN_MEMORY_READ32;
 
     else if (strcmp(token.text, "cli") == 0)
         token.type = TOKEN_CLI;
@@ -497,8 +518,14 @@ const char* token_type_name(TokenType type)
         case TOKEN_IN8:            return "IN8";
         case TOKEN_OUT16:          return "OUT16";
         case TOKEN_IN16:           return "IN16";
+        case TOKEN_OUT32:          return "OUT32";
+        case TOKEN_IN32:           return "IN32";
         case TOKEN_MEMORY_WRITE8:  return "MEMORY_WRITE8";
         case TOKEN_MEMORY_READ8:   return "MEMORY_READ8";
+        case TOKEN_MEMORY_WRITE16: return "MEMORY_WRITE16";
+        case TOKEN_MEMORY_READ16:  return "MEMORY_READ16";
+        case TOKEN_MEMORY_WRITE32: return "MEMORY_WRITE32";
+        case TOKEN_MEMORY_READ32:  return "MEMORY_READ32";
         case TOKEN_CLI:            return "CLI";
         case TOKEN_STI:            return "STI";
 
@@ -509,8 +536,22 @@ const char* token_type_name(TokenType type)
         case TOKEN_MINUS:          return "MINUS";
         case TOKEN_STAR:           return "STAR";
         case TOKEN_SLASH:          return "SLASH";
+        case TOKEN_PERCENT:        return "PERCENT";
+
+        case TOKEN_PLUS_PLUS:      return "PLUS_PLUS";
+        case TOKEN_MINUS_MINUS:    return "MINUS_MINUS";
 
         case TOKEN_ASSIGN:         return "ASSIGN";
+        case TOKEN_PLUS_ASSIGN:    return "PLUS_ASSIGN";
+        case TOKEN_MINUS_ASSIGN:   return "MINUS_ASSIGN";
+        case TOKEN_STAR_ASSIGN:    return "STAR_ASSIGN";
+        case TOKEN_SLASH_ASSIGN:   return "SLASH_ASSIGN";
+        case TOKEN_PERCENT_ASSIGN: return "PERCENT_ASSIGN";
+        case TOKEN_BIT_AND_ASSIGN: return "BIT_AND_ASSIGN";
+        case TOKEN_BIT_OR_ASSIGN:  return "BIT_OR_ASSIGN";
+        case TOKEN_BIT_XOR_ASSIGN: return "BIT_XOR_ASSIGN";
+        case TOKEN_SHL_ASSIGN:     return "SHL_ASSIGN";
+        case TOKEN_SHR_ASSIGN:     return "SHR_ASSIGN";
 
         case TOKEN_EQUAL_EQUAL:    return "EQUAL_EQUAL";
         case TOKEN_NOT_EQUAL:      return "NOT_EQUAL";
@@ -687,6 +728,68 @@ static Token lexer_next_impl(Lexer* lexer)
         return token;
     }
 
+    if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '%' ||
+         c == '&' || c == '|' || c == '^') &&
+        peek_char(lexer) == '=')
+    {
+        TokenType type = TOKEN_ERROR;
+
+        switch (c)
+        {
+            case '+': type = TOKEN_PLUS_ASSIGN;    break;
+            case '-': type = TOKEN_MINUS_ASSIGN;   break;
+            case '*': type = TOKEN_STAR_ASSIGN;    break;
+            case '/': type = TOKEN_SLASH_ASSIGN;   break;
+            case '%': type = TOKEN_PERCENT_ASSIGN; break;
+            case '&': type = TOKEN_BIT_AND_ASSIGN; break;
+            case '|': type = TOKEN_BIT_OR_ASSIGN;  break;
+            case '^': type = TOKEN_BIT_XOR_ASSIGN; break;
+        }
+
+        {
+            Token token = make_token(type, line, column);
+
+            token_add_char(&token, c);
+            advance(lexer);
+            token_add_char(&token, '=');
+            advance(lexer);
+
+            return token;
+        }
+    }
+
+    if ((c == '+' && peek_char(lexer) == '+') ||
+        (c == '-' && peek_char(lexer) == '-'))
+    {
+        Token token = make_token(
+            (c == '+') ? TOKEN_PLUS_PLUS : TOKEN_MINUS_MINUS,
+            line,
+            column
+        );
+
+        token_add_char(&token, c);
+        advance(lexer);
+        token_add_char(&token, c);
+        advance(lexer);
+
+        return token;
+    }
+
+    if (c == '<' && peek_char(lexer) == '<' &&
+        lexer->source[lexer->position + 2] == '=')
+    {
+        Token token = make_token(TOKEN_SHL_ASSIGN, line, column);
+
+        token_add_char(&token, '<');
+        advance(lexer);
+        token_add_char(&token, '<');
+        advance(lexer);
+        token_add_char(&token, '=');
+        advance(lexer);
+
+        return token;
+    }
+
     if (c == '<' && peek_char(lexer) == '<')
     {
         Token token = make_token(
@@ -699,6 +802,21 @@ static Token lexer_next_impl(Lexer* lexer)
         advance(lexer);
 
         token_add_char(&token, '<');
+        advance(lexer);
+
+        return token;
+    }
+
+    if (c == '>' && peek_char(lexer) == '>' &&
+        lexer->source[lexer->position + 2] == '=')
+    {
+        Token token = make_token(TOKEN_SHR_ASSIGN, line, column);
+
+        token_add_char(&token, '>');
+        advance(lexer);
+        token_add_char(&token, '>');
+        advance(lexer);
+        token_add_char(&token, '=');
         advance(lexer);
 
         return token;
@@ -845,6 +963,10 @@ static Token lexer_next_impl(Lexer* lexer)
 
         case '/':
             token = make_token(TOKEN_SLASH, line, column);
+            break;
+
+        case '%':
+            token = make_token(TOKEN_PERCENT, line, column);
             break;
 
         case '<':

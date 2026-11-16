@@ -92,52 +92,17 @@ void read_line(char* buffer, int max)
     {
         int key = keyboard_getkey();
 
-        if (console_f7_enabled && key == KEY_F7)
+        if (console_passage_hotkey_enabled && key == KEY_F7 &&
+            (keyboard_get_last_event_modifiers() &
+             (KEY_MOD_LSHIFT | KEY_MOD_RSHIFT)))
         {
-            uint8_t event_modifiers = keyboard_get_last_event_modifiers();
-
-            if (event_modifiers & (KEY_MOD_LSHIFT | KEY_MOD_RSHIFT))
-            {
-
-                buffer[length] = '\0';
-                putchar_os('\n');
-                nw_god_bible_passage();
-                set_color(prompt_color);
-                print_shell_p();
-                set_color(base_color);
-                print(buffer);
-                continue;
-            }
-
-            const char* word = nwf_random_word();
-            int start = length;
-
-            while (start > 0 && buffer[start - 1] != ' ')
-                start--;
-
-            while (length > start)
-            {
-                putchar_os('\b');
-                length--;
-            }
-
             buffer[length] = '\0';
-
-            int i = 0;
-            while (word[i] != '\0' && length < max - 1)
-            {
-                buffer[length++] = word[i];
-                putchar_os(word[i]);
-                i++;
-            }
-
-            if (length < max - 1)
-            {
-                buffer[length++] = ' ';
-                putchar_os(' ');
-            }
-
-            buffer[length] = '\0';
+            putchar_os('\n');
+            nw_god_bible_passage();
+            set_color(prompt_color);
+            print_shell_p();
+            set_color(base_color);
+            print(buffer);
             continue;
         }
 

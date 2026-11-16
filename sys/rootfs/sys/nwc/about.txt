@@ -1,0 +1,7 @@
+NwC its C-Like language made on C 
+It compiles and run inside of the OS NwOS 
+The syntax is C-C++-like, uses:
+nw::out, nw::endl, return, 1A, 0A
+Can draw graphics like: nw::rect(),
+Can be compiled inside of OS with:
+nwc <file>.nw -o <file>.nwo 

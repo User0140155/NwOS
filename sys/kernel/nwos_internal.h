@@ -5,7 +5,7 @@
 #include "../../drivers/mouse.h"
 #include "../../drivers/disk.h"
 #include "../../include/kernelpanic.h"
-#include "Apps/wordgenerator/wordgenerator.h"
+#include "Apps/passage/passage.h"
 #include "Apps/textredactor/textredactor.h"
 #include "nwoloader/nwo_vm.h"
 #include "nwoloader/nwo_runner.h"
@@ -17,7 +17,6 @@
 #include "kernel.h"
 #include "../../compiler/nwc_kernel.h"
 #include "memory/pmm.h"
-#include "random/word_module.h"
 #include "random/entropy.h"
 #include "random/passage_module.h"
 #undef COLOR_BLACK
@@ -45,9 +44,6 @@
 #include "rootfs_data.h"
 #endif
 #include "package.h"
-#ifdef NWOS_INCLUDE_WORDS_DATA_H
-#include "words_data.h"
-#endif
 #include "network/net.h"
 #include "nwo_loader.h"
 #include "network/timer.h"
@@ -230,7 +226,6 @@ void nwf_cpu_name(char* out);
 unsigned int nwf_ram_mb(void);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
-const char* nwf_random_word(void);
 void read_line(char* buffer, int max);
 void sleep(unsigned int ms);
 unsigned int rand_simple(void);
@@ -309,7 +304,7 @@ extern uint16_t current_dir;
 extern unsigned char text_color;
 extern unsigned char base_color;
 extern unsigned char prompt_color;
-extern int console_f7_enabled;
+extern int console_passage_hotkey_enabled;
 extern volatile unsigned long long idle_us_accum;
 extern int shell_p;
 extern char invite_user[28];
@@ -376,7 +371,6 @@ void delay(unsigned int count);
 int random_range(int min, int max);
 unsigned int rand_simple(void);
 uint32_t nw_god_random_bounded(uint32_t upper_bound);
-const char* nwf_random_word(void);
 void random_init(void);
 void game_guess(void);
 void game_guessh(void);
@@ -584,8 +578,10 @@ void menu_border(void);
 void menu_line(const char* text);
 void port_outb(unsigned short port, unsigned char val);
 void port_outw(unsigned short port, unsigned short val);
+void port_outl(unsigned short port, unsigned int val);
 unsigned char port_inb(unsigned short port);
 unsigned short port_inw(unsigned short port);
+unsigned int port_inl(unsigned short port);
 unsigned int acpi_u32(const unsigned char *p);
 unsigned long long acpi_u64(const unsigned char *p);
 int acpi_checksum_valid(const unsigned char *p, unsigned int length);

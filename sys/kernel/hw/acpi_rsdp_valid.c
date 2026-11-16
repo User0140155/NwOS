@@ -17,6 +17,14 @@ unsigned short port_inw(unsigned short port) {
     __asm__ volatile ("inw %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
+void port_outl(unsigned short port, unsigned int val) {
+    __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
+}
+unsigned int port_inl(unsigned short port) {
+    unsigned int ret;
+    __asm__ volatile ("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
 
 unsigned int acpi_u32(const unsigned char *p)
 {

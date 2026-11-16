@@ -1,0 +1,33 @@
+NwC: Basic 
+
+Variables:
+To make 'int' variable you need type this: 
+
+#include <nwc.h>
+1A main() {
+    1A var = 2;
+    return 0;
+}
+
+
+So output is nothing
+But now var has number '2' in memory
+Its not that hard if you know C/C++
+Lets do a string variable 
+
+#include <nwc.h>
+1A main() {
+    str var = "he";
+    return 0;
+}
+
+So we got variable 'var' as "he",
+There's list of types (not full)
+
+bol  =  'bool'  in C 
+1A   =  'int'   in C 
+str  =  'str'   in C 
+char = 'char' in C 
+
+There is!
+Read nwc2.txt 

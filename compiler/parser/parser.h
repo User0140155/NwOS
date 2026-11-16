@@ -20,8 +20,12 @@ typedef enum
 
     AST_IF,
     AST_WHILE,
+    AST_FOR,
+    AST_DO_WHILE,
     AST_BREAK,
     AST_CONTINUE,
+
+    AST_LOW_CALL,
 
     AST_OUTPUT,
     AST_INPUT,
@@ -81,6 +85,7 @@ typedef struct ASTNode
     struct ASTNode* right;
 
     struct ASTNode* child;
+    struct ASTNode* body;
 
     struct ASTNode* next;
 
@@ -94,6 +99,7 @@ typedef struct
     Token previous;
 
     int error_count;
+    int shift_allowed;
 
 } Parser;
 

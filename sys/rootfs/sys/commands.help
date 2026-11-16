@@ -1,0 +1,47 @@
+Full list of commands:
+
+echo <text>
+help
+reboot
+rmdir
+rm 
+ls 
+format 
+rm /
+disks 
+time 
+ping <Site>
+mkdir
+install
+more 
+date 
+timezone <num>
+zones 
+change color 
+change invite 
+run 
+apps 
+games 
+generate num 
+cd <dir>
+net 
+lspci 
+nwocheck <file>
+hexview <file>
+rm <file>
+edit <file> 
+rm -r <file>
+write <file> 
+panic safe
+panic fatal 
+read <file> 
+create <file> 
+calc 
+nwfetch 
+about
+clear
+word
+uname
+uname -r 
+uname -a 
+uname -p 

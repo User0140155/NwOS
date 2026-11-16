@@ -1,0 +1,7 @@
+#include <nwc.h>
+
+1A main() {
+    nw::rect(95, 45, 20, 25, 0x00FF00);
+    1A key = nw::getkey(ESC);
+    return 0;
+}

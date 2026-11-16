@@ -239,7 +239,7 @@ static int gt_run(void)
         gt_word_is(cmd, "games") || gt_word_is(cmd, "game") ||
         gt_word_is(cmd, "guess") || gt_word_is(cmd, "guessh") ||
         gt_word_is(cmd, "rps") || gt_word_is(cmd, "hangman") ||
-        gt_word_is(cmd, "tictactoe") || gt_word_is(cmd, "chat") ||
+        gt_word_is(cmd, "tictactoe") ||
         gt_word_is(cmd, "passwd") || gt_word_is(cmd, "install") ||
         gt_word_is(cmd, "format") || gt_word_is(cmd, "sudo") ||
         gt_word_is(cmd, "panic") || gt_word_is(cmd, "testH") ||

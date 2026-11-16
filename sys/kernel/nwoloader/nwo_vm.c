@@ -61,8 +61,14 @@ void sleep(unsigned int ms);
 unsigned int nwf_ram_mb(void);
 unsigned int nwf_disk_used_kb(void);
 unsigned int nwf_disk_files(void);
-const char* nwf_random_word(void);
 unsigned long long timer_ms(void);
+
+void port_outb(unsigned short port, unsigned char val);
+void port_outw(unsigned short port, unsigned short val);
+void port_outl(unsigned short port, unsigned int val);
+unsigned char port_inb(unsigned short port);
+unsigned short port_inw(unsigned short port);
+unsigned int port_inl(unsigned short port);
 
 
 #define OP_LOAD_ARR    0x24
@@ -115,7 +121,6 @@ unsigned long long timer_ms(void);
 #define OP_BUF_LOAD    0xBC
 #define OP_BUF_SAVE    0xBD
 #define OP_POLLKEY     0xBE
-#define OP_RANDOM_WORD 0xBF
 
 #define OP_JUMP         0x80
 #define OP_JUMP_FALSE   0x81
@@ -215,6 +220,29 @@ static int  vm_file_len = 0;
 #define OP_SUB          0x31
 #define OP_MUL          0x32
 #define OP_DIV          0x33
+#define OP_MOD          0x34
+#define OP_BIT_AND_BIN  0x35
+#define OP_BIT_OR_BIN   0x36
+#define OP_BIT_XOR_BIN  0x37
+#define OP_SHL          0x38
+#define OP_SHR          0x39
+#define OP_BIT_NOT      0x3A
+#define OP_VOLATILE     0x3B
+
+#define OP_LOW_OUT8         0x90
+#define OP_LOW_IN8          0x91
+#define OP_LOW_OUT16        0x92
+#define OP_LOW_IN16         0x93
+#define OP_LOW_OUT32        0x94
+#define OP_LOW_IN32         0x95
+#define OP_LOW_MEM_WRITE8   0x96
+#define OP_LOW_MEM_READ8    0x97
+#define OP_LOW_MEM_WRITE16  0x98
+#define OP_LOW_MEM_READ16   0x99
+#define OP_LOW_MEM_WRITE32  0x9A
+#define OP_LOW_MEM_READ32   0x9B
+#define OP_LOW_CLI          0x9C
+#define OP_LOW_STI          0x9D
 
 #define OP_EQ           0x40
 #define OP_NEQ          0x41
@@ -273,12 +301,23 @@ typedef enum
 {
     VM_NONE = 0,
     VM_INT,
+    VM_UINT,
     VM_FLOAT,
     VM_BOOL,
     VM_CHAR,
     VM_STRING
 
 } VmValueType;
+
+#define VM_TYPE_BASE_MASK  0x1F
+#define VM_TYPE_UNSIGNED   0x80
+#define VM_TYPE_VOLATILE   0x40
+#define VM_TYPE_CONST      0x20
+
+static unsigned char vm_type_base(unsigned char type)
+{
+    return (unsigned char)(type & VM_TYPE_BASE_MASK);
+}
 
 
 typedef struct
@@ -752,6 +791,9 @@ static int vm_to_int(
         case VM_INT:
             return value->as.integer;
 
+        case VM_UINT:
+            return (int)value->as.character;
+
         case VM_BOOL:
             return value->as.boolean ? 1 : 0;
 
@@ -883,6 +925,9 @@ static int vm_binary_arithmetic(
 
     int a;
     int b;
+    unsigned int ua;
+    unsigned int ub;
+    int is_unsigned;
 
     if (!vm_pop(vm, &right))
         return 0;
@@ -892,22 +937,26 @@ static int vm_binary_arithmetic(
 
     a = vm_to_int(&left);
     b = vm_to_int(&right);
+    ua = (unsigned int)a;
+    ub = (unsigned int)b;
+    is_unsigned = (left.type == VM_UINT || right.type == VM_UINT);
 
-    result.type = VM_INT;
-    result.as.integer = 0;
+    result.string_length = 0;
+    result.type = is_unsigned ? VM_UINT : VM_INT;
+    result.as.character = 0;
 
     switch (opcode)
     {
         case OP_ADD:
-            result.as.integer = a + b;
+            result.as.character = is_unsigned ? (ua + ub) : (unsigned int)(a + b);
             break;
 
         case OP_SUB:
-            result.as.integer = a - b;
+            result.as.character = is_unsigned ? (ua - ub) : (unsigned int)(a - b);
             break;
 
         case OP_MUL:
-            result.as.integer = a * b;
+            result.as.character = is_unsigned ? (ua * ub) : (unsigned int)(a * b);
             break;
 
         case OP_DIV:
@@ -918,7 +967,38 @@ static int vm_binary_arithmetic(
                 return 0;
             }
 
-            result.as.integer = a / b;
+            result.as.character = is_unsigned ? (ua / ub) : (unsigned int)(a / b);
+            break;
+
+        case OP_MOD:
+
+            if (b == 0)
+            {
+                print("[NWO VM] Division by zero.\n");
+                return 0;
+            }
+
+            result.as.character = is_unsigned ? (ua % ub) : (unsigned int)(a % b);
+            break;
+
+        case OP_BIT_AND_BIN:
+            result.as.character = ua & ub;
+            break;
+
+        case OP_BIT_OR_BIN:
+            result.as.character = ua | ub;
+            break;
+
+        case OP_BIT_XOR_BIN:
+            result.as.character = ua ^ ub;
+            break;
+
+        case OP_SHL:
+            result.as.character = ua << (ub & 31u);
+            break;
+
+        case OP_SHR:
+            result.as.character = ua >> (ub & 31u);
             break;
 
         default:
@@ -939,6 +1019,9 @@ static int vm_compare(
 
     int a;
     int b;
+    unsigned int ua;
+    unsigned int ub;
+    int is_unsigned;
     int r = 0;
 
     if (!vm_pop(vm, &right))
@@ -948,6 +1031,9 @@ static int vm_compare(
         return 0;
     a = vm_to_int(&left);
     b = vm_to_int(&right);
+    ua = (unsigned int)a;
+    ub = (unsigned int)b;
+    is_unsigned = (left.type == VM_UINT || right.type == VM_UINT);
 
     switch (opcode)
     {
@@ -960,19 +1046,19 @@ static int vm_compare(
             break;
 
         case OP_LT:
-            r = a < b;
+            r = is_unsigned ? (ua < ub) : (a < b);
             break;
 
         case OP_GT:
-            r = a > b;
+            r = is_unsigned ? (ua > ub) : (a > b);
             break;
 
         case OP_LTE:
-            r = a <= b;
+            r = is_unsigned ? (ua <= ub) : (a <= b);
             break;
 
         case OP_GTE:
-            r = a >= b;
+            r = is_unsigned ? (ua >= ub) : (a >= b);
             break;
 
         default:
@@ -1000,6 +1086,27 @@ static void vm_print_string(
         putchar_os(string[i]);
 }
 
+static void vm_print_uint(unsigned int value)
+{
+    char buffer[12];
+    int i = 0;
+
+    if (value == 0)
+    {
+        putchar_os('0');
+        return;
+    }
+
+    while (value > 0 && i < (int)sizeof(buffer))
+    {
+        buffer[i++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    }
+
+    while (i > 0)
+        putchar_os(buffer[--i]);
+}
+
 static void vm_output(
     VmValue* value)
 {
@@ -1010,6 +1117,10 @@ static void vm_output(
     {
         case VM_INT:
             print_int(value->as.integer);
+            break;
+
+        case VM_UINT:
+            vm_print_uint(value->as.character);
             break;
 
         case VM_BOOL:
@@ -1666,7 +1777,7 @@ int nwo_execute(
                 vm.variables[slot].array_size = size;
                 vm.variables[slot].array_start = -1;
 
-                if (type != NWO_TYPE_VOID && size > 0)
+                if (vm_type_base(type) != NWO_TYPE_VOID && size > 0)
                 {
                     if (vm_array_pool_used + (int)size > NWO_ARRAY_POOL_SIZE)
                     {
@@ -1674,7 +1785,7 @@ int nwo_execute(
                         return -1;
                     }
 
-                    if (type == NWO_TYPE_STRING &&
+                    if (vm_type_base(type) == NWO_TYPE_STRING &&
                         vm_array_string_used + (int)size > NWO_ARRAY_STRING_SLOTS)
                     {
                         print("[NWO VM] String array pool exhausted.\n");
@@ -1689,7 +1800,7 @@ int nwo_execute(
                         VmValue* elem =
                             &vm_array_pool[vm.variables[slot].array_start + k];
 
-                        if (type == NWO_TYPE_STRING)
+                        if (vm_type_base(type) == NWO_TYPE_STRING)
                         {
                             elem->type = VM_STRING;
                             elem->string_length = 0;
@@ -1731,8 +1842,9 @@ int nwo_execute(
 
                 if (value.type == VM_NONE)
                 {
-                    value.type = VM_INT;
-                    value.as.integer = 0;
+                    value.type = (vm.variables[slot].declared_type &
+                                  VM_TYPE_UNSIGNED) ? VM_UINT : VM_INT;
+                    value.as.character = 0;
                 }
 
                 if (!vm_push(&vm, value))
@@ -1765,6 +1877,26 @@ int nwo_execute(
                         return -1;
 
                     vm.variables[slot].declared_type = 1;
+                }
+
+                if ((vm.variables[slot].declared_type & VM_TYPE_CONST) &&
+                    vm.variables[slot].value.type != VM_NONE)
+                {
+                    print("[NWO VM] Assignment to const variable.\n");
+                    return -1;
+                }
+
+                if ((vm.variables[slot].declared_type & VM_TYPE_UNSIGNED) &&
+                    !vm.variables[slot].is_array &&
+                    value.type != VM_STRING)
+                {
+                    VmValue converted;
+
+                    converted.type = VM_UINT;
+                    converted.string_length = 0;
+                    converted.as.character =
+                        (unsigned int)vm_to_int(&value);
+                    value = converted;
                 }
 
                 vm.variables[slot].value = value;
@@ -1829,7 +1961,7 @@ int nwo_execute(
                     return -1;
                 }
 
-                if (v->declared_type == NWO_TYPE_STRING)
+                if (vm_type_base(v->declared_type) == NWO_TYPE_STRING)
                 {
                     unsigned int n = 0;
                     char* dest;
@@ -2219,23 +2351,16 @@ int nwo_execute(
                 if (!vm_push(&vm, v)) return -1;
                 break;
             }
-            case OP_RANDOM_WORD:
-            {
-                const char* word = nwf_random_word();
-                VmValue v;
-                unsigned int n = 0;
-                while (word[n]) n++;
-                v.type = VM_STRING;
-                v.string_length = n;
-                v.as.string = word;
-                if (!vm_push(&vm, v)) return -1;
-                break;
-            }
-
             case OP_ADD:
             case OP_SUB:
             case OP_MUL:
             case OP_DIV:
+            case OP_MOD:
+            case OP_BIT_AND_BIN:
+            case OP_BIT_OR_BIN:
+            case OP_BIT_XOR_BIN:
+            case OP_SHL:
+            case OP_SHR:
 
                 if (!vm_binary_arithmetic(
                         &vm,
@@ -2304,6 +2429,146 @@ int nwo_execute(
 
                 break;
             }
+
+            case OP_BIT_NOT:
+            {
+                VmValue value;
+                VmValue result;
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+
+                result.type = (value.type == VM_UINT) ? VM_UINT : VM_INT;
+                result.string_length = 0;
+                result.as.character = ~(unsigned int)vm_to_int(&value);
+
+                if (!vm_push(&vm, result))
+                    return -1;
+
+                break;
+            }
+
+            case OP_VOLATILE:
+                __asm__ volatile ("" : : : "memory");
+                break;
+
+            case OP_LOW_OUT8:
+            case OP_LOW_OUT16:
+            case OP_LOW_OUT32:
+            {
+                VmValue port;
+                VmValue value;
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+                if (!vm_pop(&vm, &port))
+                    return -1;
+
+                if (opcode == OP_LOW_OUT8)
+                    port_outb((unsigned short)vm_to_int(&port),
+                              (unsigned char)vm_to_int(&value));
+                else if (opcode == OP_LOW_OUT16)
+                    port_outw((unsigned short)vm_to_int(&port),
+                              (unsigned short)vm_to_int(&value));
+                else
+                    port_outl((unsigned short)vm_to_int(&port),
+                              (unsigned int)vm_to_int(&value));
+                break;
+            }
+
+            case OP_LOW_IN8:
+            case OP_LOW_IN16:
+            case OP_LOW_IN32:
+            {
+                VmValue port;
+                VmValue result;
+
+                if (!vm_pop(&vm, &port))
+                    return -1;
+
+                result.type = VM_INT;
+                result.string_length = 0;
+
+                if (opcode == OP_LOW_IN8)
+                    result.as.integer =
+                        (int)port_inb((unsigned short)vm_to_int(&port));
+                else if (opcode == OP_LOW_IN16)
+                    result.as.integer =
+                        (int)port_inw((unsigned short)vm_to_int(&port));
+                else
+                    result.as.integer =
+                        (int)port_inl((unsigned short)vm_to_int(&port));
+
+                if (!vm_push(&vm, result))
+                    return -1;
+                break;
+            }
+
+            case OP_LOW_MEM_WRITE8:
+            case OP_LOW_MEM_WRITE16:
+            case OP_LOW_MEM_WRITE32:
+            {
+                VmValue addr;
+                VmValue value;
+
+                if (!vm_pop(&vm, &value))
+                    return -1;
+                if (!vm_pop(&vm, &addr))
+                    return -1;
+
+                if (opcode == OP_LOW_MEM_WRITE8)
+                    *(volatile unsigned char*)(unsigned long)
+                        vm_to_int(&addr) =
+                        (unsigned char)vm_to_int(&value);
+                else if (opcode == OP_LOW_MEM_WRITE16)
+                    *(volatile unsigned short*)(unsigned long)
+                        vm_to_int(&addr) =
+                        (unsigned short)vm_to_int(&value);
+                else
+                    *(volatile unsigned int*)(unsigned long)
+                        vm_to_int(&addr) =
+                        (unsigned int)vm_to_int(&value);
+                break;
+            }
+
+            case OP_LOW_MEM_READ8:
+            case OP_LOW_MEM_READ16:
+            case OP_LOW_MEM_READ32:
+            {
+                VmValue addr;
+                VmValue result;
+
+                if (!vm_pop(&vm, &addr))
+                    return -1;
+
+                result.type = VM_INT;
+                result.string_length = 0;
+
+                if (opcode == OP_LOW_MEM_READ8)
+                    result.as.integer =
+                        (int)*(volatile unsigned char*)(unsigned long)
+                        vm_to_int(&addr);
+                else if (opcode == OP_LOW_MEM_READ16)
+                    result.as.integer =
+                        (int)*(volatile unsigned short*)(unsigned long)
+                        vm_to_int(&addr);
+                else
+                    result.as.integer =
+                        (int)*(volatile unsigned int*)(unsigned long)
+                        vm_to_int(&addr);
+
+                if (!vm_push(&vm, result))
+                    return -1;
+                break;
+            }
+
+            case OP_LOW_CLI:
+                __asm__ volatile ("cli" : : : "memory");
+                break;
+
+            case OP_LOW_STI:
+                __asm__ volatile ("sti" : : : "memory");
+                break;
 
             case OP_STRCMP:
             {
@@ -2452,7 +2717,7 @@ int nwo_execute(
 
                 variable = &vm.variables[slot];
 
-                if (variable->declared_type == 7 ||
+                if (vm_type_base(variable->declared_type) == 7 ||
                     variable->is_array)
                 {
                     unsigned int length = 0;

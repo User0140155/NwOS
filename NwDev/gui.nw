@@ -139,11 +139,6 @@
         nw::rgrad(x + s / 5, y + s / 2, s / 5, s / 3, 1, 0x00C9F0FF, c);
         nw::rgrad(x + s * 3 / 5, y + s / 4, s / 5, s * 7 / 12, 1, 0x00C9F0FF, c);
     }
-    if (k == 6) {
-        nw::rgrad(x, y, s, s, 5, 0x00FFFFFF, 0x00C7E0F0);
-        nw::rgrad(x + s / 8, y + s / 8, s * 3 / 4, s / 4, 3, c, c);
-        nw::text(x + s / 6, y + s / 2 + 1, 0x000E3A5C, "Ab");
-    }
     nw::glass(x + 1, y + 1, s - 2, s / 2 - 1, 4, 0x00FFFFFF, 60);
 }
 
@@ -206,12 +201,6 @@
         if (f == 2) v = 780;
         if (f == 3) v = 500;
     }
-    if (id == 6) {
-        if (f == 0) v = 390;
-        if (f == 1) v = 140;
-        if (f == 2) v = 500;
-        if (f == 3) v = 370;
-    }
     return v;
 }
 
@@ -224,7 +213,6 @@
     if (id == 3) { if (f == 0) v = 300; else v = 420; }
     if (id == 4) { if (f == 0) v = 620; else v = 420; }
     if (id == 5) { if (f == 0) v = 520; else v = 340; }
-    if (id == 6) { if (f == 0) v = 380; else v = 260; }
     return v;
 }
 
@@ -369,11 +357,6 @@
     call dicon(3, 24, 288, 4, c, "Calc");
     call dicon(4, 24, 376, 8, c, "Settings");
     call dicon(5, 24, 464, 7, c, "Monitor");
-    call gpanel(1030, 40, 210, 120, 12);
-    call gbtn(1052, 62, 66, 44, theme, inside(mx, my, 1030, 40, 210, 120));
-    call tx(1072, 80, 0x00FFFFFF, "F7");
-    call tx(1136, 70, 0x00FFFFFF, "Word");
-    nw::text(1136, 88, 0x00CBEBFF, "Generator");
 }
 
 // ---------- taskbar (Windows 7 style) ----------
@@ -466,7 +449,6 @@
     call mrow(3, 18, 404, c, "Calculator");
     call mrow(4, 18, 450, c, "Settings");
     call mrow(5, 18, 496, c, "System Monitor");
-    call mrow(6, 18, 542, c, "Word Generator");
     nw::orb(274, 282, 16, c);
     call tx(298, 277, 0x00FFFFFF, "user");
     nw::rect(250, 308, 128, 1, 0x00B7E3FF);
@@ -807,16 +789,14 @@
 
 // ============================================================
 //  window manager
-//  w[] : 7 windows x 24 ints
+//  w[] : 6 windows x 24 ints
 //   +0 open  +1 mode(0 normal,2 maximized,3 fullscreen)
 //   +2..5 normal rect  +6..9 effective rect  +10 minimized
 //   +11 z-order stamp  +12.. per-app state
-//  ids: 0 terminal 1 files 2 editor 3 calculator 4 settings
-//       5 monitor 6 word generator
+//  ids: 0 terminal 1 files 2 editor 3 calculator 4 settings 5 monitor
 // ============================================================
 1A main() {
-    1A w[200];
-    str words[15];
+    1A w[144];
     str ename = "note.txt";
     str ttl = "";
     1A running = 1;
@@ -841,7 +821,6 @@
     1A fs = 0;
     1A req = -1;
     1A ldreq = 0;
-    1A wadd = 0;
     1A fopen = 0;
     1A act = 0;
     1A aid = 0;
@@ -921,7 +900,7 @@
         fz = 0;
         mzv = 0;
         i = 0;
-        while (i < 7) {
+        while (i < 6) {
             b = i * 24;
             if (w[b] == 1) {
                 w[b + 6] = w[b + 2];
@@ -968,7 +947,7 @@
             top = -1;
             tz = 0;
             j = 0;
-            while (j < 7) {
+            while (j < 6) {
                 b = j * 24;
                 if (w[b] == 1 && w[b + 10] == 0) {
                     if (w[b + 11] > tz && inside(mx, my, w[b + 6], w[b + 7], w[b + 8], w[b + 9]) == 1) {
@@ -1086,7 +1065,7 @@
                 hitf = 1;
                 if (inside(mx, my, 6, 232, 380, 444) == 1) {
                     j = 0;
-                    while (j < 7) {
+                    while (j < 6) {
                         if (inside(mx, my, 18, 266 + j * 46, 216, 42) == 1) req = j;
                         j = j + 1;
                     }
@@ -1140,7 +1119,7 @@
                     }
                     if (inside(mx, my, 1262, 680, 18, 40) == 1) {
                         j = 0;
-                        while (j < 7) {
+                        while (j < 6) {
                             if (w[j * 24] == 1) w[j * 24 + 10] = 1;
                             j = j + 1;
                         }
@@ -1151,7 +1130,7 @@
                 top = -1;
                 tz = 0;
                 j = 0;
-                while (j < 7) {
+                while (j < 6) {
                     b = j * 24;
                     if (w[b] == 1) {
                         if (w[b + 10] == 0) {
@@ -1299,7 +1278,6 @@
                         if (inside(mx, my, 16, 18 + j * 88, 76, 84) == 1) req = j;
                         j = j + 1;
                     }
-                    if (inside(mx, my, 1030, 40, 210, 120) == 1) req = 6;
                 }
             }
         }
@@ -1368,10 +1346,6 @@
             if (ctx != 0 && key == 255) {
                 ctx = 0;
                 ctx_sub = 0;
-            }
-            if (key == 267) {
-                req = 6;
-                wadd = 1;
             }
             if (key == 276) {
                 if (foc >= 0) {
@@ -1616,13 +1590,6 @@
             req = -1;
             ldreq = 0;
         }
-        if (wadd == 1) {
-            wadd = 0;
-            if (w[156] >= 15) w[156] = 0;
-            words[w[156]] = nw::random_word();
-            w[156] = w[156] + 1;
-        }
-
         // ---- terminal scroll limits ----
         if (w[0] == 1) {
             rows = trows(w[9]);
@@ -1655,11 +1622,11 @@
             last = 0;
             if (mzv > 0) last = mzv - 1;
             pass = 0;
-            while (pass < 7) {
+            while (pass < 6) {
                 best = -1;
                 bz = 1000000000;
                 i = 0;
-                while (i < 7) {
+                while (i < 6) {
                     b = i * 24;
                     if (w[b] == 1) {
                         if (w[b + 10] == 0) {
@@ -1689,7 +1656,6 @@
                     if (best == 3) ttl = "Calculator";
                     if (best == 4) ttl = "System Settings";
                     if (best == 5) ttl = "System Monitor";
-                    if (best == 6) ttl = "Word Generator";
                     call chrome(theme, cx, cy, cw, ch, ttl, act2, w[b + 1]);
                     if (best == 0) call term_draw(theme, cx, cy, cw, ch, w[b + 12]);
                     if (best == 1) call files_draw(theme, cx, cy, cw, ch, w[b + 12], w[b + 13], w[b + 14]);
@@ -1697,20 +1663,6 @@
                     if (best == 3) call calc_draw(theme, cx, cy, cw, ch, w[b + 12], w[b + 16]);
                     if (best == 4) call set_draw(theme, cx, cy, cw, ch);
                     if (best == 5) call mon_draw(theme, cx, cy, cw, ch);
-                    if (best == 6) {
-                        nw::text(cx + 24, cy + 58, 0x004F7896, "F7 adds a word");
-                        nw::number(cx + cw - 62, cy + 58, accent_dim(theme), w[b + 12]);
-                        nw::text(cx + cw - 36, cy + 58, 0x004F7896, "/15");
-                        j = 0;
-                        while (j < w[b + 12]) {
-                            qx = cx + 24 + (j / 5) * ((cw - 48) / 3);
-                            qy = cy + 92 + (j - (j / 5) * 5) * 34;
-                            nw::rgrad(qx - 8, qy - 8, (cw - 48) / 3 - 10, 24, 8, 0x00FFFFFF, 0x00C7E0F0);
-                            nw::text(qx, qy, 0x000E3A5C, words[j]);
-                            j = j + 1;
-                        }
-                        if (w[b + 12] == 0) nw::text(cx + 24, cy + 100, 0x004F7896, "Press F7 to generate.");
-                    }
                     last = bz;
                     pass = pass + 1;
                 }
@@ -1719,7 +1671,7 @@
                 ts = 0;
                 p = 1;
                 i = 0;
-                while (i < 7) {
+                while (i < 6) {
                     b = i * 24;
                     st = 0;
                     if (w[b] == 1) {
