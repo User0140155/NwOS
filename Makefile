@@ -1,5 +1,8 @@
-# NwOS build system
-# Usage: make [-j$(nproc)] [all|kernel|iso|boot-sector|clean]
+# NwOS build system - GRUB 2 (Multiboot2), BIOS/UEFI ISO, UEFI install ESP.
+# Usage: make [-j$(nproc)] [all|kernel|iso|boot-sector|clean|help]
+#
+# This Makefile does not install GRUB to the host or to a physical disk.
+# It only creates NwOS.iso and a FAT ESP image used by the NwOS installer.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -22,21 +25,6 @@ GUEST_HEIGHT := 720
 GUI_WIDTH := 1280
 GUI_HEIGHT := 720
 
-# Limine is NOT installed by this Makefile. Install it yourself.
-#   LIMINE_TOOL  – path to the `limine` host utility (default: `limine` on PATH).
-#   LIMINE_SHARE – directory with boot assets (default: /usr/share/limine),
-#                  must contain: limine-bios.sys, limine-bios-cd.bin,
-#                  limine-uefi-cd.bin, BOOTX64.EFI
-# LIMINE_VERSION is only for the informational success message.
-LIMINE_VERSION ?= 12.9.6
-LIMINE_TOOL ?= limine
-LIMINE_SHARE ?= /usr/share/limine
-
-LIMINE_BIOS_SYS := $(LIMINE_SHARE)/limine-bios.sys
-LIMINE_BIOS_CD := $(LIMINE_SHARE)/limine-bios-cd.bin
-LIMINE_UEFI_CD := $(LIMINE_SHARE)/limine-uefi-cd.bin
-LIMINE_BOOTX64 := $(LIMINE_SHARE)/BOOTX64.EFI
-
 CLANG ?= clang
 LD_LLD ?= ld.lld
 NASM ?= nasm
@@ -44,18 +32,19 @@ PYTHON ?= python3
 SHA256SUM ?= sha256sum
 XORRISO ?= xorriso
 FILE ?= file
+GRUB_FILE ?= grub-file
+GRUB_MKRESCUE ?= grub-mkrescue
+GRUB_MKSTANDALONE ?= grub-mkstandalone
 MKFS_FAT ?= mkfs.fat
 MMD ?= mmd
 MCOPY ?= mcopy
-DD ?= dd
 
-# Set CHECK_MULTIBOOT=0 only if grub-file is intentionally unavailable.
 CHECK_MULTIBOOT ?= 1
-REQUIRED_TOOLS := $(CLANG) $(LD_LLD) $(NASM) $(PYTHON) \
-                  $(SHA256SUM) $(XORRISO) $(FILE)
-ifeq ($(CHECK_MULTIBOOT),1)
-REQUIRED_TOOLS += grub-file
-endif
+REQUIRED_TOOLS := $(CLANG) $(LD_LLD) $(NASM) $(PYTHON) $(SHA256SUM) $(FILE)
+
+# GRUB modules embedded in the live ISO and in the installed-system EFI app.
+GRUB_ISO_MODULES := all_video gfxterm part_gpt part_msdos fat iso9660 search search_fs_file multiboot2 test
+GRUB_EFI_MODULES := efi_gop video part_gpt part_msdos fat search search_fs_file multiboot2 test normal
 
 KERNEL_CFLAGS := \
     --target=$(TARGET) \
@@ -192,6 +181,11 @@ SOURCES_REL := \
     drivers/disk.c \
     drivers/ahci.c \
     sys/kernel/network/e1000.c \
+    sys/kernel/network/rtl8139.c \
+    sys/kernel/network/rtl8169.c \
+    sys/kernel/network/ne2k.c \
+    sys/kernel/network/pcnet.c \
+    sys/kernel/network/rtl8822.c \
     sys/kernel/network/pci.c \
     sys/kernel/network/timer.c \
     sys/kernel/network/net.c \
@@ -211,11 +205,13 @@ SOURCES_REL := \
     compiler/lexer/lexer.c \
     compiler/parser/parser.c \
     compiler/codegen/codegen.c \
+    compiler/diag/diag.c \
     compiler/nwc_runtime.c \
     compiler/nwc_stdio.c \
     compiler/nwc_kernel.c \
     sys/kernel/package.c \
-	sys/kernel/installer.c
+	sys/kernel/installer.c \
+    sys/kernel/shell/cmd_link.c
 
 # Optional local driver.
 ifneq ($(wildcard $(ROOT)/drivers/touchpad.c),)
@@ -223,6 +219,7 @@ SOURCES_REL += drivers/touchpad.c
 else
 $(info NOTE: drivers/touchpad.c not found; building without the optional touchpad driver.)
 endif
+
 
 SOURCES := $(addprefix $(ROOT)/,$(SOURCES_REL))
 OBJECTS := $(patsubst $(ROOT)/%.c,$(BUILD)/obj/%.o,$(SOURCES))
@@ -234,31 +231,23 @@ USER_SHELL_HEADER := $(BUILD)/user_shell_blob.h
 BOOT_BIN := $(BUILD)/boot.bin
 VIDEO_CONFIG_H := $(BUILD)/video_config.h
 GENERATED_STAMP := $(BUILD)/generated.stamp
-LIMINE_CONF := $(BUILD)/limine.conf
-VENTOY_GRUB_CONF := $(BUILD)/ventoy-grub.cfg
-ESP_LIMINE_CONF := $(BUILD)/esp-limine.conf
+GRUB_ISO_CFG := $(ROOT)/boot/grub/grub.cfg
+GRUB_ESP_CFG := $(ROOT)/boot/grub/grub-esp.cfg
+GRUB_ESP_EFI := $(BUILD)/grub-esp/BOOTX64.EFI
 ESP_IMAGE := $(BUILD)/nwos-esp.img
-ESP_INSTALLED_IMAGE := $(BUILD)/nwos-esp-installed.img
-BIOS_TEMPLATE := $(BUILD)/nwos-bios-template.img
-BIOS_BOOT_AREA := $(BUILD)/nwos-bios-boot-area.bin
-BIOS_TEMPLATE_TOOL := $(ROOT)/tools/mk_bios_template.py
 ESP_PARTITION_SECTORS := 14336
-BIOS_BOOT_AREA_SECTORS := 2048
-NWOS_MBR_START_LBA := 2048
-
 
 # Optional TempleOS-style Shift+F7 passage corpus (UTF-8, one verse per line).
 NWBIBLE_SOURCE := $(ROOT)/data/passages/world_english_bible.txt
 NWBIBLE_NOTICE := $(ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt
 NWBIBLE_MODULE := $(BUILD)/world_english_bible.txt
-
 NWBIBLE_ENABLED := $(if $(wildcard $(NWBIBLE_SOURCE)),1,0)
 NWBIBLE_ISO_DEPS :=
 ifeq ($(NWBIBLE_ENABLED),1)
 NWBIBLE_ISO_DEPS += $(NWBIBLE_MODULE) $(NWBIBLE_NOTICE)
 endif
 
-.PHONY: all iso kernel boot-sector clean check-tools check-boot-tools check-limine help
+.PHONY: all iso kernel boot-sector clean check-tools check-grub-file check-grub-tools check-boot-tools help
 
 all: iso boot-sector
 
@@ -270,16 +259,15 @@ boot-sector: $(BOOT_BIN)
 
 help:
 	@printf '%s\n' \
-	  'NwOS build targets:' \
-	  '  make -j$(nproc)  Build kernel and hybrid BIOS/UEFI ISO (default)' \
+	  'NwOS GRUB build targets:' \
+	  '  make -j$(nproc)  Build kernel, GRUB ISO and auxiliary boot.bin' \
 	  '  make kernel      Build and validate build/kernel.elf' \
-	  '  make iso         Build NwOS.iso' \
-	  '  make boot-sector Assemble build/boot.bin (auxiliary; not added to ISO)' \
+	  '  make iso         Build NwOS.iso (GRUB BIOS + UEFI)' \
+	  '  make boot-sector Assemble build/boot.bin (auxiliary only)' \
 	  '  make clean       Remove build/ and NwOS.iso' \
 	  '' \
-	  'Requires Limine to be installed separately:' \
-	  '  LIMINE_TOOL   path to the limine utility   (default: limine on PATH)' \
-	  '  LIMINE_SHARE  directory with boot assets    (default: /usr/share/limine)'
+	  'The installed-system ESP uses standalone GRUB x86_64-efi.' \
+	  'No GRUB installation is performed on the host or a physical disk.'
 
 check-tools:
 	@missing=(); \
@@ -288,33 +276,35 @@ check-tools:
 	done; \
 	if (( $${#missing[@]} )); then \
 	  printf '\nMissing build tools: %s\n' "$${missing[*]}" >&2; \
-	  printf 'On Debian/Ubuntu install: sudo apt install clang lld nasm xorriso python3 coreutils file grub-common make\n' >&2; \
+	  printf 'Install with: sudo apt install clang lld nasm python3 coreutils file make\n' >&2; \
 	  exit 1; \
 	fi
 
+check-grub-file:
+	@command -v "$(GRUB_FILE)" >/dev/null 2>&1 || { \
+	  printf 'Missing %s. Install with: sudo apt install grub-common\n' "$(GRUB_FILE)" >&2; \
+	  exit 1; \
+	}
 
-check-boot-tools:
+check-grub-tools:
 	@missing=(); \
-	for tool in "$(MKFS_FAT)" "$(MMD)" "$(MCOPY)" "$(DD)"; do \
+	for tool in "$(GRUB_FILE)" "$(GRUB_MKRESCUE)" "$(GRUB_MKSTANDALONE)" "$(XORRISO)"; do \
 	  command -v "$$tool" >/dev/null 2>&1 || missing+=("$$tool"); \
 	done; \
 	if (( $${#missing[@]} )); then \
-	  printf '\nMissing EFI image tools: %s\n' "$${missing[*]}" >&2; \
-	  printf 'On Debian/Ubuntu install: sudo apt install dosfstools mtools coreutils\n' >&2; \
+	  printf '\nMissing GRUB/ISO tools: %s\n' "$${missing[*]}" >&2; \
+	  printf 'Install with: sudo apt install grub-common grub-pc-bin grub-efi-amd64-bin xorriso\n' >&2; \
 	  exit 1; \
 	fi
 
-check-limine:
+check-boot-tools:
 	@missing=(); \
-	command -v "$(LIMINE_TOOL)" >/dev/null 2>&1 || missing+=("$(LIMINE_TOOL)"); \
-	for f in "$(LIMINE_BIOS_SYS)" "$(LIMINE_BIOS_CD)" "$(LIMINE_UEFI_CD)" "$(LIMINE_BOOTX64)"; do \
-	  [[ -e "$$f" ]] || missing+=("$$f"); \
+	for tool in "$(MKFS_FAT)" "$(MMD)" "$(MCOPY)"; do \
+	  command -v "$$tool" >/dev/null 2>&1 || missing+=("$$tool"); \
 	done; \
 	if (( $${#missing[@]} )); then \
-	  printf '\nLimine is not installed. This Makefile no longer downloads it automatically.\n' >&2; \
-	  printf 'Install Limine v%s or newer and/or set LIMINE_TOOL / LIMINE_SHARE.\n' "$(LIMINE_VERSION)" >&2; \
-	  printf 'Missing: %s\n' "$${missing[*]}" >&2; \
-	  printf '\nExample: make LIMINE_TOOL=/opt/limine/bin/limine LIMINE_SHARE=/opt/limine/share/limine\n' >&2; \
+	  printf '\nMissing FAT image tools: %s\n' "$${missing[*]}" >&2; \
+	  printf 'Install with: sudo apt install dosfstools mtools\n' >&2; \
 	  exit 1; \
 	fi
 
@@ -375,16 +365,16 @@ $(KERNEL_ENTRY_OBJ): $(ROOT)/sys/kernel/kernel_entry.asm | check-tools $(BUILD)
 $(BOOT_BIN): $(ROOT)/sys/boot/boot.asm | check-tools $(BUILD)
 	$(NASM) -f bin "$<" -o "$@"
 
-$(KERNEL_ELF): $(KERNEL_ENTRY_OBJ) $(OBJECTS) $(ROOT)/linker.ld | check-tools
+$(KERNEL_ELF): $(KERNEL_ENTRY_OBJ) $(OBJECTS) $(ROOT)/linker.ld | check-tools check-grub-file $(BUILD)
 	$(LD_LLD) -m elf_x86_64 -nostdlib -z noexecstack \
 	  --gc-sections -T "$(ROOT)/linker.ld" \
 	  $(KERNEL_ENTRY_OBJ) $(OBJECTS) -o "$@"
 	@test -s "$@" || { echo 'Kernel was not created' >&2; exit 1; }
 	@$(FILE) "$@"
 ifeq ($(CHECK_MULTIBOOT),1)
-	@grub-file --is-x86-multiboot2 "$@" || { \
+	@$(GRUB_FILE) --is-x86-multiboot2 "$@" || { \
 	  echo 'ERROR: kernel.elf has no valid Multiboot2 header.' >&2; \
-	  echo 'Check kernel_entry.asm and linker.ld; refusing to create a broken ISO.' >&2; \
+	  echo 'Check kernel_entry.asm and linker.ld; refusing to create a broken GRUB ISO.' >&2; \
 	  exit 1; \
 	}
 	@echo 'Multiboot2 header: OK'
@@ -392,20 +382,27 @@ else
 	@echo 'WARNING: grub-file check disabled (CHECK_MULTIBOOT=0).'
 endif
 
-# The installed disk boots through a conventional FAT16 EFI System Partition.
-# Keep the ESP size in sync with NWOS_EFI_PARTITION_SECTORS in installer.c.
-$(ESP_LIMINE_CONF): $(ROOT)/Makefile | $(BUILD)
-	@{ \
-	  printf '%s\n' 'timeout: 0' 'default_entry: 1' '' '/NwOS (installed disk)' \
-	    '    protocol: multiboot2' \
-	    '    path: boot():/boot/kernel.elf' \
-	    '    module_path: boot():/boot/kernel.elf' \
-	    '    module_string: nwos-kernel-image' \
-	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
-	} > "$@.tmp"
-	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
+# The installed-system ESP is a FAT16 partition containing standalone GRUB,
+# the kernel, and an embedded GRUB config. It is copied by the NwOS installer.
+$(GRUB_ESP_EFI): $(GRUB_ESP_CFG) | check-grub-tools $(BUILD)
+	@mkdir -p "$(@D)"
+	$(GRUB_MKSTANDALONE) \
+	  --format=x86_64-efi \
+	  --output="$@" \
+	  --install-modules="$(GRUB_EFI_MODULES)" \
+	  --modules="$(GRUB_EFI_MODULES)" \
+	  --locales="" --fonts="" --themes="" \
+	  "boot/grub/grub.cfg=$(GRUB_ESP_CFG)"
+	@test -s "$@" || { echo 'GRUB UEFI executable was not created.' >&2; exit 1; }; \
+	max_bytes=$$(( $(ESP_PARTITION_SECTORS) * 512 )); \
+	actual_bytes=$$(stat -c %s "$@"); \
+	if (( actual_bytes >= max_bytes )); then \
+	  printf 'GRUB UEFI executable is too large for the fixed %s MiB ESP (%s bytes).\n' \
+	    "$$(( max_bytes / 1024 / 1024 ))" "$$actual_bytes" >&2; \
+	  exit 1; \
+	fi
 
-$(ESP_IMAGE): $(KERNEL_ELF) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64) $(ESP_LIMINE_CONF) | check-boot-tools $(BUILD) check-limine
+$(ESP_IMAGE): $(KERNEL_ELF) $(GRUB_ESP_EFI) $(GRUB_ESP_CFG) $(NWBIBLE_ISO_DEPS) | check-boot-tools $(BUILD)
 	@set -eu; \
 	rm -f "$@"; \
 	truncate -s $$(( $(ESP_PARTITION_SECTORS) * 512 )) "$@"; \
@@ -413,149 +410,53 @@ $(ESP_IMAGE): $(KERNEL_ELF) $(LIMINE_BIOS_SYS) $(LIMINE_BOOTX64) $(ESP_LIMINE_CO
 	"$(MMD)" -i "$@" ::/EFI; \
 	"$(MMD)" -i "$@" ::/EFI/BOOT; \
 	"$(MMD)" -i "$@" ::/boot; \
-	"$(MMD)" -i "$@" ::/boot/limine; \
+	"$(MMD)" -i "$@" ::/boot/grub; \
 	"$(MMD)" -i "$@" ::/boot/nwos; \
-	"$(MCOPY)" -i "$@" "$(LIMINE_BOOTX64)" ::/EFI/BOOT/BOOTX64.EFI; \
-	"$(MCOPY)" -i "$@" "$(LIMINE_BIOS_SYS)" ::/boot/limine/limine-bios.sys; \
+	"$(MCOPY)" -i "$@" "$(GRUB_ESP_EFI)" ::/EFI/BOOT/BOOTX64.EFI; \
 	"$(MCOPY)" -i "$@" "$(KERNEL_ELF)" ::/boot/kernel.elf; \
-	"$(MCOPY)" -i "$@" "$(ESP_LIMINE_CONF)" ::/boot/limine/limine.conf; \
+	"$(MCOPY)" -i "$@" "$(GRUB_ESP_CFG)" ::/boot/grub/grub.cfg; \
+	if [[ -f "$(NWBIBLE_MODULE)" ]]; then \
+	  "$(MCOPY)" -i "$@" "$(NWBIBLE_MODULE)" ::/boot/nwos/world_english_bible.txt; \
+	fi; \
 	"$(FILE)" "$@"; \
 	ls -lh "$@"
 
-$(BIOS_TEMPLATE): $(ESP_IMAGE) $(BIOS_TEMPLATE_TOOL) | $(BUILD) check-limine
-	$(PYTHON) "$(BIOS_TEMPLATE_TOOL)" "$(ESP_IMAGE)" "$@" \
-	  $(NWOS_MBR_START_LBA) $(ESP_PARTITION_SECTORS)
-	"$(LIMINE_TOOL)" bios-install "$@"
-
-$(ESP_INSTALLED_IMAGE): $(BIOS_TEMPLATE) | check-boot-tools
-	"$(DD)" if="$(BIOS_TEMPLATE)" of="$@.tmp" bs=512 skip=$(NWOS_MBR_START_LBA) count=$(ESP_PARTITION_SECTORS) status=none conv=fsync
-	mv "$@.tmp" "$@"
-
-$(BIOS_BOOT_AREA): $(BIOS_TEMPLATE) | check-boot-tools
-	"$(DD)" if="$(BIOS_TEMPLATE)" of="$@.tmp" bs=512 count=$(BIOS_BOOT_AREA_SECTORS) status=none conv=fsync
-	mv "$@.tmp" "$@"
-
-# Limine configuration is generated here; do not edit build/limine.conf manually.
-$(LIMINE_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
-	@{ \
-	  printf '%s\n' 'timeout: 10' 'default_entry: 1' '' '/NwOS' \
-	    '    protocol: multiboot2' \
-	    '    path: boot():/boot/kernel.elf' \
-	    '    module_path: boot():/boot/kernel.elf' \
-	    '    module_string: nwos-kernel-image' \
-	    '    module_path: boot():/boot/nwos/esp.img' \
-	    '    module_string: nwos-esp-image' \
-	    '    module_path: boot():/boot/nwos/biosboot.bin' \
-	    '    module_string: nwos-bios-boot-area' \
-	    '    resolution: $(GUEST_WIDTH)x$(GUEST_HEIGHT)x32'; \
-	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
-	    printf '%s\n' \
-	      '    module_path: boot():/boot/nwos/world_english_bible.txt' \
-	      '    module_string: nwos-bible-passages'; \
-	  fi; \
-	  printf '%s\n' \
-	    '' '/Windows Boot Manager (UEFI)' \
-	    '    protocol: efi_boot_entry' \
-	    '    entry: Windows Boot Manager' \
-	    '    if_fw_type: UEFI' \
-	    '' '/Existing system boot sector (BIOS, first hard disk)' \
-	    '    protocol: bios' \
-	    '    drive: 1' \
-	    '    partition: 0' \
-	    '    if_fw_type: BIOS'; \
-	} > "$@.tmp"
-	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
-
-# Ventoy GRUB2 fallback; module2 must follow multiboot2 and precede boot.
-$(VENTOY_GRUB_CONF): $(ROOT)/Makefile $(NWBIBLE_ISO_DEPS) | $(BUILD)
-	@{ \
-	  printf '%s\n' \
-	    '# NwOS Ventoy GRUB2 fallback: select a real UEFI GOP mode first.' \
-	    'set root=(loop)' \
-	    'insmod all_video' \
-	    'insmod gfxterm' \
-	    'set gfxmode=auto' \
-	    'terminal_output gfxterm' \
-	    'set gfxpayload=keep' \
-	    'insmod iso9660' \
-	    'insmod multiboot2' \
-	    'multiboot2 /boot/kernel.elf' \
-	    'module2 /boot/kernel.elf nwos-kernel-image' \
-	    'module2 /boot/nwos/esp.img nwos-esp-image' \
-	    'module2 /boot/nwos/biosboot.bin nwos-bios-boot-area'; \
-	  if [[ -f "$(NWBIBLE_SOURCE)" ]]; then \
-	    printf '%s\n' 'module2 /boot/nwos/world_english_bible.txt nwos-bible-passages'; \
-	  fi; \
-	  printf '%s\n' 'boot'; \
-	} > "$@.tmp"
-	@if ! cmp -s "$@.tmp" "$@"; then mv "$@.tmp" "$@"; else rm -f "$@.tmp"; fi
-
-$(ISO_STAMP): $(KERNEL_ELF) $(NWBIBLE_ISO_DEPS) $(ESP_INSTALLED_IMAGE) $(BIOS_BOOT_AREA) $(LIMINE_CONF) $(VENTOY_GRUB_CONF) $(ROOT)/Makefile | check-tools check-limine
+$(ISO_STAMP): $(KERNEL_ELF) $(ESP_IMAGE) $(GRUB_ISO_CFG) $(NWBIBLE_ISO_DEPS) $(ROOT)/Makefile | check-tools check-grub-tools $(BUILD)
 	@set -eu; \
 	rm -rf "$(ISO_ROOT)"; \
-	mkdir -p "$(ISO_ROOT)/boot/limine" "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses" "$(ISO_ROOT)/EFI/BOOT"; \
+	mkdir -p "$(ISO_ROOT)/boot/grub" "$(ISO_ROOT)/boot/nwos" "$(ISO_ROOT)/data/licenses"; \
 	install -m 0644 "$(KERNEL_ELF)" "$(ISO_ROOT)/boot/kernel.elf"; \
-	install -m 0644 "$(ESP_INSTALLED_IMAGE)" "$(ISO_ROOT)/boot/nwos/esp.img"; \
-	install -m 0644 "$(BIOS_BOOT_AREA)" "$(ISO_ROOT)/boot/nwos/biosboot.bin"; \
+	install -m 0644 "$(ESP_IMAGE)" "$(ISO_ROOT)/boot/nwos/esp.img"; \
 	if [[ -f "$(NWBIBLE_MODULE)" ]]; then \
 	  install -m 0644 "$(NWBIBLE_MODULE)" "$(ISO_ROOT)/boot/nwos/world_english_bible.txt"; \
 	  install -m 0644 "$(NWBIBLE_NOTICE)" "$(ISO_ROOT)/data/licenses/WORLD-ENGLISH-BIBLE-NOTICE.txt"; \
 	fi; \
-	install -m 0644 "$(LIMINE_BIOS_SYS)" "$(ISO_ROOT)/boot/limine/limine-bios.sys"; \
-	install -m 0644 "$(LIMINE_BIOS_CD)"  "$(ISO_ROOT)/boot/limine/limine-bios-cd.bin"; \
-	install -m 0644 "$(LIMINE_UEFI_CD)"  "$(ISO_ROOT)/boot/limine/limine-uefi-cd.bin"; \
-	install -m 0644 "$(LIMINE_BOOTX64)"  "$(ISO_ROOT)/EFI/BOOT/BOOTX64.EFI"; \
-	install -m 0644 "$(LIMINE_CONF)"     "$(ISO_ROOT)/boot/limine/limine.conf"; \
-	install -m 0644 "$(VENTOY_GRUB_CONF)" "$(ISO_ROOT)/boot/grub/grub.cfg"; \
+	install -m 0644 "$(GRUB_ISO_CFG)" "$(ISO_ROOT)/boot/grub/grub.cfg"; \
 	touch "$@"
 
-# Hybrid BIOS/UEFI ISO. --efi-boot-part exposes Limine's UEFI El Torito FAT image as a GPT EFI System Partition.
-# Do not add -partition_offset here: this xorriso mkisofs invocation treats its argument as a source path.
-$(ISO_OUT): $(ISO_STAMP) $(ROOT)/Makefile | check-tools check-limine
+# grub-mkrescue creates a bootable GRUB ISO. With both platform module sets
+# installed this ISO is bootable on legacy BIOS and x86-64 UEFI systems.
+$(ISO_OUT): $(ISO_STAMP) $(ROOT)/Makefile | check-tools check-grub-tools
 	@set -eu; \
 	rm -f "$(ISO_TMP)"; \
-	$(XORRISO) -as mkisofs \
-	  -R -r -J \
-	  -b boot/limine/limine-bios-cd.bin \
-	  -no-emul-boot \
-	  -boot-load-size 4 \
-	  -boot-info-table \
-	  -hfsplus \
-	  -apm-block-size 2048 \
-	  --efi-boot boot/limine/limine-uefi-cd.bin \
-	  -efi-boot-part \
-	  --efi-boot-image \
-	  --protective-msdos-label \
-	  "$(ISO_ROOT)" \
-	  -o "$(ISO_TMP)"; \
-	test -s "$(ISO_TMP)"; \
-	"$(LIMINE_TOOL)" bios-install "$(ISO_TMP)"; \
-	system_report="$$($(XORRISO) -indev "$(ISO_TMP)" -report_system_area plain 2>&1)"; \
-	printf '\n%s\n' '=== ISO system area / partition table ===' "$$system_report"; \
-	report="$$($(XORRISO) -indev "$(ISO_TMP)" -report_el_torito plain 2>&1)"; \
-	printf '\n%s\n' '=== El Torito boot catalog ===' "$$report"; \
-	printf '%s\n' "$$report" | grep -Fq 'limine-uefi-cd.bin' || { \
-	  echo 'ERROR: ISO has no UEFI El Torito entry for limine-uefi-cd.bin' >&2; \
-	  exit 1; \
-	}; \
-	efi_listing="$$($(XORRISO) -indev "$(ISO_TMP)" -ls /EFI/BOOT 2>&1)"; \
-	printf '%s\n' "$$efi_listing"; \
-	printf '%s\n' "$$efi_listing" | grep -Eiq 'BOOTX64\.EFI' || { \
-	  echo 'ERROR: /EFI/BOOT/BOOTX64.EFI is missing from the ISO filesystem' >&2; \
-	  exit 1; \
-	}; \
-	grub_listing="$$($(XORRISO) -indev "$(ISO_TMP)" -ls /boot/grub 2>&1)"; \
-	printf '%s\n' "$$grub_listing"; \
-	printf '%s\n' "$$grub_listing" | grep -Fq 'grub.cfg' || { \
-	  echo 'ERROR: /boot/grub/grub.cfg Ventoy fallback config is missing from ISO' >&2; \
+	$(GRUB_MKRESCUE) \
+	  --modules="$(GRUB_ISO_MODULES)" \
+	  --output="$(ISO_TMP)" \
+	  "$(ISO_ROOT)"; \
+	test -s "$(ISO_TMP)" || { echo 'GRUB ISO was not created.' >&2; exit 1; }; \
+	printf '\n%s\n' '=== GRUB ISO El Torito report ==='; \
+	boot_report="$$($(XORRISO) -indev "$(ISO_TMP)" -report_el_torito plain 2>&1)"; \
+	printf '%s\n' "$$boot_report"; \
+	printf '%s\n' "$$boot_report" | grep -Eiq 'UEFI' || { \
+	  echo 'ERROR: GRUB ISO has no UEFI El Torito boot entry.' >&2; \
+	  echo 'Check that grub-efi-amd64-bin and mtools are installed.' >&2; \
 	  exit 1; \
 	}; \
 	mv "$(ISO_TMP)" "$@"; \
-	echo; \
 	$(FILE) "$@"; \
 	ls -lh "$@"; \
 	$(SHA256SUM) "$@"; \
-	printf '\n============================\n       BUILD SUCCESS\n============================\nISO: %s\nISO tree: %s\nLimine: v%s\n' "$@" "$(ISO_ROOT)" "$(LIMINE_VERSION)"
+	printf '\n============================\n       BUILD SUCCESS\n============================\nISO: %s\nISO tree: %s\nBootloader: GRUB 2 (BIOS + UEFI ISO; UEFI-only installed ESP)\n' "$@" "$(ISO_ROOT)"
 
 clean:
 	rm -rf "$(BUILD)" "$(ISO_OUT)" "$(ISO_TMP)"

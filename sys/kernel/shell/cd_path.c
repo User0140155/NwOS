@@ -16,7 +16,7 @@ void shell(void)
         prompt_color = TERM_COLOR_CYAN;
 
     if (!usermode_enter_shell())
-        print_error("[WARN] Ring 3 shell unavailable; using kernel shell.\n");
+        print_error("[WARN] User shell unavailable; using kernel shell.\n");
 
     while (1)
     {

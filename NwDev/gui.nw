@@ -883,7 +883,7 @@
     str nname = "";
     str oldname = "";
     i = 0;
-    while (i < 200) {
+    while (i < 144) {
         w[i] = 0;
         i = i + 1;
     }

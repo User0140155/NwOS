@@ -24,7 +24,7 @@ void kernel_main(void) {
         const char* msg1 = " FATAL ERROR: Framebuffer not found! ";
         for (int i = 0; msg1[i]; i++) vga[2 * 80 + 10 + i] = (uint16_t)msg1[i] | (0x4F << 8);
 
-        const char* msg2 = " Check limine framebuffer configuration. ";
+        const char* msg2 = " Check GRUB video mode and framebuffer support. ";
         for (int i = 0; msg2[i]; i++) vga[4 * 80 + 5 + i] = (uint16_t)msg2[i] | (0x4F << 8);
 
         const char* msg3 = " If booting from HDD, try NwOS.iso instead. ";

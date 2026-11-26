@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "parser.h"
+#include "../diag/diag.h"
 
 #define NWC_MOD_NONZERO  1u
 #define NWC_MOD_CONST    2u
@@ -40,17 +41,36 @@ static TokenType parser_peek_type(Parser* parser)
 }
 
 
-static void parser_error(Parser* parser, const char* message)
+static void parser_location(Parser* parser, NwcDiagLoc* location)
 {
-    fprintf(
-        stderr,
-        "NwC parser error at %d:%d: %s\n",
-        parser->current.line,
-        parser->current.column,
-        message
-    );
+    location->path = parser->filename != NULL
+                         ? parser->filename
+                         : "<source>";
+    location->source = parser->lexer->source;
+    location->line = parser->current.line;
+    location->column = parser->current.column;
+    location->length = parser->current.text[0] != '\0'
+                           ? (int)strlen(parser->current.text)
+                           : 1;
+}
+
+static void parser_error_ex(Parser* parser, const char* message, int plain)
+{
+    NwcDiagLoc location;
+
+    parser_location(parser, &location);
+
+    if (plain)
+        nwc_diag_error_plain(message, &location, NULL, NULL);
+    else
+        nwc_diag_error(message, &location, NULL, NULL);
 
     parser->error_count++;
+}
+
+static void parser_error(Parser* parser, const char* message)
+{
+    parser_error_ex(parser, message, 0);
 }
 
 
@@ -100,16 +120,18 @@ static void parser_error_unsupported_type(Parser* parser, int is_int)
 {
     if (is_int)
     {
-        parser_error(
+        parser_error_ex(
             parser,
-            "Int is not supported by NwC, Do you mean '1A'?"
+            "NwC Didn't support 'int', Did you mean '1A'?",
+            1
         );
     }
     else
     {
-        parser_error(
+        parser_error_ex(
             parser,
-            "Void is not supported by NwC, Do you mean '0A'?"
+            "NwC Didn't support 'void', Did you mean '0A'?",
+            1
         );
     }
 }
@@ -146,16 +168,17 @@ static void parser_expect(Parser* parser, TokenType type)
 {
     if (!parser_match(parser, type))
     {
-        fprintf(
-            stderr,
-            "NwC parser error at %d:%d: expected %s, got %s\n",
-            parser->current.line,
-            parser->current.column,
+        char message[160];
+
+        snprintf(
+            message,
+            sizeof(message),
+            "Expected %s, got %s",
             token_type_name(type),
             token_type_name(parser->current.type)
         );
 
-        parser->error_count++;
+        parser_error(parser, message);
     }
 }
 
@@ -222,6 +245,9 @@ static ValueType parse_type(Parser* parser)
 
     if (parser_match(parser, TOKEN_VOID_TYPE))
         return TYPE_VOID;
+
+    if (parser_match(parser, TOKEN_GUI_TYPE))
+        return TYPE_GUI;
 
     if (parser_match(parser, TOKEN_FLOAT_TYPE))
         return TYPE_FLOAT;
@@ -663,25 +689,153 @@ static ASTNode* parse_unary(Parser* parser)
     {
         ASTNode* node = parse_primary(parser);
 
-        while (node != NULL &&
-               (parser_is(parser, TOKEN_PLUS_PLUS) ||
-                parser_is(parser, TOKEN_MINUS_MINUS)))
+        while (node != NULL)
         {
-            ASTNode* operation = ast_new(
-                AST_BINARY_OPERATION,
-                parser->current.line,
-                parser->current.column
-            );
+            if (parser_is(parser, TOKEN_DOT))
+            {
+                int line = parser->current.line;
+                int col = parser->current.column;
+                parser_advance(parser);
+                if (!parser_is(parser, TOKEN_IDENTIFIER))
+                {
+                    parser_error(parser, "expected member name after '.'");
+                    break;
+                }
+                char* member = copy_text(parser->current.text);
+                parser_advance(parser);
 
-            operation->text = copy_text(
-                parser_is(parser, TOKEN_PLUS_PLUS) ? "post++" : "post--"
-            );
-            parser_advance(parser);
+                if (parser_match(parser, TOKEN_LPAREN))
+                {
+                    ASTNode* call = ast_new(AST_METHOD_CALL, line, col);
+                    call->text = member;
+                    call->left = node;
+                    ASTNode* first = NULL; ASTNode* last = NULL;
+                    while (!parser_is(parser, TOKEN_RPAREN) && !parser_is(parser, TOKEN_EOF))
+                    {
+                        ASTNode* arg;
+                        if (parser_is(parser, TOKEN_IDENTIFIER) && parser_peek_type(parser) == TOKEN_ASSIGN)
+                        {
+                            char* aname = copy_text(parser->current.text);
+                            parser_advance(parser);
+                            parser_advance(parser); /* = */
+                            arg = ast_new(AST_ASSIGNMENT, parser->current.line, parser->current.column);
+                            arg->text = aname;
+                            arg->child = parse_expression(parser);
+                        }
+                        else
+                        {
+                            arg = parse_expression(parser);
+                        }
+                        ast_append(&first, &last, arg);
+                        if (!parser_match(parser, TOKEN_COMMA)) break;
+                    }
+                    parser_expect(parser, TOKEN_RPAREN);
+                    call->child = first;
+                    node = call;
+                }
+                else if (parser_is(parser, TOKEN_ASSIGN))
+                {
+                    ASTNode* asn = ast_new(AST_ASSIGNMENT, line, col);
+                    asn->text = member;
+                    asn->integer_value = TOKEN_ASSIGN;
+                    {
+                        ASTNode* mt = ast_new(AST_MEMBER, line, col);
+                        mt->text = copy_text(member);
+                        mt->left = node;
+                        asn->left = mt;
+                    }
+                    parser_advance(parser);
+                    if (strcmp(member, "resizable") == 0)
+                    {
+                        ASTNode* first = parse_expression(parser);
+                        if (parser_match(parser, TOKEN_COMMA))
+                        {
+                            ASTNode* second = parse_expression(parser);
+                            ASTNode* pair = ast_new(AST_BINARY_OPERATION, line, col);
+                            pair->text = copy_text(",");
+                            pair->left = first;
+                            pair->right = second;
+                            asn->child = pair;
+                        }
+                        else asn->child = first;
+                    }
+                    else
+                    {
+                        asn->child = parse_expression(parser);
+                    }
+                    node = asn;
+                }
+                else
+                {
+                    ASTNode* m = ast_new(AST_MEMBER, line, col);
+                    m->text = member;
+                    m->left = node;
+                    node = m;
+                }
+                continue;
+            }
 
-            operation->left = node;
-            operation->right = NULL;
+            if (parser_is(parser, TOKEN_SCOPE))
+            {
+                int line = parser->current.line;
+                int col = parser->current.column;
+                parser_advance(parser);
+                if (!parser_is(parser, TOKEN_IDENTIFIER))
+                {
+                    parser_error(parser, "expected name after '::'");
+                    break;
+                }
+                char* member = copy_text(parser->current.text);
+                parser_advance(parser);
+                if (parser_match(parser, TOKEN_LPAREN))
+                {
+                    ASTNode* call = ast_new(AST_METHOD_CALL, line, col);
+                    call->text = member;
+                    call->left = node;
+                    call->integer_value = 1; /* scope/destroy style */
+                    ASTNode* first = NULL; ASTNode* last = NULL;
+                    while (!parser_is(parser, TOKEN_RPAREN) && !parser_is(parser, TOKEN_EOF))
+                    {
+                        ast_append(&first, &last, parse_expression(parser));
+                        if (!parser_match(parser, TOKEN_COMMA)) break;
+                    }
+                    parser_expect(parser, TOKEN_RPAREN);
+                    call->child = first;
+                    node = call;
+                }
+                else
+                {
+                    ASTNode* m = ast_new(AST_MEMBER, line, col);
+                    m->text = member;
+                    m->left = node;
+                    m->integer_value = 1;
+                    node = m;
+                }
+                continue;
+            }
 
-            node = operation;
+            if (parser_is(parser, TOKEN_PLUS_PLUS) ||
+                parser_is(parser, TOKEN_MINUS_MINUS))
+            {
+                ASTNode* operation = ast_new(
+                    AST_BINARY_OPERATION,
+                    parser->current.line,
+                    parser->current.column
+                );
+
+                operation->text = copy_text(
+                    parser_is(parser, TOKEN_PLUS_PLUS) ? "post++" : "post--"
+                );
+                parser_advance(parser);
+
+                operation->left = node;
+                operation->right = NULL;
+
+                node = operation;
+                continue;
+            }
+
+            break;
         }
 
         return node;
@@ -1003,7 +1157,8 @@ static ASTNode* parse_include(Parser* parser)
         column
     );
 
-    if (parser_is(parser, TOKEN_HEADER))
+    if (parser_is(parser, TOKEN_HEADER) ||
+        parser_is(parser, TOKEN_STRING))
     {
         node->text = copy_text(parser->current.text);
         parser_advance(parser);
@@ -1012,7 +1167,7 @@ static ASTNode* parse_include(Parser* parser)
     {
         parser_error(
             parser,
-            "expected header after #include"
+            "expected <header> or \"file\" after #include"
         );
     }
 
@@ -2241,21 +2396,52 @@ static ASTNode* parse_assignment_statement_ex(Parser* parser, int expect_semicol
     parser_advance(parser);
 
     ASTNode* index = NULL;
+    ASTNode* member_target = NULL;
     if (parser_match(parser, TOKEN_LBRACKET))
     {
         index = parse_expression(parser);
         parser_expect(parser, TOKEN_RBRACKET);
     }
+    else if (parser_match(parser, TOKEN_DOT))
+    {
+        if (parser_is(parser, TOKEN_IDENTIFIER))
+        {
+            member_target = ast_new(AST_MEMBER, line, column);
+            member_target->text = copy_text(parser->current.text);
+            member_target->left = ast_new(AST_IDENTIFIER, line, column);
+            member_target->left->text = copy_text(name);
+            parser_advance(parser);
+        }
+        else
+        {
+            parser_error(parser, "expected member name after '.'");
+        }
+    }
 
     node = ast_new(AST_ASSIGNMENT, line, column);
     node->text = name;
-    node->left = index;
+    node->left = member_target ? member_target : index;
 
     if (parser_is_assignment_op(parser))
     {
         node->integer_value = parser->current.type;
         parser_advance(parser);
-        node->child = parse_expression(parser);
+        if (member_target != NULL && member_target->text != NULL &&
+            strcmp(member_target->text, "resizable") == 0)
+        {
+            ASTNode* first = parse_expression(parser);
+            if (parser_match(parser, TOKEN_COMMA))
+            {
+                ASTNode* second = parse_expression(parser);
+                ASTNode* pair = ast_new(AST_BINARY_OPERATION, line, column);
+                pair->text = copy_text(",");
+                pair->left = first;
+                pair->right = second;
+                node->child = pair;
+            }
+            else node->child = first;
+        }
+        else node->child = parse_expression(parser);
     }
     else if (index == NULL &&
              (parser_is(parser, TOKEN_PLUS_PLUS) ||
@@ -2508,6 +2694,7 @@ static ASTNode* parse_statement(Parser* parser)
 
     if (
         parser_is(parser, TOKEN_INT_TYPE) ||
+        parser_is(parser, TOKEN_GUI_TYPE) ||
         parser_is(parser, TOKEN_FLOAT_TYPE) ||
         parser_is(parser, TOKEN_BOOL_TYPE) ||
         parser_is(parser, TOKEN_LONG_TYPE) ||
@@ -2621,6 +2808,44 @@ static ASTNode* parse_statement(Parser* parser)
         parser_advance(parser);
         parser_expect(parser, TOKEN_SEMICOLON);
 
+        return node;
+    }
+
+    if (parser_is(parser, TOKEN_PASS))
+    {
+        ASTNode* node = ast_new(
+            AST_PASS,
+            parser->current.line,
+            parser->current.column
+        );
+
+        parser_advance(parser);
+        parser_expect(parser, TOKEN_SEMICOLON);
+
+        return node;
+    }
+
+    if (parser_is(parser, TOKEN_GLOBAL))
+    {
+        ASTNode* node = ast_new(
+            AST_GLOBAL,
+            parser->current.line,
+            parser->current.column
+        );
+
+        parser_advance(parser);
+
+        if (parser_is(parser, TOKEN_IDENTIFIER))
+        {
+            node->text = copy_text(parser->current.text);
+            parser_advance(parser);
+        }
+        else
+        {
+            parser_error(parser, "expected variable name after global");
+        }
+
+        parser_expect(parser, TOKEN_SEMICOLON);
         return node;
     }
 
@@ -2773,6 +2998,11 @@ static ASTNode* parse_function(Parser* parser)
         return_type = TYPE_INT;
         parser_advance(parser);
     }
+    else if (parser_is(parser, TOKEN_GUI_TYPE))
+    {
+        return_type = TYPE_GUI;
+        parser_advance(parser);
+    }
     else if (parser_is(parser, TOKEN_VOID_TYPE))
     {
         return_type = TYPE_VOID;
@@ -2848,10 +3078,130 @@ static ASTNode* parse_function(Parser* parser)
 
     node->left = params_first;
 
-    node->child =
-        parse_block(parser);
+    /* "0A func();" is a prototype used by .nwh headers.
+       It has no body and is not emitted into the program. */
+    if (parser_match(parser, TOKEN_SEMICOLON))
+    {
+        node->type = AST_PROTOTYPE;
+    }
+    else
+    {
+        node->child =
+            parse_block(parser);
+    }
 
     return node;
+}
+
+/* Header prototypes may omit the return type: "name(1A count);". */
+static ASTNode* parse_bare_prototype(Parser* parser)
+{
+    ASTNode* node;
+    ASTNode* params_first = NULL;
+    ASTNode* params_last = NULL;
+
+    int line = parser->current.line;
+    int column = parser->current.column;
+
+    node = ast_new(AST_PROTOTYPE, line, column);
+    node->value_type = TYPE_UNKNOWN;
+    node->text = copy_text(parser->current.text);
+
+    parser_advance(parser);
+    parser_expect(parser, TOKEN_LPAREN);
+
+    while (!parser_is(parser, TOKEN_RPAREN) &&
+           !parser_is(parser, TOKEN_EOF))
+    {
+        ASTNode* parameter = parse_parameter(parser);
+
+        if (parameter != NULL)
+            ast_append(&params_first, &params_last, parameter);
+        else
+            parser_advance(parser);
+
+        if (!parser_match(parser, TOKEN_COMMA))
+            break;
+    }
+
+    parser_expect(parser, TOKEN_RPAREN);
+    parser_expect(parser, TOKEN_SEMICOLON);
+
+    node->left = params_first;
+    return node;
+}
+
+void nwc_parser_check_duplicate_functions(ASTNode* program, int* error_count)
+{
+    ASTNode* first = program != NULL ? program->child : NULL;
+    char note[160];
+
+    while (first != NULL)
+    {
+        ASTNode* second;
+
+        if (first->type != AST_FUNCTION || first->text == NULL)
+        {
+            first = first->next;
+            continue;
+        }
+
+        second = first->next;
+
+        while (second != NULL)
+        {
+            NwcDiagLoc a;
+            NwcDiagLoc b;
+            int column;
+            int length;
+
+            if (second->type == AST_FUNCTION &&
+                second->text != NULL &&
+                strcmp(first->text, second->text) == 0)
+            {
+                a.path = first->source_path != NULL
+                             ? first->source_path : "<source>";
+                a.source = first->source_text;
+                a.line = first->line;
+                nwc_diag_locate(a.source, a.line, first->text,
+                                &column, &length);
+                a.column = column;
+                a.length = length;
+
+                b.path = second->source_path != NULL
+                             ? second->source_path : "<source>";
+                b.source = second->source_text;
+                b.line = second->line;
+                nwc_diag_locate(b.source, b.line, second->text,
+                                &column, &length);
+                b.column = column;
+                b.length = length;
+
+                snprintf(note, sizeof(note),
+                         "Help this, Remove one of %s", first->text);
+
+                nwc_diag_error_plain("Conflicting function names",
+                                     &a, &b, note);
+                if (error_count != NULL)
+                    (*error_count)++;
+            }
+
+            second = second->next;
+        }
+
+        first = first->next;
+    }
+}
+
+static void parser_check_duplicate_functions(Parser* parser,
+                                             ASTNode* program)
+{
+    int before = parser->error_count;
+
+    nwc_parser_check_duplicate_functions(program, &parser->error_count);
+
+    if (parser->error_count == before)
+        return;
 }
 
 static ASTNode* parse_program(Parser* parser)
@@ -2874,6 +3224,11 @@ static ASTNode* parse_program(Parser* parser)
         if (parser_is(parser, TOKEN_INCLUDE))
         {
             node = parse_include(parser);
+        }
+        else if (parser_is(parser, TOKEN_IDENTIFIER) &&
+                 parser_peek_type(parser) == TOKEN_LPAREN)
+        {
+            node = parse_bare_prototype(parser);
         }
         else if (parser_is_int_keyword(parser))
         {
@@ -2922,9 +3277,34 @@ static ASTNode* parse_program(Parser* parser)
     return program;
 }
 
+static void parser_apply_sources(ASTNode* node,
+                                 const char* path, const char* source)
+{
+    if (node == NULL)
+        return;
+
+    node->source_path = path;
+    node->source_text = source;
+
+    parser_apply_sources(node->left, path, source);
+    parser_apply_sources(node->right, path, source);
+    parser_apply_sources(node->child, path, source);
+    parser_apply_sources(node->body, path, source);
+    parser_apply_sources(node->next, path, source);
+}
+
+void parser_set_node_sources(Parser* parser, ASTNode* node,
+                             const char* path, const char* source)
+{
+    (void)parser;
+
+    parser_apply_sources(node, path, source);
+}
+
 void parser_init(Parser* parser, Lexer* lexer)
 {
     parser->lexer = lexer;
+    parser->filename = NULL;
 
     parser->error_count = 0;
     parser->shift_allowed = 1;
@@ -2934,9 +3314,21 @@ void parser_init(Parser* parser, Lexer* lexer)
 
     parser_advance(parser);
 }
+void parser_set_filename(Parser* parser, const char* filename)
+{
+    parser->filename = filename;
+}
+
 ASTNode* parser_parse(Parser* parser)
 {
-    return parse_program(parser);
+    ASTNode* program = parse_program(parser);
+
+    parser_set_node_sources(parser, program,
+                            parser->filename, parser->lexer->source);
+
+    parser_check_duplicate_functions(parser, program);
+
+    return program;
 }
 
 void ast_free(ASTNode* node)
@@ -2973,6 +3365,9 @@ static const char* ast_type_name(ASTNodeType type)
 
         case AST_FUNCTION:
             return "FUNCTION";
+
+        case AST_PROTOTYPE:
+            return "PROTOTYPE";
 
         case AST_BLOCK:
             return "BLOCK";

@@ -1,6 +1,8 @@
 #include "e1000.h"
 #include "pci.h"
 #include "timer.h"
+#include "../memory/mmu.h"
+#include <stdint.h>
 
 /* ---- registers --------------------------------------------------------- */
 #define REG_CTRL    0x0000
@@ -77,6 +79,7 @@ static unsigned long mmio = 0;
 static unsigned char mac[6];
 static unsigned int rx_cur = 0;
 static unsigned int tx_tail = 0;
+static int ready = 0;
 
 static unsigned int rd(unsigned int reg)
 {
@@ -112,31 +115,70 @@ static void delay_ms(unsigned int ms)
         __asm__ volatile ("pause");
 }
 
-int e1000_init(void)
+static const struct { unsigned short vendor, device; } supported_ids[] = {
+    { 0x8086, 0x100E }, /* 82540EM: QEMU default        */
+    { 0x8086, 0x100F }, /* 82545EM                     */
+    { 0x8086, 0x1004 }, /* 82543GC                     */
+    { 0x8086, 0x1019 }, /* 82547EI                      */
+    { 0x8086, 0x101A }, /* 82547EI MF                   */
+    { 0x8086, 0x1010 }, /* 82546EB                      */
+    { 0x8086, 0x1012 }, /* 82546EB                      */
+    { 0x8086, 0x1013 }, /* 82541EI                      */
+    { 0x8086, 0x1016 }, /* 82540EP                      */
+    { 0x8086, 0x1017 }, /* 82540EP                      */
+    { 0x8086, 0x1018 }, /* 82541EI                      */
+    { 0x8086, 0x101D }, /* 82546EB                      */
+    { 0x8086, 0x1079 }, /* 82546GB                      */
+    { 0x8086, 0x107A }, /* 82546GB                      */
+    { 0x8086, 0x107B }, /* 82546GB                      */
+    { 0x8086, 0x107C }, /* 82541PI                      */
+    { 0x8086, 0x108C }, /* 82573E                       */
+};
+
+static int find_supported(pci_dev_t *dev)
+{
+    for (unsigned i = 0; i < sizeof(supported_ids)/sizeof(supported_ids[0]); i++)
+    {
+        if (pci_find(supported_ids[i].vendor, supported_ids[i].device, dev))
+            return 1;
+    }
+    return 0;
+}
+
+int e1000_probe(void)
 {
     pci_dev_t dev;
+    uint64_t bar_addr = 0;
+    int bar_is_64 = 0;
+    int have_mmio = 0;
+
+    if (ready)
+        return 0;
 
     timer_init();
 
-    if (!pci_find(0x8086, 0x100E, &dev) &&     /* 82540EM: QEMU default */
-        !pci_find(0x8086, 0x100F, &dev) &&     /* 82545EM               */
-        !pci_find(0x8086, 0x1004, &dev))       /* 82543GC               */
-    {
+    if (!find_supported(&dev))
         return E1000_ERR_NO_DEVICE;
+
+    pci_enable_mem_busmaster(&dev);
+
+    for (unsigned int i = 0; i < 6; i++)
+    {
+        if (pci_get_mmio_bar(&dev, i, &bar_addr, &bar_is_64))
+        {
+            have_mmio = 1;
+            if (bar_is_64)
+                i++; /* 64-bit BAR consumes two slots */
+            break;
+        }
     }
 
-    unsigned int cmd = pci_read32(dev.bus, dev.slot, dev.func, 0x04) & 0xFFFF;
-    pci_write32(dev.bus, dev.slot, dev.func, 0x04, cmd | 0x06);
-
-    unsigned int bar0 = pci_read32(dev.bus, dev.slot, dev.func, 0x10);
-
-    if (bar0 & 1)
+    if (!have_mmio || bar_addr == 0 || bar_addr >= 0x100000000ull)
         return E1000_ERR_BAD_BAR;
 
-    mmio = (unsigned long)(bar0 & ~0xFu);
-
-    if (mmio == 0)
-        return E1000_ERR_BAD_BAR;
+    mmio = (unsigned long)bar_addr;
+    /* mark register space uncached (128KB covers common e1000 variants) */
+    mmu_mark_mmio_uncached(bar_addr, 0x20000);
 
     wr(REG_IMC, 0xFFFFFFFFu);
     wr(REG_CTRL, rd(REG_CTRL) | CTRL_RST);
@@ -224,29 +266,30 @@ int e1000_init(void)
     wr(REG_TIPG, 0x0060200A);
     wr(REG_TCTL, TCTL_EN | TCTL_PSP | (0x10u << 4) | (0x40u << 12));
 
+    ready = 1;
     return 0;
 }
 
 int e1000_link_up(void)
 {
-    if (mmio == 0)
+    if (!ready || mmio == 0)
         return 0;
 
     return (rd(REG_STATUS) & STATUS_LU) ? 1 : 0;
 }
 
-const unsigned char* e1000_mac(void)
+const unsigned char *e1000_mac(void)
 {
     return mac;
 }
 
-int e1000_send(const void* frame, unsigned int len)
+int e1000_send(const void *frame, unsigned int len)
 {
-    if (mmio == 0 || len == 0 || len > 1600)
+    if (!ready || mmio == 0 || len == 0 || len > 1600)
         return -1;
 
     unsigned int i = tx_tail;
-    volatile struct tx_desc* d = &tx_ring[i];
+    volatile struct tx_desc *d = &tx_ring[i];
 
     unsigned long long t = timer_ms();
 
@@ -256,7 +299,7 @@ int e1000_send(const void* frame, unsigned int len)
             return -2;
     }
 
-    const unsigned char* src = (const unsigned char*)frame;
+    const unsigned char *src = (const unsigned char*)frame;
 
     for (unsigned int k = 0; k < len; k++)
         tx_buf[i][k] = src[k];
@@ -277,12 +320,12 @@ int e1000_send(const void* frame, unsigned int len)
     return 0;
 }
 
-int e1000_recv(void* buf, unsigned int max)
+int e1000_recv(void *buf, unsigned int max)
 {
-    if (mmio == 0)
+    if (!ready || mmio == 0)
         return 0;
 
-    volatile struct rx_desc* d = &rx_ring[rx_cur];
+    volatile struct rx_desc *d = &rx_ring[rx_cur];
 
     if (!(d->status & DESC_DD))
         return 0;
@@ -295,7 +338,7 @@ int e1000_recv(void* buf, unsigned int max)
         if (len > max)
             len = max;
 
-        unsigned char* dst = (unsigned char*)buf;
+        unsigned char *dst = (unsigned char*)buf;
 
         for (unsigned int k = 0; k < len; k++)
             dst[k] = rx_buf[rx_cur][k];
@@ -312,3 +355,12 @@ int e1000_recv(void* buf, unsigned int max)
 
     return result;
 }
+
+const nic_driver_t e1000_driver = {
+    .name = "Intel e1000",
+    .probe = e1000_probe,
+    .link_up = e1000_link_up,
+    .mac = e1000_mac,
+    .send = e1000_send,
+    .recv = e1000_recv,
+};

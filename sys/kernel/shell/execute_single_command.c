@@ -32,7 +32,8 @@ static const Command commands[] =
     CMD_ARG("touch",       cmd_touch,       "touch <file1> [file2 ...] - create files"),
     CMD_ARG("bash",        cmd_bash,        "bash <file.sh> - run NwSH script"),
     CMD_ARG("bat",         cmd_bat,         "bat <file.bat> - run NwBAT script"),
-    CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> -o <file.nwo> - compile NwC source"),
+    CMD_ARG("nwc",         cmd_nwc,        "nwc <file.nw> [...] -o <file.nwo> | -h <file.nwh> [...] -o <file.set>"),
+    CMD_ARG("link",        cmd_link,       "link <file.set> [...] <file.nw> [...] -o <file.nwo> - link NwC"),
     CMD_ARG("nw",          package_handler, "nw list|install|remove|update|run - local package manager"),
     CMD_ARG("cat",         fs_read,         "cat <file> - read file"),
     CMD_ARG("listen",      cmd_listen,      "listen <file.wav> - play a WAV file and wait"),
@@ -75,7 +76,7 @@ static const Command commands[] =
     CMD_ARG("cd",           cmd_cd_path,               "cd <path> - change directory; supports ~, .. and nested paths"),
     CMD    ("gui",          run_gui,         "gui    - launch graphical shell"),
 
-    CMD_ARG("ping",         net_ping,        "ping <host or IP> - e.g. ping www.google.com"),
+    CMD_ARG("ping",         net_ping,        "ping <host or IP> - ICMP echo (e.g. ping 10.0.2.2)"),
     CMD    ("net",          net_info,        "net    - network status (MAC, IP, link)"),
     CMD    ("lspci",        net_lspci,       "lspci  - list PCI devices"),
 

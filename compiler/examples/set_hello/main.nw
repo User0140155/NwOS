@@ -1,0 +1,6 @@
+#include <nwc.h>
+
+1A main() {
+    func_hello();
+    return 0;
+}

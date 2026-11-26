@@ -1,4 +1,5 @@
 #include "nwos_internal.h"
+#include "network/rtl8822.h"
 
 void nwfetch(void)
 {
@@ -94,7 +95,7 @@ void nwfetch(void)
 
             case 5:
                 set_color(TERM_COLOR_CYAN);  print("Shell: ");
-                set_color(TERM_COLOR_WHITE); print("nwsh");
+                set_color(TERM_COLOR_WHITE); print("nwsh (ring 3, isolated)");
                 break;
 
             case 6:
@@ -130,7 +131,14 @@ void nwfetch(void)
 
             case 11:
                 set_color(TERM_COLOR_CYAN);  print("Network: ");
-                set_color(TERM_COLOR_WHITE); print("e1000");
+                set_color(TERM_COLOR_WHITE);
+                print("e1000/rtl8169/rtl8139/ne2k/pcnet");
+                if (rtl8822_present())
+                {
+                    print(" | wifi: ");
+                    print(rtl8822_detected_name());
+                    print(rtl8822_initialized() ? " [pci ok]" : " [detected]");
+                }
                 break;
 
             case 12:

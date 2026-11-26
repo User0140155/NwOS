@@ -214,6 +214,9 @@ static Token read_identifier(Lexer* lexer)
     else if (strcmp(token.text, "continue") == 0)
         token.type = TOKEN_CONTINUE;
 
+    else if (strcmp(token.text, "pass") == 0)
+        token.type = TOKEN_PASS;
+
     else if (strcmp(token.text, "call") == 0)
         token.type = TOKEN_CALL;
 
@@ -231,6 +234,9 @@ static Token read_identifier(Lexer* lexer)
 
     else if (strcmp(token.text, "needed") == 0)
         token.type = TOKEN_NEEDED;
+
+    else if (strcmp(token.text, "global") == 0)
+        token.type = TOKEN_GLOBAL;
 
     else if (strcmp(token.text, "rect") == 0)
         token.type = TOKEN_RECT;
@@ -475,6 +481,7 @@ const char* token_type_name(TokenType type)
 
         case TOKEN_INT_TYPE:       return "INT_TYPE";
         case TOKEN_VOID_TYPE:      return "VOID_TYPE";
+        case TOKEN_GUI_TYPE:       return "GUI_TYPE";
         case TOKEN_FLOAT_TYPE:     return "FLOAT_TYPE";
         case TOKEN_BOOL_TYPE:      return "BOOL_TYPE";
         case TOKEN_LONG_TYPE:      return "LONG_TYPE";
@@ -491,12 +498,14 @@ const char* token_type_name(TokenType type)
         case TOKEN_FOR:            return "FOR";
         case TOKEN_BREAK:          return "BREAK";
         case TOKEN_CONTINUE:       return "CONTINUE";
+        case TOKEN_PASS:           return "PASS";
         case TOKEN_CALL:           return "CALL";
         case TOKEN_SLEEP:          return "SLEEP";
         case TOKEN_ASM:            return "ASM";
         case TOKEN_NONZERO:        return "NONZERO";
         case TOKEN_CONST:          return "CONST";
         case TOKEN_NEEDED:         return "NEEDED";
+        case TOKEN_GLOBAL:         return "GLOBAL";
 
         case TOKEN_IDENTIFIER:     return "IDENTIFIER";
         case TOKEN_NUMBER:         return "NUMBER";
@@ -576,6 +585,7 @@ const char* token_type_name(TokenType type)
         case TOKEN_LBRACKET:       return "LBRACKET";
         case TOKEN_RBRACKET:       return "RBRACKET";
         case TOKEN_COMMA:          return "COMMA";
+        case TOKEN_DOT:            return "DOT";
         case TOKEN_SEMICOLON:      return "SEMICOLON";
         case TOKEN_TIME:           return "TIME";
         case TOKEN_COLOR:          return "COLOR";
@@ -694,6 +704,23 @@ static Token lexer_next_impl(Lexer* lexer)
             );
 
             token_add_char(&token, '0');
+            advance(lexer);
+
+            token_add_char(&token, 'A');
+            advance(lexer);
+
+            return token;
+        }
+
+        if (c == '2' && peek_char(lexer) == 'A')
+        {
+            Token token = make_token(
+                TOKEN_GUI_TYPE,
+                line,
+                column
+            );
+
+            token_add_char(&token, '2');
             advance(lexer);
 
             token_add_char(&token, 'A');
@@ -1023,6 +1050,10 @@ static Token lexer_next_impl(Lexer* lexer)
 
         case ',':
             token = make_token(TOKEN_COMMA, line, column);
+            break;
+
+        case '.':
+            token = make_token(TOKEN_DOT, line, column);
             break;
 
         case ';':

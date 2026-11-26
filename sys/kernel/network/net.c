@@ -1,5 +1,10 @@
 #include "net.h"
+#include "nic.h"
 #include "e1000.h"
+#include "rtl8139.h"
+#include "rtl8169.h"
+#include "ne2k.h"
+#include "pcnet.h"
 #include "timer.h"
 #include "pci.h"
 
@@ -14,8 +19,10 @@ void print_int(int number);
 void print_error(const char* text);
 void print_success(const char* text);
 
+static const nic_driver_t *nic = 0;
+
 static u8  my_mac[6];
-static u32 my_ip   = 0x0A00020FU;      /* 10.0.2.15  */
+static u32 my_ip   = 0x0A00020FU;      /* 10.0.2.15  (QEMU usernet default) */
 static u32 my_mask = 0xFFFFFF00U;      /* 255.255.255.0 */
 static u32 my_gw   = 0x0A000202U;      /* 10.0.2.2   */
 static u32 my_dns  = 0x0A000203U;      /* 10.0.2.3   */
@@ -118,7 +125,7 @@ static void net_poll(void);
 
 static int eth_send(const u8* dmac, u16 type, const u8* payload, u32 len)
 {
-    if (len > 1500)
+    if (!nic || len > 1500)
         return -1;
 
     n_copy(txf, dmac, 6);
@@ -134,7 +141,7 @@ static int eth_send(const u8* dmac, u16 type, const u8* payload, u32 len)
         total = 60;
     }
 
-    return e1000_send(txf, total);
+    return nic->send(txf, total);
 }
 
 #define ARP_N 4
@@ -435,14 +442,14 @@ static void handle_frame(const u8* f, u32 len)
 
 static void net_poll(void)
 {
-    if (in_poll)
+    if (in_poll || !nic)
         return;
 
     in_poll = 1;
 
     for (int i = 0; i < 16; i++)
     {
-        int n = e1000_recv(rxf, sizeof(rxf));
+        int n = nic->recv(rxf, sizeof(rxf));
 
         if (n <= 0)
             break;
@@ -631,39 +638,56 @@ static int dns_resolve(const char* name, u32* ip_out)
 
 static int net_ensure(void)
 {
-    if (net_state == 1)
+    if (net_state == 1 && nic)
         return 1;
 
     timer_init();
 
-    int r = e1000_init();
+    /* Try supported wired NIC drivers in order */
+    static const nic_driver_t *drivers[] = {
+        &e1000_driver,
+        &rtl8169_driver,
+        &rtl8139_driver,
+        &ne2k_driver,
+        &pcnet_driver,
+        0
+    };
 
-    if (r == E1000_ERR_NO_DEVICE)
+    nic = 0;
+    for (int i = 0; drivers[i]; i++)
+    {
+        int r = drivers[i]->probe();
+        if (r == 0)
+        {
+            nic = drivers[i];
+            break;
+        }
+    }
+
+    if (!nic)
     {
         print_error("No supported network card found.\n");
-        print("Start QEMU with:  -nic user,model=e1000\n");
+        print("Supported wired drivers: Intel e1000, Realtek RTL8169/8168/8111, RTL8139, NE2000 (RTL8029), AMD PCnet\n");
+        print("QEMU examples:\n");
+        print("  -nic user,model=e1000\n");
+        print("  -nic user,model=rtl8139\n");
+        print("  -nic user,model=ne2k_pci\n");
+        print("  -nic user,model=pcnet\n");
         print("(type 'lspci' to see what is attached)\n");
         return 0;
     }
 
-    if (r != 0)
-    {
-        print_error("Network card initialisation failed (code ");
-        print_int(r);
-        print(")\n");
-        return 0;
-    }
-
-    n_copy(my_mac, e1000_mac(), 6);
+    n_copy(my_mac, nic->mac(), 6);
 
     u64 t = timer_ms();
 
-    while (!e1000_link_up() && timer_ms() - t < 5000)
+    while (!nic->link_up() && timer_ms() - t < 5000)
         __asm__ volatile ("pause");
 
-    if (!e1000_link_up())
+    if (!nic->link_up())
     {
         print_error("Network link is down.\n");
+        print("Driver: "); print(nic->name); print("\n");
         return 0;
     }
 
@@ -672,7 +696,8 @@ static int net_ensure(void)
 
     net_state = 1;
 
-    print("e1000: ");
+    print(nic->name);
+    print(": ");
     print_mac(my_mac);
     print(", link up\n");
 
@@ -684,9 +709,9 @@ void net_info(void)
     if (!net_ensure())
         return;
 
-    print("\n  NIC:   Intel e1000\n");
+    print("\n  NIC:   "); print(nic->name); print("\n");
     print("  MAC:   "); print_mac(my_mac); print("\n");
-    print("  Link:  "); print(e1000_link_up() ? "up" : "down"); print("\n");
+    print("  Link:  "); print(nic->link_up() ? "up" : "down"); print("\n");
     print("  IP:    "); print_ip(my_ip); print("\n");
     print("  Mask:  "); print_ip(my_mask); print("\n");
     print("  GW:    "); print_ip(my_gw); print("\n");
@@ -873,7 +898,12 @@ void net_ping(const char* arg)
     print("\n\n");
 
     if (received == 0)
-        print("No replies. 'ping 10.0.2.2' tests the virtual gateway.\n");
+    {
+        print("No replies. In QEMU user networking, try:\n");
+        print("  ping 10.0.2.2   (gateway)\n");
+        print("  ping 10.0.2.3   (DNS)\n");
+        print("External hosts may not respond to ICMP in usernet mode.\n");
+    }
 }
 
 void net_lspci(void)

@@ -29,7 +29,7 @@ x64 operating system written in C and NASM
 - Network
 - .nwo files inside of OS
 - UEFI/Legacy bios
-- e1000
+- e1000 / RTL8139 network drivers (auto-detected)
 - xHCI
 - ahci
 - liveboot
@@ -118,7 +118,7 @@ qemu-system-x86_64 \
     -boot d \
     -cdrom NwOS.iso
     -m 128M \
-    -nic user,model=e1000 \
+    -nic user,model=e1000 \  # or model=rtl8139
     -drive file=disk.img,format=raw,if=ide,index=0 \
     -display sdl,grab-mod=rctrl
 ```
@@ -148,6 +148,7 @@ Network stack:
 - No rate limiting
 - No IPv6
 - Basic IPv4 only (ARP, ICMP, UDP, DNS)
+- `ping` works for ICMP echo (in QEMU user networking, external hosts may be unreachable; use `ping 10.0.2.2` / `ping 10.0.2.3` to test)
 
 **Do not expose NwOS to untrusted networks.** Use only in QEMU or isolated lab environments.
 

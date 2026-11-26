@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "codegen.h"
+#include "../diag/diag.h"
 
 #define NWO_MAGIC       "NWOB"
 #define NWO_VERSION     3
@@ -82,9 +83,65 @@ static CgFunc cg_funcs[NWO_MAX_FUNCTIONS];
 static int cg_func_count;
 static int cg_main_func;
 
+static NwcCodegenDiag cg_diag = NULL;
+static const char* cg_diag_path = NULL;
+static const char* cg_diag_source = NULL;
+
+void codegen_set_diag(NwcCodegenDiag diag,
+                      const char* path, const char* source)
+{
+    cg_diag = diag;
+    cg_diag_path = path;
+    cg_diag_source = source;
+}
+
+static void cg_report_ex(ASTNode* node, const char* message, int plain)
+{
+    const char* path;
+    const char* source;
+    int line;
+    int column = 1;
+    int length = 1;
+
+    if (cg_diag == NULL)
+    {
+        fprintf(stderr, "NwC codegen: %s\n", message);
+        return;
+    }
+
+    path = node != NULL && node->source_path != NULL
+               ? node->source_path
+               : (cg_diag_path != NULL ? cg_diag_path : "<source>");
+    source = node != NULL && node->source_text != NULL
+                 ? node->source_text
+                 : cg_diag_source;
+    line = node != NULL && node->line > 0 ? node->line : 1;
+
+    if (node != NULL && node->text != NULL)
+        nwc_diag_locate(source, line, node->text, &column, &length);
+    else if (node != NULL)
+    {
+        column = node->column > 0 ? node->column : 1;
+        length = 1;
+    }
+
+    cg_diag(path, source, line, column, length, message, plain);
+}
+
+static void cg_report(ASTNode* node, const char* message)
+{
+    cg_report_ex(node, message, 0);
+}
+
 static void cg_error(Codegen* cg, const char* msg)
 {
-    fprintf(stderr, "NwC codegen: %s\n", msg);
+    cg_report(NULL, msg);
+    cg->error = 1;
+}
+
+static void cg_error_at(Codegen* cg, ASTNode* node, const char* msg)
+{
+    cg_report(node, msg);
     cg->error = 1;
 }
 static void cg_emit_byte(Codegen* cg, unsigned char b)
@@ -543,6 +600,18 @@ typedef enum
     OP_TERM_RUN = 0xCD,
     OP_TERM_VIEW = 0xCE,
 
+    OP_GUI_SPAWN      = 0xD0,
+    OP_GUI_GEOMETRY   = 0xD1,
+    OP_GUI_BG         = 0xD2,
+    OP_GUI_RESIZABLE  = 0xD3,
+    OP_GUI_LABEL      = 0xD4,
+    OP_GUI_BUTTON     = 0xD5,
+    OP_GUI_ENTRY      = 0xD6,
+    OP_GUI_DESTROY    = 0xD7,
+    OP_GUI_ENTRY_GET  = 0xD8,
+    OP_GUI_ENTRY_SCAN = 0xD9,
+    OP_GUI_ON_ENTER   = 0xDA,
+
     OP_HALT         = 0xFF
 
 } OpCode;
@@ -566,6 +635,7 @@ static unsigned char cg_type_byte(ValueType t)
         case TYPE_LONG_LONG: return 5;
         case TYPE_CHAR:      return 6;
         case TYPE_STRING:    return 7;
+        case TYPE_GUI:       return 8;
         case TYPE_VOID:      return 0;
         default:             return 0;
     }
@@ -669,6 +739,8 @@ static int cg_key_constant(const char* name, long long* value)
     return 0;
 }
 
+
+static int cg_rgb_color_value(const char* name);
 
 static int cg_color_value(Codegen* cg, const char* name)
 {
@@ -945,6 +1017,80 @@ static void cg_expression(Codegen* cg, ASTNode* node)
             cg_emit_slot(cg, node->text, 0);
             break;
 
+        case AST_MEMBER:
+        {
+            /* Currently only supports entry.scan() as method call; member access returns 0 */
+            (void)node;
+            cg_emit_int(cg, 0);
+            break;
+        }
+
+        case AST_METHOD_CALL:
+        {
+            if (node->left != NULL && node->left->type == AST_IDENTIFIER)
+            {
+                const char* obj = node->left->text;
+                const char* method = node->text;
+                if (strcmp(method, "scan") == 0)
+                {
+                    cg_emit_byte(cg, OP_LOAD);
+                    cg_emit_slot(cg, obj, 0);
+                    cg_emit_byte(cg, OP_GUI_ENTRY_SCAN);
+                    break;
+                }
+                if (strcmp(method, "get") == 0)
+                {
+                    cg_emit_byte(cg, OP_LOAD);
+                    cg_emit_slot(cg, obj, 0);
+                    cg_emit_byte(cg, OP_GUI_ENTRY_GET);
+                    cg_emit_int(cg, 0);
+                    break;
+                }
+                if (strcmp(method, "destroy") == 0)
+                {
+                    cg_emit_byte(cg, OP_LOAD);
+                    cg_emit_slot(cg, obj, 0);
+                    cg_emit_byte(cg, OP_GUI_DESTROY);
+                    cg_emit_int(cg, 0);
+                    break;
+                }
+                if (strcmp(method, "spawn") == 0)
+                {
+                    cg_gui_used = 1;
+                    cg_emit_byte(cg, OP_GUI_SPAWN);
+                    break;
+                }
+                if (strcmp(method, "geometry") == 0)
+                {
+                    ASTNode* arg = node->child;
+                    int w = 256, h = 256;
+                    if (arg && arg->type == AST_STRING && arg->text)
+                    {
+                        const char* p = arg->text;
+                        w = 0; h = 0;
+                        while (*p >= '0' && *p <= '9') { w = w*10 + (*p - '0'); p++; }
+                        if (*p == 'x' || *p == 'X') { p++; while (*p >= '0' && *p <= '9') { h = h*10 + (*p - '0'); p++; } }
+                        if (w <= 0) w = 256; if (h <= 0) h = 256;
+                    }
+                    cg_emit_byte(cg, OP_LOAD);
+                    cg_emit_slot(cg, obj, 0);
+                    cg_emit_int(cg, w);
+                    cg_emit_int(cg, h);
+                    cg_emit_byte(cg, OP_GUI_GEOMETRY);
+                    cg_emit_int(cg, 0);
+                    break;
+                }
+                if (strcmp(method, "Label") == 0 || strcmp(method, "Button") == 0 || strcmp(method, "Entry") == 0)
+                {
+                    /* handled in assignment context; as expr, return 0 */
+                    cg_emit_int(cg, 0);
+                    break;
+                }
+            }
+            cg_error(cg, "unsupported method call");
+            break;
+        }
+
         case AST_CALL:
             if (node->text != NULL &&
                 strcmp(node->text, "strcmp") == 0)
@@ -984,6 +1130,14 @@ static void cg_expression(Codegen* cg, ASTNode* node)
                 break;
             }
 
+            if (node->text != NULL &&
+                strcmp(node->text, "gui::spawn") == 0)
+            {
+                cg_gui_used = 1;
+                cg_emit_byte(cg, OP_GUI_SPAWN);
+                break;
+            }
+
             if (!cg_call(cg, node))
             {
                 cg_error(cg, "call does not return a value");
@@ -994,6 +1148,76 @@ static void cg_expression(Codegen* cg, ASTNode* node)
             cg_error(cg, "unsupported expression node");
             break;
     }
+}
+
+static int cg_emit_gui_widget(Codegen* cg, ASTNode* node, const char* obj, const char* method)
+{
+    ASTNode* arg;
+    const char* text = "";
+    const char* fg = "#FFFFFF";
+    const char* bg = "#101010";
+    int x = 0, y = 0;
+    int has_text = 0, has_fg = 0, has_bg = 0, has_x = 0, has_y = 0;
+    const char* command = NULL;
+
+    for (arg = node->child; arg != NULL; arg = arg->next)
+    {
+        if (arg->type == AST_ASSIGNMENT && arg->text != NULL)
+        {
+            if (strcmp(arg->text, "text") == 0 && arg->child && arg->child->type == AST_STRING)
+                { text = arg->child->text; has_text = 1; }
+            else if (strcmp(arg->text, "x") == 0 && arg->child && arg->child->type == AST_NUMBER)
+                { x = (int)arg->child->integer_value; has_x = 1; }
+            else if (strcmp(arg->text, "y") == 0 && arg->child && arg->child->type == AST_NUMBER)
+                { y = (int)arg->child->integer_value; has_y = 1; }
+            else if (strcmp(arg->text, "fg") == 0 && arg->child && arg->child->type == AST_STRING)
+                { fg = arg->child->text; has_fg = 1; }
+            else if (strcmp(arg->text, "bg") == 0)
+            {
+                if (arg->child && arg->child->type == AST_STRING) { bg = arg->child->text; has_bg = 1; }
+                else if (arg->child && arg->child->type == AST_MEMBER && arg->child->text && strcmp(arg->child->text, "bg") == 0)
+                { bg = "#101010"; has_bg = 1; }
+            }
+            else if (strcmp(arg->text, "command") == 0 && arg->child && arg->child->type == AST_IDENTIFIER)
+                command = arg->child->text;
+            else if (strcmp(arg->text, "enter") == 0 && arg->child && arg->child->type == AST_IDENTIFIER)
+                command = arg->child->text;
+        }
+    }
+
+    (void)has_text; (void)has_fg; (void)has_bg; (void)has_x; (void)has_y;
+
+    /* push root handle */
+    cg_emit_byte(cg, OP_LOAD);
+    cg_emit_slot(cg, obj, 0);
+    /* x,y */
+    cg_emit_int(cg, x);
+    cg_emit_int(cg, y);
+    /* text */
+    cg_emit_byte(cg, OP_PUSH_STRING);
+    {
+        unsigned int sl = (unsigned int)strlen(text);
+        cg_emit_u32(cg, sl);
+        for (unsigned int i = 0; i < sl; i++) cg_emit_byte(cg, (unsigned char)text[i]);
+    }
+    /* fg,bg as ints */
+    cg_emit_int(cg, cg_rgb_color_value(fg));
+    cg_emit_int(cg, cg_rgb_color_value(bg));
+
+    if (strcmp(method, "Label") == 0) cg_emit_byte(cg, OP_GUI_LABEL);
+    else if (strcmp(method, "Button") == 0) cg_emit_byte(cg, OP_GUI_BUTTON);
+    else if (strcmp(method, "Entry") == 0) cg_emit_byte(cg, OP_GUI_ENTRY);
+    else { cg_error(cg, "unknown GUI widget"); return 0; }
+
+    if (command != NULL && (strcmp(method, "Button") == 0 || strcmp(method, "Entry") == 0))
+    {
+        /* result handle is on stack? no, opcode pushes handle; store then attach command */
+        cg_emit_byte(cg, OP_DUP);
+        cg_emit_byte(cg, OP_STORE);
+        cg_emit_slot(cg, node->left ? "" : "", 1); /* placeholder, fixed below */
+    }
+
+    return 1;
 }
 
 static void cg_variable_decl(Codegen* cg, ASTNode* node)
@@ -1017,6 +1241,72 @@ static void cg_variable_decl(Codegen* cg, ASTNode* node)
     }
     if (node->child != NULL)
     {
+        /* GUI widget creation: 2A x = root.Label(...); */
+        if (node->child->type == AST_METHOD_CALL &&
+            node->child->left != NULL &&
+            node->child->left->type == AST_IDENTIFIER &&
+            (strcmp(node->child->text, "Label") == 0 ||
+             strcmp(node->child->text, "Button") == 0 ||
+             strcmp(node->child->text, "Entry") == 0))
+        {
+            ASTNode* mc = node->child;
+            ASTNode* arg;
+            const char* text = "";
+            const char* fg = "#FFFFFF";
+            const char* bg = "#101010";
+            int x = 0, y = 0;
+            const char* command = NULL;
+
+            for (arg = mc->child; arg != NULL; arg = arg->next)
+            {
+                if (arg->type == AST_ASSIGNMENT && arg->text != NULL)
+                {
+                    if (strcmp(arg->text, "text") == 0 && arg->child && arg->child->type == AST_STRING)
+                        text = arg->child->text;
+                    else if (strcmp(arg->text, "x") == 0 && arg->child && arg->child->type == AST_NUMBER)
+                        x = (int)arg->child->integer_value;
+                    else if (strcmp(arg->text, "y") == 0 && arg->child && arg->child->type == AST_NUMBER)
+                        y = (int)arg->child->integer_value;
+                    else if (strcmp(arg->text, "fg") == 0 && arg->child && arg->child->type == AST_STRING)
+                        fg = arg->child->text;
+                    else if (strcmp(arg->text, "bg") == 0 && arg->child && arg->child->type == AST_STRING)
+                        bg = arg->child->text;
+                    else if ((strcmp(arg->text, "command") == 0 || strcmp(arg->text, "enter") == 0) &&
+                             arg->child && arg->child->type == AST_IDENTIFIER)
+                        command = arg->child->text;
+                }
+            }
+
+            cg_emit_byte(cg, OP_LOAD);
+            cg_emit_slot(cg, mc->left->text, 0);
+            cg_emit_int(cg, x);
+            cg_emit_int(cg, y);
+            cg_emit_byte(cg, OP_PUSH_STRING);
+            {
+                unsigned int sl = (unsigned int)strlen(text);
+                cg_emit_u32(cg, sl);
+                for (unsigned int i = 0; i < sl; i++) cg_emit_byte(cg, (unsigned char)text[i]);
+            }
+            cg_emit_int(cg, cg_rgb_color_value(fg));
+            cg_emit_int(cg, cg_rgb_color_value(bg));
+            if (strcmp(mc->text, "Label") == 0) cg_emit_byte(cg, OP_GUI_LABEL);
+            else if (strcmp(mc->text, "Button") == 0) cg_emit_byte(cg, OP_GUI_BUTTON);
+            else cg_emit_byte(cg, OP_GUI_ENTRY);
+
+            cg_emit_byte(cg, OP_STORE);
+            cg_emit_slot(cg, node->text, 1);
+
+            if (command != NULL)
+            {
+                int fi = cg_func_index(command);
+                cg_emit_byte(cg, OP_LOAD);
+                cg_emit_slot(cg, node->text, 0);
+                cg_emit_int(cg, fi);
+                cg_emit_byte(cg, OP_GUI_ON_ENTER);
+            }
+            return;
+        }
+
         cg_expression(cg, node->child);
 
         cg_emit_byte(cg, OP_STORE);
@@ -1111,9 +1401,33 @@ static int cg_rgb_color_value(const char* name)
     };
 
     unsigned int i;
+    char hexbuf[16];
+    int hlen = 0;
 
     if (name == NULL)
         return -1;
+
+    if (name[0] == '#')
+    {
+        int v = 0;
+        const char* p = name + 1;
+        while (*p && hlen < 15) hexbuf[hlen++] = *p++;
+        hexbuf[hlen] = 0;
+        if (hlen == 6)
+        {
+            for (int k = 0; k < 6; k++)
+            {
+                char c = hexbuf[k];
+                int d = (c >= '0' && c <= '9') ? c - '0' :
+                        (c >= 'a' && c <= 'f') ? c - 'a' + 10 :
+                        (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;
+                if (d < 0) return -1;
+                v = (v << 4) | d;
+            }
+            return v;
+        }
+        return -1;
+    }
 
     for (i = 0; i < sizeof(colors) / sizeof(colors[0]); i++)
     {
@@ -1347,6 +1661,13 @@ static int cg_call(Codegen* cg, ASTNode* node)
         return 0;
     }
 
+    if (strcmp(node->text, "gui::spawn") == 0)
+    {
+        cg_gui_used = 1;
+        cg_emit_byte(cg, OP_GUI_SPAWN);
+        return 1;
+    }
+
     if (strcmp(node->text, "nw::flush") == 0)
     {
         cg_gui_used = 1;
@@ -1498,6 +1819,13 @@ static int cg_call(Codegen* cg, ASTNode* node)
         cg_emit_byte(cg, OP_CURSOR);
         return 0;
     }
+    if (strcmp(node->text, "gui::spawn") == 0)
+    {
+        cg_gui_used = 1;
+        cg_emit_byte(cg, OP_GUI_SPAWN);
+        return 1;
+    }
+
     if (strcmp(node->text, "nw::fs_create") == 0)
     { if (node->child) cg_expression(cg, node->child); cg_emit_byte(cg, OP_FS_CREATE); return 1; }
     if (strcmp(node->text, "nw::fs_delete") == 0)
@@ -1684,10 +2012,7 @@ static int cg_call(Codegen* cg, ASTNode* node)
 
         if (func_index == -1)
         {
-            fprintf(stderr,
-                    "NwC codegen: unknown function '%s'\n",
-                    node->text);
-            cg->error = 1;
+            cg_error_at(cg, node, "Unknown function name");
             return 0;
         }
 
@@ -1756,6 +2081,8 @@ static void cg_while(Codegen* cg, ASTNode* node)
     cg->loop_continue[depth] = loop_start;
     cg->loop_break_base[depth] = break_base;
     cg->loop_continue_base[depth] = continue_base;
+    cg->break_count = break_base;
+    cg->continue_count = continue_base;
     cg->loop_depth = depth + 1;
 
     cg_expression(cg, node->child);
@@ -1809,6 +2136,8 @@ static void cg_for(Codegen* cg, ASTNode* node)
     cg->loop_start[depth] = loop_start;
     cg->loop_break_base[depth] = break_base;
     cg->loop_continue_base[depth] = continue_base;
+    cg->break_count = break_base;
+    cg->continue_count = continue_base;
     cg->loop_depth = depth + 1;
 
     if (node->child != NULL)
@@ -1868,6 +2197,8 @@ static void cg_do_while(Codegen* cg, ASTNode* node)
     cg->loop_start[depth] = loop_start;
     cg->loop_break_base[depth] = break_base;
     cg->loop_continue_base[depth] = continue_base;
+    cg->break_count = break_base;
+    cg->continue_count = continue_base;
     cg->loop_depth = depth + 1;
 
     cg_statement(cg, node->left);
@@ -1985,6 +2316,47 @@ static void cg_assignment(Codegen* cg, ASTNode* node)
     unsigned int modifiers = cg_sym_modifiers(node->text, cg->current_owner);
     unsigned char opcode;
     int volatile_access = (modifiers & NWC_MOD_NEEDED) != 0;
+
+    /* member assignment: root.bg = "#101010"; root.resizable = false,false */
+    if (node->left != NULL && node->left->type == AST_MEMBER &&
+        node->left->left != NULL && node->left->left->type == AST_IDENTIFIER)
+    {
+        const char* obj = node->left->left->text;
+        const char* prop = node->left->text;
+        if (strcmp(prop, "bg") == 0)
+        {
+            int color = 0x101010;
+            if (node->child && node->child->type == AST_STRING)
+                color = cg_rgb_color_value(node->child->text);
+            cg_emit_byte(cg, OP_LOAD);
+            cg_emit_slot(cg, obj, 0);
+            cg_emit_int(cg, color);
+            cg_emit_byte(cg, OP_GUI_BG);
+            return;
+        }
+        if (strcmp(prop, "resizable") == 0)
+        {
+            int w = 1, h = 1;
+            if (node->child && node->child->type == AST_BINARY_OPERATION &&
+                node->child->text && strcmp(node->child->text, ",") == 0)
+            {
+                if (node->child->left) w = node->child->left->integer_value ? 1 : 0;
+                if (node->child->right) h = node->child->right->integer_value ? 1 : 0;
+            }
+            else if (node->child)
+            {
+                w = node->child->integer_value ? 1 : 0;
+                h = w;
+            }
+            cg_emit_byte(cg, OP_LOAD);
+            cg_emit_slot(cg, obj, 0);
+            cg_emit_int(cg, w);
+            cg_emit_int(cg, h);
+            cg_emit_byte(cg, OP_GUI_RESIZABLE);
+            return;
+        }
+        return;
+    }
 
     if (modifiers & NWC_MOD_CONST)
     {
@@ -2145,6 +2517,24 @@ static void cg_statement(Codegen* cg, ASTNode* node)
                 cg_emit_jump(cg, OP_JUMP);
             break;
 
+        case AST_PASS:
+            break;
+
+        case AST_GLOBAL:
+            if (node->text != NULL &&
+                cg_sym_find(node->text, cg->current_owner) == -1 &&
+                cg_sym_find(node->text, cg_main_func) != -1)
+            {
+                CgSymbol* g = &cg_symbols[cg_sym_find(node->text, cg_main_func)];
+                if (cg_sym_count < NWO_MAX_SLOTS)
+                {
+                    cg_symbols[cg_sym_count] = *g;
+                    cg_symbols[cg_sym_count].owner = cg->current_owner;
+                    cg_sym_count++;
+                }
+            }
+            break;
+
         case AST_LOW_CALL:
             cg_low_call(cg, node);
             break;
@@ -2262,6 +2652,10 @@ static void cg_node(Codegen* cg, ASTNode* node)
             case AST_INCLUDE:
                 break;
 
+            case AST_PROTOTYPE:
+                /* Declarations from .nwh headers produce no code. */
+                break;
+
             case AST_FUNCTION:
                 cg_function(cg, node);
                 break;
@@ -2297,17 +2691,17 @@ static int cg_prepass_functions(ASTNode* ast)
 
             if (len >= NWO_NAME_SIZE_V3)
             {
-                fprintf(stderr,
-                        "NwC codegen: function name too long '%s'\n",
-                        node->text);
+                char message[160];
+
+                snprintf(message, sizeof(message),
+                         "Function name too long: %s", node->text);
+                cg_report(node, message);
                 return 0;
             }
 
             if (cg_func_index(node->text) != -1)
             {
-                fprintf(stderr,
-                        "NwC codegen: duplicate function '%s'\n",
-                        node->text);
+                cg_report_ex(node, "Conflicting function names", 1);
                 return 0;
             }
 
@@ -2332,7 +2726,7 @@ static int cg_prepass_functions(ASTNode* ast)
 
     if (cg_main_func == -1)
     {
-        fprintf(stderr, "NwC codegen: no main() function\n");
+        cg_report(NULL, "No main() function");
         return 0;
     }
 
@@ -2470,6 +2864,7 @@ int codegen_write_nwo(ASTNode* ast, const char* path, int flags)
     cg.error = 0;
     cg.loop_depth = 0;
     cg.break_count = 0;
+    cg.continue_count = 0;
     cg.current_owner = -1;
 
     cg_sym_count = 0;

@@ -18,4 +18,12 @@
 void mmu_mark_mmio_uncached(uint64_t phys, uint64_t size);
 void mmu_mark_user(uint64_t phys, uint64_t size);
 
+/* User address-space helpers for ring 3 isolation. */
+uint64_t mmu_read_cr3(void);
+void mmu_write_cr3(uint64_t cr3);
+/* Create an isolated user address space that keeps kernel mappings supervisor-only
+   and maps [phys, phys+size) as user-accessible in the user CR3. Returns user CR3
+   physical address, or 0 on failure. */
+uint64_t mmu_create_user_space(uint64_t phys, uint64_t size);
+
 #endif

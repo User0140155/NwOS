@@ -1,5 +1,3 @@
-Full list of commands:
-
 echo <text>
 help
 reboot
@@ -45,3 +43,8 @@ uname
 uname -r 
 uname -a 
 uname -p 
+nwc <file.nw> [...] -o <file.nwo>
+nwc -h <file.nwh> [...] -o <file.set>
+link <file.set> [...] <file.nw> [...] -o <file.nwo>
+listen <file>.wav 
+vibelisten <file>.wav

@@ -295,13 +295,29 @@ void free(void* ptr)
     (void)ptr;
 }
 
+static int nwc_digit_value(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
 long long strtoll(const char* text, char** endptr, int base)
 {
     long long value = 0;
     int sign = 1;
     unsigned int i = 0;
+    unsigned int digits = 0;
 
-    if (base != 10 || text == 0)
+    if (text == 0)
+    {
+        if (endptr != 0)
+            *endptr = 0;
+        return 0;
+    }
+
+    if (base < 0 || base > 36)
     {
         if (endptr != 0)
             *endptr = (char*)text;
@@ -326,10 +342,51 @@ long long strtoll(const char* text, char** endptr, int base)
         i++;
     }
 
-    while (text[i] >= '0' && text[i] <= '9')
+    if (base == 0)
     {
-        value = value * 10 + (long long)(text[i] - '0');
+        if (text[i] == '0' &&
+            (text[i + 1] == 'x' || text[i + 1] == 'X'))
+        {
+            base = 16;
+            i += 2;
+        }
+        else if (text[i] == '0' &&
+                 (text[i + 1] == 'b' || text[i + 1] == 'B'))
+        {
+            base = 2;
+            i += 2;
+        }
+        else if (text[i] == '0' &&
+                 (text[i + 1] == 'o' || text[i + 1] == 'O'))
+        {
+            base = 8;
+            i += 2;
+        }
+        else if (text[i] == '0')
+        {
+            base = 8;
+        }
+        else
+        {
+            base = 10;
+        }
+    }
+
+    while (nwc_digit_value(text[i]) >= 0 &&
+           nwc_digit_value(text[i]) < base)
+    {
+        int digit = nwc_digit_value(text[i]);
+
+        value = value * base + (long long)digit;
         i++;
+        digits++;
+    }
+
+    if (digits == 0)
+    {
+        if (endptr != 0)
+            *endptr = (char*)text;
+        return 0;
     }
 
     if (endptr != 0)

@@ -565,9 +565,9 @@ int gui_term_shi(int op, int a)
             {
                 unsigned char saved = text_color;
                 text_color = TERM_COLOR_LIGHT_CYAN;
-                gt_puts("NwOS terminal - every console command works here.\n");
-                text_color = TERM_COLOR_DARK_GRAY;
-                gt_puts("Type help.  PgUp/PgDn scroll, Up/Down history, Esc closes.\n\n");
+                gt_puts("NwOS terminal - every console command work here.\n");
+                gt_puts("type help. PgUp/PgDn scroll, Up/Down history\n");
+                gt_puts("copyright (c) User0140155 NwOS\n\n");
                 text_color = saved;
             }
             return 0;

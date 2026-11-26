@@ -640,6 +640,7 @@ void cmd_touch(const char* args);
 void cmd_write(const char* args);
 int nwc_next_token(const char* args, int* position, char* output, int output_capacity);
 void cmd_nwc(const char* args);
+void cmd_link(const char* args);
 void cmd_panic_safe(void);
 void cmd_panic_fatal(void);
 int command_name_length(const char* s);

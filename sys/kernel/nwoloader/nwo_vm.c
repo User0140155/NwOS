@@ -11,6 +11,10 @@ void set_color(unsigned char color);
 
 int keyboard_getkey(void);
 int keyboard_pollkey(void);
+unsigned char keyboard_get_modifiers(void);
+#define KEY_MOD_LALT (1u<<2)
+#define KEY_MOD_RALT (1u<<6)
+#define KEY_F4 271
 int mouse_x(void);
 int mouse_y(void);
 int mouse_buttons(void);
@@ -122,6 +126,18 @@ unsigned int port_inl(unsigned short port);
 #define OP_BUF_SAVE    0xBD
 #define OP_POLLKEY     0xBE
 
+#define OP_GUI_SPAWN      0xD0
+#define OP_GUI_GEOMETRY   0xD1
+#define OP_GUI_BG         0xD2
+#define OP_GUI_RESIZABLE  0xD3
+#define OP_GUI_LABEL      0xD4
+#define OP_GUI_BUTTON     0xD5
+#define OP_GUI_ENTRY      0xD6
+#define OP_GUI_DESTROY    0xD7
+#define OP_GUI_ENTRY_GET  0xD8
+#define OP_GUI_ENTRY_SCAN 0xD9
+#define OP_GUI_ON_ENTER   0xDA
+
 #define OP_JUMP         0x80
 #define OP_JUMP_FALSE   0x81
 
@@ -158,6 +174,56 @@ static int vm_window_dw = 0;
 static int vm_window_dh = 0;
 static int vm_cancel_enabled = 0;
 static int vm_cancel_requested = 0;
+
+#define VM_GUI_MAX_WIDGETS 32
+#define VM_GUI_TEXT_MAX 128
+typedef struct {
+    int used;
+    int type; /*1 label 2 button 3 entry*/
+    int x,y,w,h;
+    unsigned int fg,bg;
+    char text[VM_GUI_TEXT_MAX];
+    char value[VM_GUI_TEXT_MAX];
+    int enter_func; /* function index, -1 none */
+} VmGuiWidget;
+static VmGuiWidget vm_gui_widgets[VM_GUI_MAX_WIDGETS];
+static int vm_gui_root_active = 0;
+static int vm_gui_root_w = 256;
+static int vm_gui_root_h = 256;
+static unsigned int vm_gui_root_bg = 0x101010;
+static int vm_gui_res_w = 1;
+static int vm_gui_res_h = 1;
+static int vm_gui_focus = -1;
+
+static int vm_gui_strlen(const char* s){ int n=0; if(!s) return 0; while(s[n]) n++; return n; }
+static void vm_gui_strcpy(char* d, const char* s, int max){ int i=0; if(!d||!s||max<=0) return; while(s[i] && i<max-1){ d[i]=s[i]; i++; } d[i]=0; }
+
+static void vm_gui_reset(void){
+    for(int i=0;i<VM_GUI_MAX_WIDGETS;i++){ vm_gui_widgets[i].used=0; vm_gui_widgets[i].enter_func=-1; vm_gui_widgets[i].text[0]=0; vm_gui_widgets[i].value[0]=0; }
+    vm_gui_root_active=0; vm_gui_root_w=256; vm_gui_root_h=256; vm_gui_root_bg=0x101010; vm_gui_res_w=1; vm_gui_res_h=1; vm_gui_focus=-1;
+}
+static int vm_gui_alloc(int type){
+    for(int i=1;i<VM_GUI_MAX_WIDGETS;i++) if(!vm_gui_widgets[i].used){ vm_gui_widgets[i].used=1; vm_gui_widgets[i].type=type; vm_gui_widgets[i].enter_func=-1; vm_gui_widgets[i].text[0]=0; vm_gui_widgets[i].value[0]=0; vm_gui_widgets[i].w=120; vm_gui_widgets[i].h=24; return i; }
+    return -1;
+}
+static void vm_gui_draw(void){
+    if(!vm_gui_root_active) return;
+    int x0=vm_window_dx, y0=vm_window_dy, w=vm_gui_root_w, h=vm_gui_root_h;
+    if (vm_window_active) fb_draw_rect(x0,y0,w,h,vm_gui_root_bg);
+    else {
+        fb_draw_window(x0-4, y0-24, w+8, h+28, 0x002BA3E6, "2A GUI");
+        fb_draw_rect(x0,y0,w,h,vm_gui_root_bg);
+    }
+    for(int i=1;i<VM_GUI_MAX_WIDGETS;i++){
+        VmGuiWidget* wg=&vm_gui_widgets[i]; if(!wg->used) continue;
+        int x=x0+wg->x, y=y0+wg->y;
+        if(wg->type==1){ fb_draw_text(x,y,wg->text,wg->fg); }
+        else if(wg->type==2){ fb_draw_rect(x-4,y-2, (int)vm_gui_strlen(wg->text)*8+8, 20, wg->bg); fb_draw_text(x,y,wg->text,wg->fg); }
+        else if(wg->type==3){ fb_draw_rect(x-4,y-2, wg->w, 20, wg->bg); const char* t=wg->value[0]?wg->value:wg->text; fb_draw_text(x,y,t,wg->fg); if(vm_gui_focus==i) fb_draw_rect(x+(int)vm_gui_strlen(t)*8,y+10,8,2,wg->fg); }
+    }
+    if (vm_window_active) fb_subsurface_present();
+    else fb_present();
+}
 
 void nwo_vm_window_begin(int x, int y, int w, int h)
 {
@@ -355,8 +421,6 @@ typedef struct
 static VmValue vm_array_pool[NWO_ARRAY_POOL_SIZE];
 static int     vm_array_pool_used = 0;
 
-/* Shadow records keep the previous binding of a slot so that recursion
-   restores outer values when a frame returns (stack-disciplined pool). */
 typedef struct
 {
     int slot;
@@ -425,6 +489,21 @@ typedef struct
     unsigned char text_color;
 
 } NwoVM;
+
+static void vm_gui_push_call(NwoVM* vm, int func_index){
+    VmFunctionEntry* func;
+    if(func_index < 0 || func_index >= vm_function_count) return;
+    func = &vm_functions[func_index];
+    if(func->param_count != 0) return;
+    if(vm->call_sp >= NWO_MAX_CALL_DEPTH) return;
+    vm->call_stack[vm->call_sp].return_ip = vm->ip;
+    vm->call_stack[vm->call_sp].array_pool_mark = vm_array_pool_used;
+    vm->call_stack[vm->call_sp].array_string_mark = vm_array_string_used;
+    vm->call_stack[vm->call_sp].shadow_mark = vm_shadow_used;
+    vm->call_sp++;
+    vm->ip = func->body_ip;
+}
+
 
 
 static int vm_push(
@@ -1465,6 +1544,9 @@ int nwo_execute(
 
     vm.text_color = 7;
     set_color(vm.text_color);
+    vm_gui_reset();
+    vm_window_active = 0;
+    vm_window_dx = 0; vm_window_dy = 0; vm_window_dw = 1280; vm_window_dh = 720;
 
     if (!vm_scan_functions(program))
     {
@@ -1473,9 +1555,66 @@ int nwo_execute(
     vm.ip = vm_functions[vm_main_index].body_ip;
 
 
+    unsigned int vm_yield_counter = 0;
     while (vm.running)
     {
         unsigned char opcode;
+        if (++vm_yield_counter > 4096) { vm_yield_counter = 0; }
+
+        if (vm_gui_root_active && vm.call_sp == 0 && vm.ip >= program->code_size)
+        {
+            int k = keyboard_pollkey();
+            if (vm_cancel_enabled && (vm_cancel_requested || keyboard_take_ctrl_c()))
+            { vm.result = -2; vm.running = 0; break; }
+            if (k == 271 && (keyboard_get_modifiers() & (KEY_MOD_LALT|KEY_MOD_RALT)))
+            { vm.running = 0; vm.result = 0; break; }
+            if (k != 0 && vm_gui_focus > 0 && vm_gui_focus < VM_GUI_MAX_WIDGETS && vm_gui_widgets[vm_gui_focus].used)
+            {
+                VmGuiWidget* wg = &vm_gui_widgets[vm_gui_focus];
+                if (wg->type == 3)
+                {
+                    int len = 0; while (wg->value[len] && len < VM_GUI_TEXT_MAX-1) len++;
+                    if (k == '\n' || k == '\r')
+                    {
+                        if (wg->enter_func >= 0) { vm_gui_push_call(&vm, wg->enter_func); continue; }
+                    }
+                    else if (k == 8 || k == 127)
+                    {
+                        if (len > 0) { wg->value[len-1] = 0; vm_gui_draw(); }
+                    }
+                    else if (k >= 32 && k < 127 && k != 27 && len < VM_GUI_TEXT_MAX-1)
+                    {
+                        wg->value[len] = (char)k; wg->value[len+1] = 0; vm_gui_draw();
+                    }
+                }
+            }
+            {
+                int mb = mouse_buttons();
+                if (mb & 1)
+                {
+                    int mx = mouse_x(), my = mouse_y();
+                    int wx0 = vm_window_dx - 4, wy0 = vm_window_dy - 24;
+                    int ww0 = vm_window_dw + 8, wh0 = 24;
+                    if (mx >= wx0 + ww0 - 28 && mx < wx0 + ww0 - 4 && my >= wy0 + 2 && my < wy0 + 22)
+                    { vm.running = 0; vm.result = 0; break; }
+                    for (int i=1;i<VM_GUI_MAX_WIDGETS;i++)
+                    {
+                        VmGuiWidget* wg=&vm_gui_widgets[i]; if(!wg->used) continue;
+                        int wx=vm_window_dx+wg->x, wy=vm_window_dy+wg->y;
+                        int ww = wg->w>0?wg->w:(int)vm_gui_strlen(wg->text)*8+8;
+                        int wh = wg->h>0?wg->h:20;
+                        if (mx>=wx-4 && mx<wx+ww && my>=wy-2 && my<wy+wh)
+                        {
+                            if (wg->type==3) { vm_gui_focus=i; vm_gui_draw(); }
+                            if (wg->type==2 && wg->enter_func>=0) { vm_gui_push_call(&vm, wg->enter_func); break; }
+                        }
+                    }
+                    while (mouse_buttons() & 1) { keyboard_pollkey(); sleep(10); }
+                }
+            }
+            sleep(1);
+            continue;
+        }
 
         if (!vm_read_u8(
                 &vm,
@@ -1957,7 +2096,13 @@ int nwo_execute(
                 if (!v->is_array || v->array_start < 0 ||
                     idx < 0 || idx >= (int)v->array_size)
                 {
-                    print("[NWO VM] Array index out of bounds.\n");
+                    print("[NWO VM] Array index out of bounds (slot ");
+                    print_int((int)slot);
+                    print(", idx ");
+                    print_int(idx);
+                    print(", size ");
+                    print_int((int)v->array_size);
+                    print(").\n");
                     return -1;
                 }
 
@@ -2271,6 +2416,114 @@ int nwo_execute(
                 v.type = VM_INT;
                 v.as.integer = nwf_dialog_confirm(message);
                 if (!vm_push(&vm, v)) return -1;
+                break;
+            }
+
+            case OP_GUI_SPAWN:
+            {
+                VmValue v;
+                vm_gui_reset();
+                vm_gui_root_active = 1;
+                vm_window_active = 1;
+                vm_window_dx = 20; vm_window_dy = 40;
+                vm_window_dw = vm_gui_root_w; vm_window_dh = vm_gui_root_h;
+                v.type = VM_INT; v.as.integer = 0; /* root handle 0 */
+                if (!vm_push(&vm, v)) return -1;
+                fb_draw_window(vm_window_dx - 4, vm_window_dy - 24,
+                               vm_window_dw + 8, vm_window_dh + 28,
+                               0x002BA3E6, "2A GUI");
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_GEOMETRY:
+            {
+                VmValue h,vw,root; int w,hv;
+                if (!vm_pop(&vm, &h)) return -1;
+                if (!vm_pop(&vm, &vw)) return -1;
+                if (!vm_pop(&vm, &root)) return -1;
+                w = vm_to_int(&vw); hv = vm_to_int(&h);
+                if (w>0) vm_gui_root_w = w;
+                if (hv>0) vm_gui_root_h = hv;
+                vm_window_dw = vm_gui_root_w; vm_window_dh = vm_gui_root_h;
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_BG:
+            {
+                VmValue c,root;
+                if (!vm_pop(&vm, &c)) return -1;
+                if (!vm_pop(&vm, &root)) return -1;
+                vm_gui_root_bg = (unsigned int)vm_to_int(&c);
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_RESIZABLE:
+            {
+                VmValue rh,rw,root;
+                if (!vm_pop(&vm, &rh)) return -1;
+                if (!vm_pop(&vm, &rw)) return -1;
+                if (!vm_pop(&vm, &root)) return -1;
+                vm_gui_res_w = vm_to_int(&rw)?1:0;
+                vm_gui_res_h = vm_to_int(&rh)?1:0;
+                break;
+            }
+            case OP_GUI_LABEL:
+            case OP_GUI_BUTTON:
+            case OP_GUI_ENTRY:
+            {
+                VmValue bg,fg,text,y,x,root; char txt[VM_GUI_TEXT_MAX];
+                int id, type = (opcode==OP_GUI_LABEL)?1:(opcode==OP_GUI_BUTTON)?2:3;
+                if (!vm_pop(&vm, &bg)) return -1;
+                if (!vm_pop(&vm, &fg)) return -1;
+                if (!vm_pop_string(&vm, txt, sizeof(txt))) return -1;
+                if (!vm_pop(&vm, &y)) return -1;
+                if (!vm_pop(&vm, &x)) return -1;
+                if (!vm_pop(&vm, &root)) return -1;
+                id = vm_gui_alloc(type);
+                if (id >= 0) {
+                    VmGuiWidget* wg=&vm_gui_widgets[id];
+                    wg->x=vm_to_int(&x); wg->y=vm_to_int(&y);
+                    wg->fg=(unsigned int)vm_to_int(&fg); wg->bg=(unsigned int)vm_to_int(&bg);
+                    vm_gui_strcpy(wg->text, txt, VM_GUI_TEXT_MAX);
+                    wg->value[0]=0;
+                    if(type==3){ wg->w=160; wg->h=20; if(vm_gui_focus<0) vm_gui_focus=id; }
+                    if(type==2){ wg->w=(int)vm_gui_strlen(wg->text)*8+8; wg->h=20; }
+                }
+                { VmValue v; v.type=VM_INT; v.as.integer=id; if(!vm_push(&vm,v)) return -1; }
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_DESTROY:
+            {
+                VmValue h; if(!vm_pop(&vm,&h)) return -1; int id=vm_to_int(&h);
+                if(id>0 && id<VM_GUI_MAX_WIDGETS) vm_gui_widgets[id].used=0;
+                if(vm_gui_focus==id) vm_gui_focus=-1;
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_ENTRY_GET:
+            {
+                VmValue h; if(!vm_pop(&vm,&h)) return -1; int id=vm_to_int(&h);
+                (void)id;
+                vm_gui_draw();
+                break;
+            }
+            case OP_GUI_ENTRY_SCAN:
+            {
+                VmValue h,v; if(!vm_pop(&vm,&h)) return -1; int id=vm_to_int(&h);
+                v.type=VM_STRING; v.string_length=0; v.as.string="";
+                if(id>0 && id<VM_GUI_MAX_WIDGETS && vm_gui_widgets[id].used){
+                    v.as.string = vm_gui_widgets[id].value;
+                    v.string_length = (unsigned int)vm_gui_strlen(vm_gui_widgets[id].value);
+                }
+                if(!vm_push(&vm,v)) return -1;
+                break;
+            }
+            case OP_GUI_ON_ENTER:
+            {
+                VmValue f,h; if(!vm_pop(&vm,&f)) return -1; if(!vm_pop(&vm,&h)) return -1;
+                int id=vm_to_int(&h); int fn=vm_to_int(&f);
+                if(id>0 && id<VM_GUI_MAX_WIDGETS && vm_gui_widgets[id].used) vm_gui_widgets[id].enter_func=fn;
                 break;
             }
             case OP_BUF_CLEAR:
@@ -3427,8 +3680,9 @@ int nwo_execute(
                 }
                 else
                 {
-                    vm.running = 0;
                     vm.result = 0;
+                    if (vm_gui_root_active) { vm_gui_draw(); vm.ip = program->code_size; }
+                    else vm.running = 0;
                 }
 
                 break;
@@ -3464,7 +3718,8 @@ int nwo_execute(
                 else
                 {
                     vm.result = result.as.integer;
-                    vm.running = 0;
+                    if (vm_gui_root_active) { vm_gui_draw(); vm.ip = program->code_size; }
+                    else vm.running = 0;
                 }
 
                 break;
@@ -3491,7 +3746,8 @@ int nwo_execute(
                 else
                 {
                     vm.result = 0;
-                    vm.running = 0;
+                    if (vm_gui_root_active) { vm_gui_draw(); vm.ip = program->code_size; }
+                    else vm.running = 0;
                 }
 
                 break;
@@ -3508,8 +3764,9 @@ int nwo_execute(
 
                 print("[NWO VM] Unknown opcode: ");
                 print_int((int)opcode);
+                print(" ip=");
+                print_int((int)vm.ip - 1);
                 putchar_os('\n');
-
                 return -1;
         }
     }

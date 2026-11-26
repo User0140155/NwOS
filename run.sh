@@ -9,7 +9,7 @@ fi
 qemu-system-x86_64 \
     -boot d \
     -cdrom NwOS.iso\
-    -m 700M \
+    -m 1500M \
     -nic user,model=e1000 \
     -audiodev sdl,id=snd0 \
     -device intel-hda \

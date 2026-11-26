@@ -1,7 +1,7 @@
 <div class="related">
     <strong>Related articles</strong>
     <ul>
-        <li><a href="#boot">Boot: Limine, UEFI and legacy</a></li>
+        <li><a href="#boot">Boot: GRUB, UEFI and legacy</a></li>
         <li><a href="#display">Display: VGA and VBE</a></li>
         <li><a href="#troubleshooting">Troubleshooting</a></li>
     </ul>
@@ -13,7 +13,7 @@
 <ul>
     <li>An x86-64 CPU (the OS is 64-bit; 32-bit-only CPUs are not supported).</li>
     <li>If you want 32-bit support, check old versions (Note: they not supporting, legacy-bios only, PS/2 keyboard, cant be launched maybe)</li>
-    <li>UEFI firmware or a legacy BIOS - both are supported through <a href="#boot">Limine</a>.</li>
+    <li>UEFI firmware or a legacy BIOS - the ISO supports both through <a href="#boot">GRUB</a>; the installed-system ESP is currently UEFI-only.</li>
     <li>A display that can be driven through VGA or VBE, see <a href="#display">Display</a>.</li>
     <li>A PS/2 or USB-emulated keyboard, see <a href="#keyboard">Keyboard support</a>.</li>
 </ul>
@@ -54,7 +54,7 @@
     <li>Insert the drive and reboot.</li>
     <li>Open the boot menu (usually <kbd>F12</kbd>, <kbd>F11</kbd>, <kbd>Esc</kbd> or <kbd>F8</kbd>).</li>
     <li>Choose the USB drive. Entries with a <code>UEFI:</code> prefix boot in UEFI mode, the others in legacy mode.</li>
-    <li>In the Limine menu select NwOS.</li>
+    <li>In the GRUB menu select NwOS.</li>
 </ol>
 
 <div class="box warning">

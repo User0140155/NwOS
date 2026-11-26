@@ -1,10 +1,7 @@
 #include "kernel.h"
 
-/*
-* add modules, because kernel already 4k lines
-*/
-
 void apps_list() {
+    clear();
     print("                 o-------------------------o\n");
     print("                 |                         |\n");
     print("                 |        1.Filestats      |\n");

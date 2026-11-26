@@ -4,6 +4,7 @@
 *.bin
 *.img
 *.iso
+*.pyc
 *.vdi
 
 *.exe
@@ -12,6 +13,7 @@
 # other
 .vscode/
 .idea/
+__pycache__/
 #build & special & binary
 build/
 compiler/builded/
@@ -34,3 +36,4 @@ PY_WORD_DATA.md
 license.text.txt
 nwasm.md
 builded/
+gui.md

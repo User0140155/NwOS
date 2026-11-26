@@ -122,6 +122,9 @@ static uint64_t native_block_size;
 static int native_active;
 static int native_abi;
 static uint64_t native_exit_code;
+static uint64_t kernel_cr3;
+static uint64_t user_shell_cr3;
+static uint64_t native_user_cr3;
 
 static void gdt_set_gate(int index, uint32_t base, uint32_t limit,
                          uint8_t access, uint8_t granularity)
@@ -343,6 +346,9 @@ uint64_t isr_dispatch(uint64_t vector, interrupt_frame_t *frame)
         return 0;
     }
 
+    if (kernel_cr3)
+        mmu_write_cr3(kernel_cr3);
+
     print_error("\n[USER] CPU exception ");
     print_int((int)vector);
     if (vector == 14)
@@ -354,6 +360,12 @@ uint64_t isr_dispatch(uint64_t vector, interrupt_frame_t *frame)
     }
     print(" error=");
     print_uint64(frame->error);
+    print(" rip=");
+    print_uint64(frame->rip);
+    print(" rsp=");
+    print_uint64(frame->rsp);
+    print(" cr3=");
+    print_uint64(mmu_read_cr3());
     print("\n");
 
     while (1)
@@ -391,7 +403,14 @@ int usermode_run_native(const uint8_t *image, uint32_t image_size,
 
         native_block_base = phys;
         native_block_size = USER_BLOCK_SIZE;
-        mmu_mark_user(phys, USER_BLOCK_SIZE);
+        kernel_cr3 = mmu_read_cr3();
+        native_user_cr3 = mmu_create_user_space(phys, USER_BLOCK_SIZE);
+        if (!native_user_cr3)
+        {
+            /* fallback: weaker isolation but functional */
+            mmu_mark_user(phys, USER_BLOCK_SIZE);
+            native_user_cr3 = kernel_cr3;
+        }
     }
 
     uint8_t *base = (uint8_t *)(uintptr_t)native_block_base;
@@ -443,12 +462,18 @@ int usermode_run_native(const uint8_t *image, uint32_t image_size,
     native_exit_code = 0;
     usermode_exit_pending = 0;
 
+    if (native_user_cr3 && native_user_cr3 != kernel_cr3)
+        mmu_write_cr3(native_user_cr3);
+
     usermode_enter_user(native_block_base + entry,
                         native_block_base + native_block_size);
 
     native_active = 0;
     native_abi = 0;
     usermode_exit_pending = 0;
+
+    if (kernel_cr3)
+        mmu_write_cr3(kernel_cr3);
 
     tss.rsp0 = saved_rsp0;
     user_block_base = saved_block_base;
@@ -482,13 +507,21 @@ int usermode_enter_shell(void)
     user_block_base = phys;
     user_block_end = phys + USER_BLOCK_SIZE;
 
-    mmu_mark_user(phys, USER_BLOCK_SIZE);
+    kernel_cr3 = mmu_read_cr3();
+    user_shell_cr3 = mmu_create_user_space(phys, USER_BLOCK_SIZE);
+    if (!user_shell_cr3)
+    {
+        /* fallback: mark pages user in current address space */
+        mmu_mark_user(phys, USER_BLOCK_SIZE);
+        user_shell_cr3 = kernel_cr3;
+    }
 
     tss_init();
     gdt_init();
     idt_init();
 
-    print_success("[OK] Ring 3 shell prepared.\n");
+    if (user_shell_cr3 && user_shell_cr3 != kernel_cr3)
+        mmu_write_cr3(user_shell_cr3);
 
     uint64_t entry = phys;
     uint64_t stack = phys + USER_BLOCK_SIZE;

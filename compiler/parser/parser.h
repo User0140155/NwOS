@@ -24,6 +24,8 @@ typedef enum
     AST_DO_WHILE,
     AST_BREAK,
     AST_CONTINUE,
+    AST_PASS,
+    AST_GLOBAL,
 
     AST_LOW_CALL,
 
@@ -42,7 +44,13 @@ typedef enum
 
     AST_BINARY_OPERATION,
     AST_INDEX,
-    AST_CALL
+    AST_CALL,
+    AST_MEMBER,
+    AST_METHOD_CALL,
+
+    /* Declaration of a function implemented in a .set module.
+       It carries the signature but no body and emits no code. */
+    AST_PROTOTYPE
 
 } ASTNodeType;
 
@@ -56,6 +64,7 @@ typedef enum
     TYPE_CHAR,
     TYPE_STRING,
     TYPE_VOID,
+    TYPE_GUI,
     TYPE_UNKNOWN
 
 } ValueType;
@@ -66,6 +75,11 @@ typedef struct ASTNode
 
     int line;
     int column;
+
+    /* Optional host-side source map for pretty diagnostics. Kernel-side
+       compilation leaves these pointers NULL. */
+    const char* source_path;
+    const char* source_text;
 
     char* text;
     long long integer_value;
@@ -95,6 +109,8 @@ typedef struct
 {
     Lexer* lexer;
 
+    const char* filename;
+
     Token current;
     Token previous;
 
@@ -105,7 +121,16 @@ typedef struct
 
 void parser_init(Parser* parser, Lexer* lexer);
 
+void parser_set_filename(Parser* parser, const char* filename);
+
+void parser_set_node_sources(Parser* parser, ASTNode* node,
+                             const char* path, const char* source);
+
 ASTNode* parser_parse(Parser* parser);
+
+/* Checks one linked program for duplicate function definitions. */
+void nwc_parser_check_duplicate_functions(ASTNode* program,
+                                          int* error_count);
 
 void ast_free(ASTNode* node);
 

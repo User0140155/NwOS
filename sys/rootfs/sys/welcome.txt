@@ -1,2 +1,0 @@
-Welcome to NwOS!
-Type 'help' for commands.

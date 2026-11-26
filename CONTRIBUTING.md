@@ -1,5 +1,5 @@
 # Contributing to NwOS
-NwOS is an independent x86_64 operating system written in C and NASM. Contributions of all sizes are welcome — code, testing, documentation, bug reports, and ideas.
+NwOS is an independent x86_64 operating system written in C and NASM. Contributions of all sizes are welcome - code, testing, documentation, bug reports, and ideas.
 
 You do not need permission or prior approval to get started. If you see something worth improving, feel free to work on it and open a pull request.
 Ways to contribute
@@ -76,7 +76,7 @@ The boot-related source files are in:
 ```text
 sys/boot/
 ```
-NwOS currently uses Limine for booting. Changes to the boot process should work with the project's existing setup; a separate bootloader is not needed for ordinary kernel contributions.
+NwOS currently uses GRUB 2 with the Multiboot2 protocol. Changes to the boot process should work with the project's GRUB-based ISO and UEFI ESP build; a separate bootloader is not needed for ordinary kernel contributions.
 
 ## Driver development
 

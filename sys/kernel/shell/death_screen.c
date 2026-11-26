@@ -100,7 +100,7 @@ void cmd_about(void)
     print("Arch: x86-64\n");
     print("Display: VGA text mode\n");
     print("PS/2 keyboard\n");
-    print("Network: e1000 (ping)\n");
+    print("Network: e1000/rtl8169/rtl8139/ne2k/pcnet + rtl8822 wifi (ping)\n");
     print("================\n");
     set_color(base_color);
 }

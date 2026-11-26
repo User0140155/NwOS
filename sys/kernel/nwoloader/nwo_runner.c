@@ -163,6 +163,8 @@ int nwo_program_is_gui(const char* filename)
     return (header[5] & 0x02) != 0;
 }
 
+int nwo_default_window(const char* filename, const char* title);
+
 void nwo_run(const char* filename)
 {
     NwoProgram program;
@@ -191,6 +193,17 @@ void nwo_run(const char* filename)
         mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
     }
 
+    if (use_gui_canvas)
+    {
+        /* Run GUI program inside its own window while keeping caller context. */
+        int rc = nwo_default_window(filename, filename);
+        fb_set_canvas_mode(saved_canvas_width, saved_canvas_height);
+        fb_clear(0x000000);
+        mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
+        if (rc < 0) print_error("\nNWO program failed.\n");
+        return;
+    }
+
     print("NWO: loading ");
     print(filename);
     print("...\n");
@@ -198,11 +211,6 @@ void nwo_run(const char* filename)
     if (nwo_native_try_run(filename))
     {
         graphics_end();
-        if (use_gui_canvas) {
-            fb_set_canvas_mode(saved_canvas_width, saved_canvas_height);
-            fb_clear(0x000000);
-            mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
-        }
         return;
     }
 
@@ -211,11 +219,6 @@ void nwo_run(const char* filename)
         print_error("Cannot load NWO program: ");
         print(nwo_load_error());
         putchar_os('\n');
-        if (use_gui_canvas) {
-            fb_set_canvas_mode(saved_canvas_width, saved_canvas_height);
-            fb_clear(0x000000);
-            mouse_set_bounds((int)fb_get_width(), (int)fb_get_height());
-        }
         return;
     }
 
@@ -280,6 +283,7 @@ int nwo_run_in_window(const char* filename, int x, int y, int w, int h)
     int cy;
     int cw;
     int ch;
+    int is_gui;
 
     if (filename == 0 || filename[0] == '\0')
         return -1;
@@ -288,6 +292,19 @@ int nwo_run_in_window(const char* filename, int x, int y, int w, int h)
 
     if (!fb_is_available())
         return nwo_run_console(filename);
+
+    is_gui = nwo_program_is_gui(filename);
+    if (is_gui)
+    {
+        /* GUI-spawn programs manage their own window/widgets. */
+        if (!nwo_load(filename, &program))
+            return -1;
+        nwo_vm_cancel_begin();
+        result = nwo_execute(&program);
+        nwo_unload(&program);
+        nwo_vm_cancel_end();
+        return result;
+    }
 
     cx = x + 4;
     cy = y + 26;

@@ -1,0 +1,3 @@
+0A func_hello() {
+    nw::out << "hello world!" << nw::endl;
+}
